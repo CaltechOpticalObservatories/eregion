@@ -1,0 +1,333 @@
+## Example detector definition file for the DEIMOS instrument CCD array
+## A single FITS file contains 8 extensions, one per detector, so 8 DetImage instances are created from this file.
+## Each DetImage instance has two outputs (two channels per detector).
+---
+class: DetImage # (use the correct class here for the detector type)
+alias: DEIMOS_CCDS
+description: DEIMOS CCD detector array, 8 detectors with two channel readout each
+detector_type: CCD # (specify the type of detector, e.g., CCD, CMOS, H2RG, etc.)
+
+objects:
+  - name: 'det_1'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 1 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 1 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: -46.08  # mm
+      y_cen: 30.72  # mm
+      angle: 0.0  # degrees
+
+  - name: 'det_2'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 2 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 2 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: -15.36  # mm
+      y_cen: 30.72  # mm
+      angle: 0.0  # degrees
+
+  - name: 'det_3'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 3 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 3 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: 15.36  # mm
+      y_cen: 30.72  # mm
+      angle: 0.0  # degrees
+
+  - name: 'det_4'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 4 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 4 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: 46.08  # mm
+      y_cen: 30.72  # mm
+      angle: 0.0  # degrees
+
+  - name: 'det_5'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 5 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 5 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: 46.08  # mm
+      y_cen: -30.72  # mm
+      angle: 0.0  # degrees
+
+  - name: 'det_6'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 6 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 6 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: 15.36  # mm
+      y_cen: -30.72  # mm
+      angle: 0.0  # degrees
+
+  - name: 'det_7'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 7 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 7 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: -15.36  # mm
+      y_cen: -30.72  # mm
+      angle: 0.0  # degrees
+
+  - name: 'det_8'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 8 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 8 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: -46.08  # mm
+      y_cen: -30.72  # mm
+      angle: 0.0  # degrees
+
+
+
+
