@@ -227,10 +227,10 @@ class FocalPlaneImage:
             logger.warning(f"Provided focal plane dim {self.dim} does not match calculated dim {(fp_ymax - fp_ymin, fp_xmax - fp_xmin)} from det_images' positions.")
 
         # Calculate the positions to place each det_image in the focal plane array
-        frames_df["y_min_fp"] = frames_df["y_min"] - self.dim[0]//2
-        frames_df["y_max_fp"] = frames_df["y_max"] - self.dim[0]//2
-        frames_df["x_min_fp"] = frames_df["x_min"] - self.dim[1]//2
-        frames_df["x_max_fp"] = frames_df["x_max"] - self.dim[1]//2
+        frames_df["y_min_fp"] = -1*(frames_df["y_max"] - self.dim[0]//2) # Flip y-axis
+        frames_df["y_max_fp"] = -1*(frames_df["y_min"] - self.dim[0]//2)
+        frames_df["x_min_fp"] = frames_df["x_min"] + self.dim[1]//2
+        frames_df["x_max_fp"] = frames_df["x_max"] + self.dim[1]//2
         # Place each det_image's data into the focal plane array
         for i, det_image in enumerate(self.det_images):
             yslc = slice(int(frames_df.loc[i, "y_min_fp"]), int(frames_df.loc[i, "y_max_fp"]))
@@ -256,7 +256,7 @@ class FocalPlaneImage:
                                  row["y_max_fp"] - row["y_min_fp"],
                                  linewidth=1, edgecolor='r', facecolor='none')
             ax.add_patch(rect)
-            ax.text(row["x_min_fp"] + 5, row["y_min_fp"] + 5, row["det_id"], color='white', fontsize=8)
+            ax.text(row["x_min_fp"] +150, row["y_min_fp"] +150, row["det_id"], color='white', fontsize=8)
         plt.colorbar(im, ax=ax)
         plt.show()
         return ax
