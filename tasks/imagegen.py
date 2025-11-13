@@ -18,18 +18,26 @@ class ImageCreator(IOTask):
         self.poll_interval = poll_interval
         self.filenames = set()
 
-        if os.path.isfile(input_path) and input_path.endswith('.fits'):
+        if os.path.isfile(input_path) and '.fits' in input_path:
             self.input_dir = os.path.dirname(input_path)
             self.filenames.update([input_path]) if not self.watch_mode else None
-        elif isinstance(input_path, list) and all([os.path.isfile(f) and f.endswith('.fits') for f in input_path]):
+        elif isinstance(input_path, list) and all([os.path.isfile(f) and '.fits' in f for f in input_path]):
             self.input_dir = os.path.dirname(os.path.commonprefix(input_path))
             self.filenames.update(input_path) if not self.watch_mode else None
         elif os.path.isdir(input_path):
             self.input_dir = input_path
             self.filenames.update(glob2.glob(os.path.join(input_path, '*.fits*'))) if not self.watch_mode else None
+        elif '*' in input_path:
+            files = glob2.glob(input_path)
+            files_to_add = []
+            for file in files:
+                if os.path.isfile(file) and '.fits' in file:
+                    files_to_add.append(file)
+            self.input_dir = os.path.dirname(os.path.commonprefix(files_to_add))
+            self.filenames.update(files_to_add) if not self.watch_mode else None
         else:
             raise ValueError(
-                "Input path must be a FITS file, a directory containing FITS files, or a list of FITS files.")
+                "Input path must be a FITS file, a list of FITS files, a directory with FITS files, or a glob pattern for FITS files.")
 
         if detector_config is not None:
             self.config = DetectorConfig(config_path=detector_config).config
@@ -124,8 +132,8 @@ class ImageCreator(IOTask):
                         args = {k: output.pop(k) for k in ['id', 'ext_id', 'ext_slice', 'data_slice', 'serial_prescan',
                                                            'serial_overscan', 'parallel_prescan', 'parallel_overscan',
                                                            'parallel_axis', 'readout_pixel'] if k in output.keys()}
-                        args['ext_slice'] = tuple(output['ext_slice'])
-                        args['data_slice'] = tuple(output['data_slice'])
+                        args['ext_slice'] = tuple(args['ext_slice'])
+                        args['data_slice'] = tuple(args['data_slice'])
                         if 'readout_pixel' in output.keys():
                             args['readout_pixel'] = tuple(output['readout_pixel'])
                         output_obj = Output(filename=filename, **args, meta=output)

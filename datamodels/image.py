@@ -31,18 +31,31 @@ class Output:
         image = self._data
         im = ax.imshow(image, **kwargs)
         ## Shade the prescan and overscan regions
-        if self.parallel_axis == 0:
-            ax.axvspan(self.serial_prescan.start, self.serial_prescan.stop, color='pink', alpha=0.3, label='Serial Prescan')
-            ax.axvspan(self.serial_overscan.start, self.serial_overscan.stop, color='red', alpha=0.3, label='Serial Overscan')
-            ax.axhspan(self.parallel_prescan.start, self.parallel_prescan.stop, color='cyan', alpha=0.3, label='Parallel Prescan')
-            ax.axhspan(self.parallel_overscan.start, self.parallel_overscan.stop, color='blue', alpha=0.3, label='Parallel Overscan')
-        else:
-            ax.axhspan(self.serial_prescan.start, self.serial_prescan.stop, color='pink', alpha=0.3, label='Serial Prescan')
-            ax.axhspan(self.serial_overscan.start, self.serial_overscan.stop, color='red', alpha=0.3, label='Serial Overscan')
-            ax.axvspan(self.parallel_prescan.start, self.parallel_prescan.stop, color='cyan', alpha=0.3, label='Parallel Prescan')
-            ax.axvspan(self.parallel_overscan.start, self.parallel_overscan.stop, color='blue', alpha=0.3, label='Parallel Overscan')
+        spandict = {0: ax.axvspan, 1: ax.axhspan}
+
+        scan_types = [
+            ("serial_prescan", self.serial_prescan, self.parallel_axis, "gold", "Serial Prescan"),
+            ("serial_overscan", self.serial_overscan, self.parallel_axis, "red", "Serial Overscan"),
+            ("parallel_prescan", self.parallel_prescan, self.serial_axis, "cyan", "Parallel Prescan"),
+            ("parallel_overscan", self.parallel_overscan, self.serial_axis, "blue", "Parallel Overscan"),
+        ]
+
+        for name, scan, axis, color, label in scan_types:
+            # Determine start index
+            if scan.start is not None:
+                scan_start = (image.shape[axis] + scan.start) if scan.start < 0 else scan.start
+            else:
+                scan_start = 0
+            # Determine stop index
+            if scan.stop is not None:
+                scan_stop = (image.shape[axis] + scan.stop) if scan.stop < 0 else scan.stop
+            else:
+                scan_stop = image.shape[axis]
+            # Draw the region
+            spandict[axis](scan_start, scan_stop, color=color, alpha=0.3, label=label)
+
         plt.colorbar(im, ax=ax)
-        plt.legend(loc='upper right', fontsize=8)
+        plt.legend(loc=(0.01,1.01), fontsize=8)
         plt.show()
         return ax
 
