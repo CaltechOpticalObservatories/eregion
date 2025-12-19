@@ -1,7 +1,13 @@
-from tasks.task import Task
 import numpy as np
+import xarray as xr
+from typing import Union
+from numpy.typing import NDArray
+
+from tasks.task import Task
 from datamodels.image import DetImage, Output
-from utils.image_operations import median_combine, mean_combine
+from datamodels.image_utils import ensure_dataarray
+from core.image_operations import median_combine
+
 
 # Task to generate master bias
 class MasterBias(Task):
@@ -23,26 +29,23 @@ class MasterBias(Task):
         # Initialize master bias DetImage
         master_bias = DetImage(image_type="master_bias")
         # Combine bias data
-        bias_data = [bias_image.data for bias_image in bias_images]
-        master_bias.data = self._create_masterbias(bias_data,
-                                                   method=self.meta['method'] if 'method' in self.meta else 'median')
+        bias_data = [bias_image.data.values for bias_image in bias_images]
+        master_bias.data = ensure_dataarray(self._create_masterbias(bias_data,
+                                                                    method=self.meta.get('method', 'median')))
         # Copy metadata and outputs from the first bias image
-        master_bias.meta = bias_images[0].meta.copy()
-        master_bias.focal_plane = bias_images[0].focal_plane.copy()
+        master_bias.meta = bias_images[0].meta
+        master_bias.focal_plane = bias_images[0].focal_plane
         master_bias.meta["filenames"] = ', '.join([img.meta.get("filename", "unknown") for img in bias_images])
-        for output in bias_images[0].outputs:
-            op = output.copy()
-            op.filename = ''
-            master_bias.add_output(op)
+        master_bias.outputs.update(bias_images[0].outputs)
         return master_bias
 
-    def _create_masterbias(self, biases: list[np.ndarray], method='median') -> np.ndarray:
+    def _create_masterbias(self, biases: list[NDArray], method='median')-> NDArray:
         if method == 'median':
             return median_combine(biases)
         else:
             raise NotImplementedError
 
-    def __call__(self, biases: list[np.ndarray]):
+    def __call__(self, biases: list[NDArray]):
         """
         Generate a master bias frame from a list of bias images.
         :param biases: list of numpy arrays

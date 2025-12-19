@@ -2,10 +2,9 @@
 ## A single FITS file contains 8 extensions, one per detector, so 8 DetImage instances are created from this file.
 ## Each DetImage instance has two outputs (two channels per detector).
 ---
-class: DetImage # (use the correct class here for the detector type)
-alias: DEIMOS_CCDS
 description: DEIMOS CCD detector array, 8 detectors with two channel readout each
 detector_type: CCD # (specify the type of detector, e.g., CCD, CMOS, H2RG, etc.)
+detector_output_class: CCDOutput # (use the correct class here for the detector output type)
 
 objects:
   - name: 'det_1'
@@ -25,7 +24,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # Readout starts at (0,0)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -38,7 +37,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 2047]  # Readout starts at (0,2047)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -65,7 +64,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # Readout starts at (0,0)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -78,7 +77,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 2047]  # Readout starts at (0,2047)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -105,7 +104,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # Readout starts at (0,0)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -118,7 +117,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 2047]  # Readout starts at (0,2047)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -145,7 +144,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # Readout starts at (0,0)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -158,7 +157,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 2047]  # Readout starts at (0,2047)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -185,7 +184,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # Readout starts at (0,0)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -198,7 +197,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 2047]  # Readout starts at (0,2047)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -225,7 +224,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # Readout starts at (0,0)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -238,7 +237,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 2047]  # Readout starts at (0,2047)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -265,7 +264,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # Readout starts at (0,0)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -278,7 +277,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 2047]  # Readout starts at (0,2047)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -305,7 +304,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # Readout starts at (0,0)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
@@ -318,7 +317,7 @@ objects:
         serial_overscan: !slice [1024, 1024]
         parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 0 # First axis in the data array (rows) represent parallel readout direction
+        parallel_Axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 2047]  # Readout starts at (0,2047)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
