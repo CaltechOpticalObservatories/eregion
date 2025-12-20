@@ -50,3 +50,31 @@ Orchestrated: define Prefect flows in pipeline/ that load a YAML from playground
 
 ### Status
 Early development. More tasks and flows to be added.
+
+## Installation
+
+### Clone the repository
+```bash
+  git clone git@github.com:CaltechOpticalObservatories/eregion.git
+  cd eregion
+```
+
+### Create and activate a virtual environment
+```bash
+  python3 -m venv venv
+  source venv/bin/activate
+```
+
+### Install the package
+- Standard installation:
+```bash
+  pip install .
+```
+- Development installation:
+```bash
+  pip install -e .
+```
+### Install additional dependencies for testing and development
+```bash
+  pip install -e .[dev]
+```
