@@ -41,10 +41,10 @@ class DetectorConfig:
         self.config = None
 
         if config_input is not None:
-            if os.path.isfile(config_input):
+            if isinstance(config_input, str) and os.path.isfile(config_input) and config_input.endswith(('.yaml', '.yml')):
                 with open(config_input, 'r') as stream:
                     self.load_config(stream)
-            elif isinstance(config_input, str):
+            elif isinstance(config_input, str) and not os.path.isfile(config_input):
                 try:
                     self.load_config(config_input)
                 except Exception as e:
