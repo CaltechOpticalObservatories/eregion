@@ -63,7 +63,8 @@ class Output(BaseModel):
                                                  description="FITS header for this output if available.")
     parent: Optional["DetImage"] = Field(default=None, description="Parent detector image.")
 
-    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True,
+                              populate_by_name=True)
 
     @property
     def data(self) -> xr.DataArray:
@@ -174,7 +175,7 @@ class DetImage:
         image_type: Optional[str] = None,
         meta: Optional[DetImageMeta | Dict[str, Any]] = None,
         **kwargs: Any,
-    ) -> None:
+    ):
 
         self.ndim = 2
         self.data: Optional[xr.DataArray] = ensure_dataarray(data) if data is not None else None
@@ -200,7 +201,7 @@ class DetImage:
         if output_objects is None and self.data is not None:
             logger.info("Creating default Output for DetImage (covers full array).")
             h, w = self.data.shape
-            self.outputs['0'] = Output(id=0,
+            self.outputs['0'] = Output(id='0',
                                        input_array_axis=1,
                                        input_slice=(slice(0, h), slice(0, w)),
                                        output_slice=(slice(0, h), slice(0, w)),
@@ -240,20 +241,31 @@ class DetImage:
 class FocalPlaneImage:
     """
     Composite focal-plane image made by placing multiple DetImage tiles.
+    :param num_detectors: int
+        Number of detector tiles expected.
+    :param dim: tuple[int, int]
+        Dimensions of the focal plane image (height, width) in pixels.
+    :param fp_center: Optional[Tuple[float, float]]
+        Pixels coordinates (y, x) corresponding to the focal plane center with respect to the image array origin (top-left).
+        Default is dim/2 i.e. (ydim/2, xdim/2).
+    :param det_images: Optional[List[DetImage]]
+        List of DetImage objects to place on the focal plane.
     """
 
     def __init__(
         self,
         num_detectors: int,
         dim: tuple[int, int],
+        fp_center: Optional[Tuple[float, float]] = None,
         det_images: Optional[List[DetImage]] = None,
         **kwargs,
-    ) -> None:
+    ):
         self.meta: Dict = {}
         if kwargs:
             self.meta.update(kwargs)
         self.num_detectors = int(num_detectors)
         self.dim = tuple(dim)
+        self.fp_cen_pix = fp_center if fp_center is not None else (dim[0] / 2, dim[1] / 2)
         self.det_images: List[DetImage] = []
         if det_images:
             for di in det_images:
@@ -321,11 +333,12 @@ class FocalPlaneImage:
         if calc_dim != self.dim:
             logger.warning("Provided dim %s != computed dim %s.", self.dim, calc_dim)
 
-        # Calculate the positions to place each det_image in the focal plane array, origin top left
-        frames_df["y_min_fp"] = -(frames_df["y_max"] - self.dim[0]//2) # Flip y-axis
-        frames_df["y_max_fp"] = -(frames_df["y_min"] - self.dim[0]//2)
-        frames_df["x_min_fp"] = frames_df["x_min"] + self.dim[1]//2
-        frames_df["x_max_fp"] = frames_df["x_max"] + self.dim[1]//2
+        # Calculate the positions to place each det_image in the focal plane array
+        # Flip y-axis and shift origin (specified by self.fp_cen_pix) to top-left corner
+        frames_df["y_min_fp"] = (self.fp_cen_pix[0] - frames_df["y_max"]).astype(int)
+        frames_df["y_max_fp"] = (self.fp_cen_pix[0] - frames_df["y_min"]).astype(int)
+        frames_df["x_min_fp"] = (frames_df["x_min"] + self.fp_cen_pix[1]).astype(int)
+        frames_df["x_max_fp"] = (frames_df["x_max"] + self.fp_cen_pix[1]).astype(int)
 
         # Initialize DataArray
         self.data: xr.DataArray = xr.DataArray(
@@ -340,7 +353,7 @@ class FocalPlaneImage:
                 raise ValueError(f"DetImage at index {i} has no data.")
             yslc = slice(int(frames_df.loc[i, "y_min_fp"]), int(frames_df.loc[i, "y_max_fp"]))
             xslc = slice(int(frames_df.loc[i, "x_min_fp"]), int(frames_df.loc[i, "x_max_fp"]))
-            self.data.values[yslc, xslc] = det_image.data.values
+            self.data[yslc, xslc] = det_image.data.values
 
         self.frames_df = frames_df
 
