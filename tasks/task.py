@@ -27,6 +27,11 @@ class LazyTask(Task):
     """
     Abstract base class for tasks that support lazy (generator-based) execution.
     """
+    def __init__(self, name=None, watch_mode=False, poll_interval=10, **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.watch_mode = watch_mode
+        self.poll_interval = poll_interval
+
     @abstractmethod
     def lazy_run(self, *args, **kwargs) -> Iterator:
         """Run the task lazily, yielding results."""
@@ -36,12 +41,4 @@ class LazyTask(Task):
         """Default run executes the lazy_run and collects all results."""
         return list(self.lazy_run(*args, **kwargs))
 
-class IOTask(Task):
-    """
-    A child class of Task specifically for handling FITS I/O operations.
-    To be used as a base class for tasks that read from or write to FITS files, like ImageCreator.
-    """
-    required_keys = ['input_path']
 
-    def __init__(self, name=None, **kwargs):
-        super().__init__(name=name, **kwargs)
