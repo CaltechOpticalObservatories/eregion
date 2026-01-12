@@ -1,5 +1,5 @@
 from datamodels.image import *
-from datamodels.image_utils import ensure_dataarray
+from datamodels.image_utils import ensure_dataarray, load_image_fits
 from datamodels.detector_config import DetectorConfig
 from tasks.task import Task, LazyTask
 
@@ -14,20 +14,6 @@ from prefect.futures import wait
 logger = logging.getLogger(__name__)
 
 
-def load_image_fits(filename: str) -> list[Any]:
-    """
-    Load FITS file and return the data as a numpy array with hdu extensions as the first axis.
-    :param filename: str
-        Path to the FITS file.
-    :return: np.ndarray
-        Numpy array with shape (n_hdus, y_size, x_size).
-    """
-    input_data_array = []
-    with fits.open(filename) as hdulist:
-        for hdu in hdulist:
-            input_data_array.append(hdu.data)
-    return input_data_array
-
 ## Classes to handle image generation from configuration files
 class ImageCreator(LazyTask):
     def __init__(self, detector_config=None, name='image_creator', watch_mode=False, poll_interval=10, **kwargs):
@@ -41,6 +27,9 @@ class ImageCreator(LazyTask):
 
         # Store a Prefect task for identification; wrap callables on registration.
         self._identifier_task: Optional[Callable[..., str]] = None
+
+        # Store a Prefect task for image loading; wrap callables on registration.
+        self._fitsloader_task: Optional[Callable[..., np.ndarray]] = None
 
         # Store processed filenames
         self._seen_files: set[str] = set()
@@ -63,23 +52,28 @@ class ImageCreator(LazyTask):
             raise TypeError("identifier must be callable.")
         self._identifier_task = task(func, name="custom_identifier")
 
+    def set_fitsloader(self, func: Callable[..., str]) -> None:
+        """
+        Register a custom FITS loading function. It should return a tuple of
+        (data_list, header_list).
+        Accepts only a plain callable to be wrapped as a Prefect task.
+        Expected signature: func(filename: str, **kwargs) -> Tuple(List[Any], List[astropy.io.fits.Header])
+        """
+        if not callable(func):
+            raise TypeError("fitsloader must be callable.")
+        self._fitsloader_task = task(func, name="custom_fits_loader")
+
     @task
-    def _guess_image_type_from_header(self, filename, hdu=0, keywords=None):
+    def _guess_image_type_from_header(self, header, keywords=None):
         """
         Default image type guessing logic based on FITS header.
         Parameters
         ----------
-        filename : str
-            Path to the FITS file.
-        hdu : int, optional
-            HDU index to read the header from. Default is 0.
+        header : astropy.io.fits.Header
+            FITS header to inspect for image type.
         keywords : list of str, optional
             List of header keywords to check for image type.
         """
-
-        hdulist = fits.open(filename)
-        header = hdulist[hdu].header
-
         # Check given keywords first
         if keywords:
             for key in keywords:
@@ -154,17 +148,17 @@ class ImageCreator(LazyTask):
 
     # ----------------- Image object builders -----------------
     @flow
-    def _build_image_objects(self, input_data_array, image_type, filename=None):
+    def _build_image_objects(self, input_data_array, input_headers, image_type, filename=None):
         images = []
         for obj in self.config['objects']:
-            image = self._build_single_image_object.submit(obj, input_data_array, image_type, filename=filename)
+            image = self._build_single_image_object.submit(obj, input_data_array, input_headers, image_type, filename=filename)
             images.append(image)
         wait(images)
         images = [img.result() for img in images if img.result() is not None]
         return images
 
     @task
-    def _build_single_image_object(self, obj, input_data_array, image_type, filename=None):
+    def _build_single_image_object(self, obj, input_data_array, input_headers, image_type, filename=None):
         # If a filename is given, check if it matches the filename format
         if filename is not None:
             if not glob2.fnmatch.fnmatch(os.path.basename(filename), obj['filename_format']):
@@ -182,6 +176,7 @@ class ImageCreator(LazyTask):
         image_data_size = [0] * image.ndim
         for output in outputs:
             output_obj = OutputClass(**output)
+            output_obj.fits_header = input_headers[output_obj.input_array_axis]
             # Determine full image size
             image_data_size[0] = max(image_data_size[0], output_obj.output_slice[0].stop)
             image_data_size[1] = max(image_data_size[1], output_obj.output_slice[1].stop)
@@ -200,7 +195,9 @@ class ImageCreator(LazyTask):
     def lazy_run(self,
                  input_source: Union[str, list[str], Iterable[np.ndarray]],
                  identifier_func: Optional[Callable[..., str]] = None,
-                 identifier_kwargs: Optional[Dict[str, Any]] = None
+                 identifier_kwargs: Optional[Dict[str, Any]] = None,
+                 fitsloader_func: Optional[Callable[..., str]] = None,
+                 fitsloader_kwargs: Optional[Dict[str, Any]] = None
     ) -> Generator[List, None, None]:
         """
         Main lazy run method to generate image objects from input source.
@@ -211,24 +208,37 @@ class ImageCreator(LazyTask):
             Custom image type identification function.
         :param identifier_kwargs: dict, optional
             Additional keyword arguments for the identifier function.
+        :param fitsloader_func: Callable, optional
+            Custom FITS loading function.
+        :param fitsloader_kwargs: dict, optional
+            Additional keyword arguments for the FITS loader function.
         :return: Generator yielding lists of DetImage objects.
         """
         identifier_kwargs = identifier_kwargs or {}
         if identifier_func is not None:
             self.set_identifier(identifier_func)
 
+        fitsloader_kwargs = fitsloader_kwargs or {}
+        if fitsloader_func is not None:
+            self.set_fitsloader(fitsloader_func)
+
         if isinstance(input_source, (str, list)):
             file_batches = self.from_files(input_source)
             for file_batch in file_batches:
                 images_batch = []
                 for filename in file_batch:
-                    input_data_array = load_image_fits(filename)
+                    # Load FITS data
+                    if self._fitsloader_task is not None:
+                        input_data_array, input_headers = self._fitsloader_task(filename=filename, **fitsloader_kwargs)
+                    else:
+                        input_data_array, input_headers = load_image_fits(filename)
                     # Determine image type
                     if self._identifier_task is not None:
                         image_type = self._identifier_task(filename=filename, **identifier_kwargs)
                     else:
                         image_type = self._guess_image_type_from_header(filename=filename, **identifier_kwargs)
-                    images = self._build_image_objects(input_data_array, image_type, filename=filename)
+                    # Build image objects
+                    images = self._build_image_objects(input_data_array, input_headers, image_type, filename=filename)
                     images_batch.extend(images)
                 yield images_batch
         else:
@@ -247,7 +257,9 @@ class ImageCreator(LazyTask):
     def run(self,
             input_source: Union[str, list[str], Iterable[np.ndarray]],
             identifier_func: Optional[Callable[..., str]] = None,
-            identifier_kwargs: Optional[Dict[str, Any]] = None
+            identifier_kwargs: Optional[Dict[str, Any]] = None,
+            fitsloader_func: Optional[Callable[..., str]] = None,
+            fitsloader_kwargs: Optional[Dict[str, Any]] = None
     ) -> List:
         """
         Eager run method to generate image objects from input source.
@@ -258,9 +270,13 @@ class ImageCreator(LazyTask):
             Custom image type identification function.
         :param identifier_kwargs: dict, optional
             Additional keyword arguments for the identifier function.
+        :param fitsloader_func: Callable, optional
+            Custom FITS loading function.
+        :param fitsloader_kwargs: dict, optional
+            Additional keyword arguments for the FITS loader function.
         :return: List of DetImage objects.
         """
         all_images = []
-        for images_batch in self.lazy_run(input_source, identifier_func, identifier_kwargs):
+        for images_batch in self.lazy_run(input_source, identifier_func, identifier_kwargs, fitsloader_func, fitsloader_kwargs):
             all_images.extend(images_batch)
         return all_images
