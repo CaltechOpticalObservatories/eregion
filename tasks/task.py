@@ -19,6 +19,23 @@ class Task(ABC):
         """Run the task in a pipeline workflow."""
         pass
 
+    @property
+    def methods(self):
+        """
+        Return a dictionary of available methods for this task and their function signatures.
+        :return: dict
+            Dictionary with method names as keys and function signatures as values.
+        """
+        return {}
+
+    def print_methods(self):
+        """
+        Print a list available methods for this task and their function signatures.
+        """
+        print(f"Available methods for {self.name}:")
+        for method, signature in self.methods.items():
+            print(f"- {method}: {signature}")
+
     def __call__(self, *args, **kwargs):
         """Directly execute the task."""
         return self.run(*args, **kwargs)
@@ -37,8 +54,10 @@ class LazyTask(Task):
         """Run the task lazily, yielding results."""
         pass
 
+    @abstractmethod
     def run(self, *args, **kwargs):
         """Default run executes the lazy_run and collects all results."""
         return list(self.lazy_run(*args, **kwargs))
+
 
 

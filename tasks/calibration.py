@@ -40,17 +40,34 @@ class MasterBias(Task):
         return master_bias
 
     def _create_masterbias(self, biases: list[NDArray], method='median')-> NDArray:
-        if method == 'median':
-            return median_combine(biases)
-        else:
-            raise NotImplementedError
-
-    def __call__(self, biases: list[NDArray]):
         """
-        Generate a master bias frame from a list of bias images.
+        Create a master bias frame from a list of bias frames using the specified method.
         :param biases: list of numpy arrays
             List of detector images containing bias frames.
+        :param method: str
+            Method to combine bias frames. Currently only 'median' is implemented.
         :return: master_bias: numpy array
             The generated master bias frame.
         """
-        return self._create_masterbias(biases)
+        if method == 'median':
+            return median_combine(biases)
+        else:
+            # print available methods
+            self.print_methods()
+            raise NotImplementedError
+
+    @property
+    def methods(self):
+        """
+        Return a dictionary of available methods for creating master bias and their function signatures.
+        :return: dict
+            Dictionary with method names as keys and function signatures as values.
+        """
+        return {
+            'median': 'core.image_operations.median_combine(images: list[np.ndarray]) -> np.ndarray',
+        }
+
+
+    def __call__(self, biases: list[NDArray],  method='median') -> NDArray:
+        return self._create_masterbias(biases, method=method)
+
