@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
+from astropy.io import fits
 import logging
 
 from datamodels.image_utils import ensure_dataarray, slice_data
@@ -59,7 +60,7 @@ class Output(BaseModel):
     output_slice: tuple[slice, ...] = Field(..., alias="data_slice",
                                             description="List of Slice objects defining the portion of the full detector data array "
                                                         "that this Detector Output maps to.")
-    fits_header: Optional[Dict[str, Any]] = Field(default=None,
+    fits_header: Optional[fits.Header] = Field(default=None,
                                                  description="FITS header for this output if available.")
     parent: Optional["DetImage"] = Field(default=None, description="Parent detector image.")
 
@@ -68,9 +69,18 @@ class Output(BaseModel):
 
     @property
     def data(self) -> xr.DataArray:
+        # Full data from parent DetImage corresponding to this output, including any prescan/overscan.
         if self.parent is None or getattr(self.parent, "data", None) is None:
             raise ValueError("Attach this Output to a DetImage with valid data.")
         return slice_data(self.parent.data, self.output_slice)
+
+    def set_data_in_parent(self, new_data: xr.DataArray | NDArray):
+        if self.parent is None or getattr(self.parent, "data", None) is None:
+            raise ValueError("Attach this Output to a DetImage with valid data.")
+        # Ensure new_data is xr.DataArray
+        new_data_da = ensure_dataarray(new_data)
+        # Assign new data to the appropriate slice in the parent DetImage
+        self.parent.data[self.output_slice] = new_data_da
 
     def show(self, ax=None, save=None, **imshow_kwargs):
         if ax is None:
