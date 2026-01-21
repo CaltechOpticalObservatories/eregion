@@ -1,34 +1,27 @@
 from datamodels.image import *
 from datamodels.image_utils import ensure_dataarray, load_image_fits
-from datamodels.detector_config import DetectorConfig
-from tasks.task import Task, LazyTask
+from configs.config import DetectorConfig
+from tasks.task import LazyTask
 
-import logging
 import os, glob2, time
-from astropy.io import fits
-from typing import Iterator, Generator, Callable, Optional, Iterable, Union
+import importlib
+from typing import Iterator, Generator, Callable, Optional, Iterable
 
-from prefect import task, flow
-from prefect.futures import wait
-
-logger = logging.getLogger(__name__)
+from joblib import Parallel, delayed
 
 
 ## Classes to handle image generation from configuration files
 class ImageCreator(LazyTask):
-    def __init__(self, detector_config=None, name='image_creator', watch_mode=False, poll_interval=10, **kwargs):
+    def __init__(self, detector_config, name='image_creator', watch_mode=False, poll_interval=10, **kwargs):
         super().__init__(name, watch_mode, poll_interval, **kwargs)
 
-        # TODO: if no detector_config is provided, try to generate from a FITS file later
-        if detector_config is not None:
-            self.set_detector_config(detector_config)
-        else:
-            raise ValueError("Detector configuration must be provided.")
+        # Load detector configuration
+        self.det_config = DetectorConfig(config_input=detector_config)
 
-        # Store a Prefect task for identification; wrap callables on registration.
+        # Store a custom function for identification
         self._identifier_task: Optional[Callable[..., str]] = None
 
-        # Store a Prefect task for image loading; wrap callables on registration.
+        # Store a custom function for image loading
         self._fitsloader_task: Optional[Callable[..., np.ndarray]] = None
 
         # Store processed filenames
@@ -40,30 +33,36 @@ class ImageCreator(LazyTask):
         :param detector_config: str or dict
             Path to a YAML config file or config data as a string or dictionary.
         """
-        self.config = DetectorConfig(config_input=detector_config).config
+        self.det_config = DetectorConfig(config_input=detector_config)
 
-    def set_identifier(self, func: Callable[..., str]) -> None:
+    def set_identifier(self, func: str | Callable[..., str]) -> None:
         """
         Register a custom image-type identification function.
-        Accepts only a plain callable to be wrapped as a Prefect task.
         Expected signature: func(filename: str, **kwargs) -> str
         """
         if not callable(func):
-            raise TypeError("identifier must be callable.")
-        self._identifier_task = task(func, name="custom_identifier")
+            try:
+                module, cls = func.rsplit('.', 1)
+                func = getattr(importlib.import_module(module), cls)
+            except Exception as e:
+                raise ValueError(f"Error loading identifier function '{func}': {e}")
+        self._identifier_task = func
 
-    def set_fitsloader(self, func: Callable[..., str]) -> None:
+    def set_fitsloader(self, func: str | Callable[..., str]) -> None:
         """
         Register a custom FITS loading function. It should return a tuple of
         (data_list, header_list).
-        Accepts only a plain callable to be wrapped as a Prefect task.
+        Must have filename as a required argument.
         Expected signature: func(filename: str, **kwargs) -> Tuple(List[Any], List[astropy.io.fits.Header])
         """
         if not callable(func):
-            raise TypeError("fitsloader must be callable.")
-        self._fitsloader_task = task(func, name="custom_fits_loader")
+            try:
+                module, cls = func.rsplit('.', 1)
+                func = getattr(importlib.import_module(module), cls)
+            except Exception as e:
+                raise ValueError(f"Error loading FITS loader function '{func}': {e}")
+        self._fitsloader_task = func
 
-    @task
     def _guess_image_type_from_header(self, header, keywords=None):
         """
         Default image type guessing logic based on FITS header.
@@ -98,13 +97,13 @@ class ImageCreator(LazyTask):
         return 'unknown'  # Default assumption
 
     # ----------------- Input sources -----------------
-    def from_files(self, input_path: str | list[str]) -> Iterator[List[str]]:
+    def from_files(self, input_path: str | list[str]) -> Iterator[list[str]]:
         """
         Yields batches of file paths.
         - If watch_mode=False: yields a single batch with all discovered files.
         - If watch_mode=True: watches a directory/glob and yields newly discovered files.
         """
-        def _discover_once() -> List[str]:
+        def _discover_once() -> list[str]:
             if isinstance(input_path, list):
                 filenames = [f for f in input_path if os.path.isfile(f) and '.fits' in f]
             elif os.path.isdir(input_path):
@@ -117,7 +116,7 @@ class ImageCreator(LazyTask):
                 raise ValueError(
                     "Input path must be a FITS file, a list of FITS files, "
                     "a directory with FITS files, or a glob pattern for FITS files.")
-            return filenames
+            return sorted(filenames)
 
         if not self.watch_mode:
             batch = _discover_once()
@@ -132,7 +131,7 @@ class ImageCreator(LazyTask):
                 yield new_files
             time.sleep(self.poll_interval)
 
-    def from_arrays(self, input_arrays: Iterable[np.ndarray]) -> Iterator[List[np.ndarray]]:
+    def from_arrays(self, input_arrays: Iterable[np.ndarray]) -> Iterator[list[np.ndarray]]:
         """
         Yields batches of input data arrays.
         - If watch_mode=False: yields a single batch with all arrays collected
@@ -147,32 +146,45 @@ class ImageCreator(LazyTask):
             yield [array]
 
     # ----------------- Image object builders -----------------
-    @flow
     def _build_image_objects(self, input_data_array, input_headers, image_type, filename=None):
+        cfg = self.det_config.config
+        ## use joblib to parallelize building image objects
         images = []
-        for obj in self.config['objects']:
-            image = self._build_single_image_object.submit(obj, input_data_array, input_headers, image_type, filename=filename)
-            images.append(image)
-        wait(images)
-        images = [img.result() for img in images if img.result() is not None]
+        results = Parallel(n_jobs=self.n_jobs)(
+            delayed(self._build_single_image_object)(
+                obj, cfg['detector_output_class'], input_data_array, input_headers, image_type, filename
+            )
+            for obj in cfg['objects']
+        )
+        for img in results:
+            if img is not None:
+                images.append(img)
         return images
 
-    @task
-    def _build_single_image_object(self, obj, input_data_array, input_headers, image_type, filename=None):
+    def _build_single_image_object(self,
+                                   obj,
+                                   output_class,
+                                   input_data_array,
+                                   input_headers,
+                                   image_type,
+                                   filename=None):
         # If a filename is given, check if it matches the filename format
         if filename is not None:
             if not glob2.fnmatch.fnmatch(os.path.basename(filename), obj['filename_format']):
-                logger.info("Skipping file %s as it does not match filename format for this object (%s)",
+                self.logger.info("Skipping file %s as it does not match filename format for this object (%s)",
                             filename, obj['filename_format'])
                 return None
 
+
         # pop outputs and class from object
         outputs = obj.pop('outputs')
+        self.logger.info("Building object %s with %s %s outputs and type %s from file %s", obj['class'], len(outputs),
+                         output_class, image_type, filename or 'array input')
         ImageClass = globals()[obj.pop('class')]
-        OutputClass = globals()[self.config['detector_output_class']]
+        OutputClass = globals()[output_class]
 
         # instantiate image object
-        image = ImageClass(image_type=image_type, **obj, filename=filename)
+        image = ImageClass(image_type=image_type, **obj, filename=filename or 'none')
         image_data_size = [0] * image.ndim
         for output in outputs:
             output_obj = OutputClass(**output)
@@ -193,26 +205,27 @@ class ImageCreator(LazyTask):
 
     # ----------------- Main lazy run method -----------------
     def lazy_run(self,
-                 input_source: Union[str, list[str], Iterable[np.ndarray]],
+                 input_source: str | list[str] | Iterable[np.ndarray],
                  identifier_func: Optional[Callable[..., str]] = None,
-                 identifier_kwargs: Optional[Dict[str, Any]] = None,
+                 identifier_kwargs: Optional[dict[str, Any]] = None,
                  fitsloader_func: Optional[Callable[..., str]] = None,
-                 fitsloader_kwargs: Optional[Dict[str, Any]] = None
-    ) -> Generator[List, None, None]:
+                 fitsloader_kwargs: Optional[dict[str, Any]] = None
+    ) -> Generator[dict[str, list], None, None]:
         """
         Main lazy run method to generate image objects from input source.
         :param input_source: str or list of str or Iterable of np.ndarray
             Input source can be a path to FITS files (file, directory, glob pattern),
             a list of FITS file paths, or an iterable of numpy arrays.
-        :param identifier_func: Callable, optional
+        :param identifier_func: str (from pipeline config) or Callable (if using directly), optional
             Custom image type identification function.
         :param identifier_kwargs: dict, optional
             Additional keyword arguments for the identifier function.
-        :param fitsloader_func: Callable, optional
+        :param fitsloader_func: str (from pipeline config) or Callable (if using directly), optional
             Custom FITS loading function.
         :param fitsloader_kwargs: dict, optional
             Additional keyword arguments for the FITS loader function.
-        :return: Generator yielding lists of DetImage objects.
+        :return: {"images": list of DetImage}
+            Generator yielding lists of DetImage objects, stored under the key 'images' in the yielded dict.
         """
         identifier_kwargs = identifier_kwargs or {}
         if identifier_func is not None:
@@ -222,25 +235,28 @@ class ImageCreator(LazyTask):
         if fitsloader_func is not None:
             self.set_fitsloader(fitsloader_func)
 
-        if isinstance(input_source, (str, list)):
+        if isinstance(input_source, (str, list[str])):
             file_batches = self.from_files(input_source)
             for file_batch in file_batches:
                 images_batch = []
                 for filename in file_batch:
+                    self.logger.info("Processing file %s", filename)
                     # Load FITS data
                     if self._fitsloader_task is not None:
                         input_data_array, input_headers = self._fitsloader_task(filename=filename, **fitsloader_kwargs)
                     else:
                         input_data_array, input_headers = load_image_fits(filename)
+                    self.logger.debug("Loaded %d HDU from file %s", len(input_data_array), filename)
                     # Determine image type
                     if self._identifier_task is not None:
                         image_type = self._identifier_task(filename=filename, **identifier_kwargs)
                     else:
-                        image_type = self._guess_image_type_from_header(filename=filename, **identifier_kwargs)
+                        image_type = self._guess_image_type_from_header(input_headers[0], **identifier_kwargs)
+                    self.logger.debug("Identified image type as %s for file %s", image_type, filename)
                     # Build image objects
                     images = self._build_image_objects(input_data_array, input_headers, image_type, filename=filename)
                     images_batch.extend(images)
-                yield images_batch
+                yield {'images':images_batch}
         else:
             array_batches = self.from_arrays(input_source)
             for array_batch in array_batches:
@@ -252,31 +268,32 @@ class ImageCreator(LazyTask):
                         image_type = 'unknown'
                     images = self._build_image_objects(input_data_array, image_type, filename=None)
                     images_batch.extend(images)
-                yield images_batch
+                yield {'images':images_batch}
 
     def run(self,
-            input_source: Union[str, list[str], Iterable[np.ndarray]],
-            identifier_func: Optional[Callable[..., str]] = None,
-            identifier_kwargs: Optional[Dict[str, Any]] = None,
-            fitsloader_func: Optional[Callable[..., str]] = None,
-            fitsloader_kwargs: Optional[Dict[str, Any]] = None
-    ) -> List:
+            input_source: str | list[str] | Iterable[np.ndarray],
+            identifier_func: Optional[str | Callable[..., str]] = None,
+            identifier_kwargs: Optional[dict[str, Any]] = None,
+            fitsloader_func: Optional[str | Callable[..., str]] = None,
+            fitsloader_kwargs: Optional[dict[str, Any]] = None
+    ) -> dict[str, list]:
         """
         Eager run method to generate image objects from input source.
         :param input_source: str or list of str or Iterable of np.ndarray
             Input source can be a path to FITS files (file, directory, glob pattern),
             a list of FITS file paths, or an iterable of numpy arrays.
-        :param identifier_func: Callable, optional
+        :param identifier_func: str (from pipeline config) or Callable (if using directly), optional
             Custom image type identification function.
         :param identifier_kwargs: dict, optional
             Additional keyword arguments for the identifier function.
-        :param fitsloader_func: Callable, optional
+        :param fitsloader_func: str (from pipeline config) or Callable (if using directly), optional
             Custom FITS loading function.
         :param fitsloader_kwargs: dict, optional
             Additional keyword arguments for the FITS loader function.
-        :return: List of DetImage objects.
+        :return: {"images": list of DetImage}
+            List of DetImage objects stored under the key 'images' in the returned dict.
         """
         all_images = []
-        for images_batch in self.lazy_run(input_source, identifier_func, identifier_kwargs, fitsloader_func, fitsloader_kwargs):
-            all_images.extend(images_batch)
-        return all_images
+        for batch in self.lazy_run(input_source, identifier_func, identifier_kwargs, fitsloader_func, fitsloader_kwargs):
+            all_images.extend(batch['images'])
+        return {'images':all_images}
