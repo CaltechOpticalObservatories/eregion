@@ -1,0 +1,32 @@
+# This is an example pipeline flow configuration for creating a master bias frame
+# Example
+
+debug: false                    # Optional: set to true to enable debug mode (more verbose logging, etc.)
+pipeline:
+  - name: image_creator
+    task: tasks.imagegen.ImageCreator
+    lazy: false
+    init:                                                                                                     # Initialization parameters for the image creator
+      detector_config: "/Users/yashvi/Desktop/Detector Characterization Tools/eregion/configs/detectors/deimos_singledet.yaml"      # For required params, see the task documentation
+                                                                                                              # Any additional params are passed as kwargs that get set in the task's meta dict
+                                                                                                              # See task documentation for which kwargs are used
+
+    run:                                                                                                      # Run-time inputs and parameters for the image creator
+      params:                                                                                                 # Check which params go here in the task documentation
+        input_source: "/Users/yashvi/Desktop/Detector Characterization Tools/DTU_dettest/DTU_singledet_acceptance/PTC/SCI/20250812-101350/*_bias_*.fits"
+        identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
+
+
+  - name: master_bias
+    task: tasks.calibration.MasterBias
+    lazy: false
+    init:
+      method: "median"                                      # Optional param (kwarg) method to combine bias frames; see task documentation for options
+    run:
+      inputs:                                               # use inputs to specify data input coming in from output of other tasks
+        bias_images: image_creator.data.images              # E.g. Input images from the image creator task's output
+                                                            # Each task's outputs are objects of class TaskResult
+                                                            # TaskResult.data is a dict containing the actual data produced by the task
+                                                            # Check which outputs are available in the task documentation
+
+    depends_on: [image_creator]

@@ -1,10 +1,13 @@
 from collections.abc import Iterator
 from abc import ABC, abstractmethod
-from datetime import datetime
+
 from pydantic import BaseModel, Field
-from typing import Any, Dict
+from typing import Any
+
 import os
+import logging
 import multiprocessing
+from astropy.time import Time
 
 # Base abstract class for tasks, should have a call method for direct execution and a run method for pipeline workflows
 class Task(ABC):
@@ -13,6 +16,8 @@ class Task(ABC):
     def __init__(self, name=None, **kwargs):
         self.name = name or self.__class__.__name__
         self.n_jobs = kwargs.get('n_jobs') or self.get_default_n_jobs()
+        self.logger = logging.getLogger(self.name)
+
         self.meta = {}
         self.meta.update(kwargs)
         for key in self.required_keys:
@@ -44,6 +49,14 @@ class Task(ABC):
     def __call__(self, *args, **kwargs):
         """Directly execute the task."""
         return self.run(*args, **kwargs)
+
+    def set_logging_level(self, level: int):
+        """
+        Set the logging level.
+        :param level: int
+            Logging level (e.g., logging.DEBUG, logging.INFO).
+        """
+        self.logger.setLevel(level)
 
     ####### Some parallelization utility functions #######
     @staticmethod
@@ -89,11 +102,11 @@ class LazyTask(Task):
 
 class TaskResult(BaseModel):
     task_name: str
-    data: Dict[str, Any]
+    data: dict[str, Any]
 
-    params: Dict[str, Any] = Field(default_factory=dict)
-    upstream: Dict[str, "TaskResult"] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    params: dict[str, Any] = Field(default_factory=dict)
+    upstream: list[str] = Field(default_factory=list)
+    timestamp: Time = Field(default_factory=lambda: Time.now())
 
     model_config = {"arbitrary_types_allowed": True}
 

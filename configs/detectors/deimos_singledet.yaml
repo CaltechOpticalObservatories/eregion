@@ -1,0 +1,54 @@
+## Example detector definition file for the DEIMOS instrument CCD array
+## A single FITS file contains 8 extensions, one per detector, so 8 DetImage instances are created from this file.
+## Each DetImage instance has two outputs (two channels per detector).
+---
+description: DEIMOS CCD detector single
+detector_type: CCD # (specify the type of detector, e.g., CCD, CMOS, H2RG, etc.)
+detector_output_class: CCDOutput # (use the correct class here for the detector output type)
+
+objects:
+  - name: 'det_1'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2188
+      y_size: 4125
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 1 # FITS extension ID
+        ext_slice: [!slice [0, 4125], !slice [0, 1094]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4125], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1094, 1094]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4125, 4125]
+        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # top left pixel
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 2 # FITS extension ID
+        ext_slice: [!slice [0, 4125], !slice [0, 1094]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4125], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1094, 1094]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4125, 4125]
+        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 1094]  # top right pixel
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: -46.08  # mm
+      y_cen: 30.72  # mm
+      angle: 0.0  # degrees
+
+
+
+
+
+
