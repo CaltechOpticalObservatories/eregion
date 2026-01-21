@@ -16,7 +16,7 @@ class Task(ABC):
     def __init__(self, name=None, **kwargs):
         self.name = name or self.__class__.__name__
         self.n_jobs = kwargs.get('n_jobs') or self.get_default_n_jobs()
-        self.logger = logging.getLogger(self.name)
+        self.logger = self.configure_logger()
 
         self.meta = {}
         self.meta.update(kwargs)
@@ -49,6 +49,18 @@ class Task(ABC):
     def __call__(self, *args, **kwargs):
         """Directly execute the task."""
         return self.run(*args, **kwargs)
+
+    def configure_logger(self):
+        """
+        Configure the logger for the task.
+        """
+        logger = logging.getLogger(self.name)
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        return logger
 
     def set_logging_level(self, level: int):
         """
