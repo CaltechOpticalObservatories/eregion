@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, Tuple, List, Literal
+from typing import Optional, Any, Literal
 from pydantic import BaseModel, Field, ConfigDict
-from numpy.typing import NDArray
 
 import numpy as np
 import pandas as pd
@@ -46,6 +45,11 @@ class DetImageMeta(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
+    def update(self, other: dict[str, Any]):
+        for key, value in other.items():
+            if not hasattr(self, key):
+                setattr(self, key, value)
+
 class Output(BaseModel):
     """
     One amplifier/output region within a detector image.
@@ -74,7 +78,7 @@ class Output(BaseModel):
             raise ValueError("Attach this Output to a DetImage with valid data.")
         return slice_data(self.parent.data, self.output_slice)
 
-    def set_data_in_parent(self, new_data: xr.DataArray | NDArray):
+    def set_data_in_parent(self, new_data: xr.DataArray | np.ndarray):
         if self.parent is None or getattr(self.parent, "data", None) is None:
             raise ValueError("Attach this Output to a DetImage with valid data.")
         # Ensure new_data is xr.DataArray
@@ -107,7 +111,7 @@ class CCDOutput(Output):
                                             description="Slice object defining the parallel overscan region for this output.")
     parallel_axis: Optional[Literal['x', 'y']] = Field(None,
                                 description="Name of the parallel readout axis for this output ('x' or 'y').")
-    readout_pixel: Optional[Tuple[int, int]] = Field(None,
+    readout_pixel: Optional[tuple[int, int]] = Field(None,
                                            description="Tuple defining the (y, x) pixel coordinates of the readout amplifier "
                                                        "for this output in the full detector array.")
 
@@ -180,10 +184,10 @@ class DetImage:
     """
     def __init__(
         self,
-        data: Optional[xr.DataArray | NDArray] = None,
-        output_objects: Optional[Dict[str, Output]] = None,
+        data: Optional[xr.DataArray | np.ndarray] = None,
+        output_objects: Optional[dict[str, Output]] = None,
         image_type: Optional[str] = None,
-        meta: Optional[DetImageMeta | Dict[str, Any]] = None,
+        meta: Optional[DetImageMeta | dict[str, Any]] = None,
         **kwargs: Any,
     ):
 
@@ -197,7 +201,7 @@ class DetImage:
             meta = kwargs
 
         if isinstance(meta, DetImageMeta):
-            self.meta: DetImageMeta | Dict[str, Any] = meta
+            self.meta: DetImageMeta | dict[str, Any] = meta
         elif isinstance(meta, dict) and meta:
             # Validate only if sufficient keys are present; otherwise store as-is.
             if {"name", "properties"}.issubset(meta.keys()):
@@ -206,6 +210,9 @@ class DetImage:
                 self.meta = dict(meta)
         else:
             self.meta = {}
+        # Merge any additional kwargs into meta
+        self.meta.update(kwargs)
+
 
         # Outputs
         if output_objects is None and self.data is not None:
@@ -266,17 +273,17 @@ class FocalPlaneImage:
         self,
         num_detectors: int,
         dim: tuple[int, int],
-        fp_center: Optional[Tuple[float, float]] = None,
-        det_images: Optional[List[DetImage]] = None,
+        fp_center: Optional[tuple[float, float]] = None,
+        det_images: Optional[list[DetImage]] = None,
         **kwargs,
     ):
-        self.meta: Dict = {}
+        self.meta: dict = {}
         if kwargs:
             self.meta.update(kwargs)
         self.num_detectors = int(num_detectors)
         self.dim = tuple(dim)
         self.fp_cen_pix = fp_center if fp_center is not None else (dim[0] / 2, dim[1] / 2)
-        self.det_images: List[DetImage] = []
+        self.det_images: list[DetImage] = []
         if det_images:
             for di in det_images:
                 self.add_DetImage(di)

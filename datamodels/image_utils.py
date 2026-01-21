@@ -1,15 +1,12 @@
 import numpy as np
 import xarray as xr
-from typing import Union, Tuple, List, Any
-from numpy.typing import NDArray
+from typing import Any
 from astropy.io import fits
 
-from prefect import task
-
-def ensure_dataarray(data: Union[xr.DataArray, NDArray]) -> xr.DataArray:
+def ensure_dataarray(data: xr.DataArray | np.ndarray) -> xr.DataArray:
     """
     Coerce 2D data to xr.DataArray with dims ('y','x') and integer coords.
-    :type data: Union[xr.DataArray, NDArray]
+    :type data: Union[xr.DataArray, np.ndarray]
     :rtype: xr.DataArray
     :raises TypeError: if data is not xarray.DataArray or numpy.ndarray
     :return: xarray.DataArray with dims ('y','x') or ('y','x','t')
@@ -72,8 +69,8 @@ def slice_data(data: xr.DataArray, slicer: tuple[slice, ...]) -> xr.DataArray:
     else:
         raise ValueError("DataArray must be 2D or 3D.")
 
-@task
-def load_image_fits(filename: str) -> Tuple[List[Any], List[fits.Header]]:
+
+def load_image_fits(filename: str) -> tuple[list[Any], list[fits.Header]]:
     """
     Load FITS file and return the data as a list with hdu extensions as the first axis.
     :param filename: str

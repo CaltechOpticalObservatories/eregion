@@ -34,9 +34,9 @@ class ConfigLoader(ABC):
         self.config = None
         self.logger = logging.getLogger(__name__)
 
-        if isinstance(config_input, str) and os.path.isfile(config_input) and config_input.endswith(('.yaml', '.yml')):
+        if isinstance(config_input, str) and config_input.endswith(('.yaml', '.yml')):
             self.set_from_file(config_input)
-        elif isinstance(config_input, str) and not os.path.isfile(config_input):
+        elif isinstance(config_input, str) and not config_input.endswith(('.yaml', '.yml')):
             self.set_from_string(config_input)
         elif isinstance(config_input, dict):
             self.set_from_dict(config_input)

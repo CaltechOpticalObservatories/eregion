@@ -1,6 +1,6 @@
 from copy import deepcopy
 
-from typing import List, Optional, Iterable, Iterator, Dict, Any, Union
+from typing import Optional, Iterable, Iterator, Any
 import numpy as np
 import xarray as xr
 
@@ -16,7 +16,7 @@ class BiasSubtraction(LazyTask):
     required_keys = []
 
     def __init__(self,
-                 master_bias: Union[DetImage, np.ndarray, xr.DataArray],
+                 master_bias: DetImage | np.ndarray | xr.DataArray,
                  name: Optional[str] = "subtract_bias",
                  **kwargs
                  ):
@@ -61,14 +61,14 @@ class BiasSubtraction(LazyTask):
         self,
         images: Iterable[DetImage],
         batch_size: int = 1,
-    ) -> Iterator[List[DetImage]]:
+    ) -> Iterator[list[DetImage]]:
         """
         Lazy execution: yield processed batches as they complete.
         - images: an iterable/stream of DetImage
         - batch_size: number of images to process per batch
         """
 
-        batch: List[DetImage] = []
+        batch: list[DetImage] = []
         for img in images:
             batch.append(img)
             if len(batch) >= batch_size:
@@ -177,13 +177,13 @@ class ScanSubtraction(LazyTask):
         self,
         images: Iterable[DetImage],
         batch_size: int = 1,
-    ) -> Iterator[List[DetImage]]:
+    ) -> Iterator[list[DetImage]]:
         """
         Lazy execution: yield processed batches as they complete.
         - images: an iterable/stream of DetImage
         - batch_size: number of images to process per batch
         """
-        batch: List[DetImage] = []
+        batch: list[DetImage] = []
         for img in images:
             batch.append(img)
             if len(batch) >= batch_size:
@@ -225,7 +225,7 @@ class ScanSubtraction(LazyTask):
 class SigmaClipMasking(LazyTask):
     required_keys = []
 
-    def __init__(self, name: Optional[str] = "sigma_clip_masking", sigma_clip_args: Dict[str, Any] = None, **kwargs):
+    def __init__(self, name: Optional[str] = "sigma_clip_masking", sigma_clip_args: dict[str, Any] = None, **kwargs):
         """
         Initialize the SigmaClipMasking task.
         :param name: Optional[str]
@@ -289,13 +289,13 @@ class SigmaClipMasking(LazyTask):
         self,
         images: Iterable[DetImage],
         batch_size: int = 1,
-    ) -> Iterator[List[DetImage]]:
+    ) -> Iterator[list[DetImage]]:
         """
         Lazy execution: yield processed batches as they complete.
         - images: an iterable/stream of DetImage
         - batch_size: number of images to process per batch
         """
-        batch: List[DetImage] = []
+        batch: list[DetImage] = []
         for img in images:
             batch.append(img)
             if len(batch) >= batch_size:

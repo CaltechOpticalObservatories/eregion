@@ -1,6 +1,6 @@
 ### Collection of utility functions for image processing tasks.
 import numpy as np
-from typing import Union, Callable, Any
+from typing import Callable, Any
 from astropy.stats import sigma_clip
 
 def median_combine(images: list[np.ndarray]) -> np.ndarray:
@@ -37,7 +37,7 @@ def mean_combine(images: list[np.ndarray]) -> np.ndarray:
     stacked_images = np.stack(images, axis=0)
     return np.mean(stacked_images, axis=0)
 
-def subtract_from_image(image: np.ndarray, subtract_object: Union[np.ndarray, float], method: Callable, *args):
+def subtract_from_image(image: np.ndarray, subtract_object: np.ndarray | float, method: Callable, *args):
     """
     Subtract a given object (array or scalar) from an image.
 
@@ -66,7 +66,7 @@ def simple_mean(data: np.ndarray, *args) -> Any:
 def median_by_axis(data: np.ndarray, axis: int, *args) -> np.ndarray:
     return np.median(data, axis=axis, keepdims=True)
 
-def sigma_clip_image(image: Union[np.ndarray, np.ma.MaskedArray], sigma: float, axis: Union[int, None]=None, **kwargs) -> np.ma.MaskedArray:
+def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray, sigma: float, axis: int | None=None, **kwargs) -> np.ma.MaskedArray:
     """
     Apply sigma clipping (astropy.stats.sigma_clip) to an image.
 
