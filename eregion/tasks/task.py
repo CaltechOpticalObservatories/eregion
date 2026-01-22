@@ -87,7 +87,10 @@ class Task(ABC):
                 except ValueError:
                     pass
 
-        cpu_count = multiprocessing.cpu_count()
+        try:
+            cpu_count = multiprocessing.cpu_count()
+        except ModuleNotFoundError:
+            cpu_count = 1
         return max(min_jobs, int(cpu_count * max_fraction))
 
 

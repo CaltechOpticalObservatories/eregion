@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 import yaml
 import logging
-import os
 
 # A yaml constructor for slice objects
 def slice_constructor(loader, node):

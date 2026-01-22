@@ -4,10 +4,10 @@ from typing import Optional, Iterable, Iterator, Any
 import numpy as np
 import xarray as xr
 
-from tasks.task import LazyTask
-from datamodels.image import DetImage, Output
-from datamodels.image_utils import ensure_dataarray
-from core.image_operations import subtract_from_image, simple_median, median_by_axis, simple_mean, sigma_clip_image
+from eregion.tasks.task import LazyTask
+from eregion.datamodels.image import DetImage, Output
+from eregion.datamodels.image_utils import ensure_dataarray
+from eregion.core.image_operations import subtract_from_image, sigma_clip_image
 
 from joblib import Parallel, delayed
 

@@ -1,9 +1,9 @@
 import numpy as np
 
-from tasks.task import Task
-from datamodels.image import DetImage, Output
-from datamodels.image_utils import ensure_dataarray
-from core.image_operations import median_combine
+from eregion.tasks.task import Task
+from eregion.datamodels.image import DetImage
+from eregion.datamodels.image_utils import ensure_dataarray
+from eregion.core.image_operations import median_combine
 
 
 # Task to generate master bias

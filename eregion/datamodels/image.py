@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 import logging
 
-from datamodels.image_utils import ensure_dataarray, slice_data
+from eregion.datamodels.image_utils import ensure_dataarray, slice_data
 
 logger = logging.getLogger(__name__)
 

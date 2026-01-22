@@ -1,6 +1,6 @@
 from typing import Iterator
-from tasks.task import TaskResult
-from configs.config import PipelineConfig
+from eregion.tasks.task import TaskResult
+from eregion.configs.config import PipelineConfig
 
 from prefect import task, flow
 import importlib

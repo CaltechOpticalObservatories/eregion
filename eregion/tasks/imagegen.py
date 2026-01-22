@@ -1,7 +1,7 @@
-from datamodels.image import *
-from datamodels.image_utils import ensure_dataarray, load_image_fits
-from configs.config import DetectorConfig
-from tasks.task import LazyTask
+from eregion.datamodels.image import *
+from eregion.datamodels.image_utils import ensure_dataarray, load_image_fits
+from eregion.configs.config import DetectorConfig
+from eregion.tasks.task import LazyTask
 
 import os, glob2, time
 import importlib
