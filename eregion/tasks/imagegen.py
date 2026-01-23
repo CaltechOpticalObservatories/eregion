@@ -105,18 +105,59 @@ class ImageCreator(LazyTask):
         """
         def _discover_once() -> list[str]:
             if isinstance(input_path, list):
-                filenames = [f for f in input_path if os.path.isfile(f) and '.fits' in f]
-            elif os.path.isdir(input_path):
-                filenames = glob2.glob(os.path.join(input_path, '*.fits*'))
-            elif '*' in input_path:
-                filenames = [f for f in glob2.glob(input_path) if os.path.isfile(f) and '.fits' in f]
-            elif os.path.isfile(input_path) and '.fits' in input_path:
-                filenames = [input_path]
+                self.logger.info("Provided input_path is a list of files, checking each...")
+                filenames = []
+                for f in input_path:
+                    if os.path.exists(f) and os.path.isfile(f) and '.fits' in f:
+                        filenames.append(f)
+                    else:
+                        self.logger.warn(f"Path {f} either doesn't exist, is not a file or is not a FITS file")
+                return sorted(filenames)
+
+            elif isinstance(input_path, str):
+                if '*' in input_path:
+                    if '.fits' in input_path:
+                        self.logger.info(f"Provided input_path is a glob pattern for FITS files, {input_path}")
+                        filenames = glob2.glob(input_path, recursive=True)
+                        if len(filenames) == 0:
+                            self.logger.warn(f"No FITS files found that match {input_path}")
+                            return []
+
+                    else:
+                        self.logger.info(f"Provided input_path is a glob pattern, {input_path}, searching for all FITS files within.")
+                        filenames = glob2.glob(os.path.join(input_path, '**/*.fits*'), recursive=True)
+                        if len(filenames) == 0:
+                            self.logger.warn(f"No FITS files found in directories and sub-directories of {input_path}")
+                            return []
+                    return sorted(filenames)
+
+                else:
+                    if os.path.exists(input_path):
+                        if os.path.isdir(input_path):
+                            self.logger.info(f"Provided input_path is a directory, {input_path}")
+                            filenames = glob2.glob(os.path.join(input_path, '**/*.fits*'), recursive=True)
+                            if len(filenames) == 0:
+                                self.logger.warn(f"No FITS files found in {input_path}")
+                                return []
+
+                        else:
+                            if '.fits' in input_path:
+                                self.logger.info(f"Provided input_path is a FITS file, {input_path}")
+                                filenames = [input_path]
+                            else:
+                                self.logger.error(f"Provided input_path is not a FITS file, {input_path}")
+                                raise ValueError("Provided input_path is not a FITS file")
+                        return sorted(filenames)
+
+                    else:
+                        self.logger.error(f"Provided input_path does not exist, {input_path}")
+                        raise FileNotFoundError("Provided input_path does not exist")
+
             else:
+                self.logger.error(f"Invalid input")
                 raise ValueError(
                     "Input path must be a FITS file, a list of FITS files, "
                     "a directory with FITS files, or a glob pattern for FITS files.")
-            return sorted(filenames)
 
         if not self.watch_mode:
             batch = _discover_once()
@@ -238,6 +279,11 @@ class ImageCreator(LazyTask):
         if isinstance(input_source, (str, list[str])):
             file_batches = self.from_files(input_source)
             for file_batch in file_batches:
+                ## if file_batch is empty, print a warning
+                if len(file_batch) == 0:
+                    self.logger.warn("Empty input source. Skipping.")
+                    continue
+
                 images_batch = []
                 for filename in file_batch:
                     self.logger.info("Processing file %s", filename)
@@ -260,6 +306,11 @@ class ImageCreator(LazyTask):
         else:
             array_batches = self.from_arrays(input_source)
             for array_batch in array_batches:
+                ## if array_batch is empty, print a warning
+                if len(array_batch) == 0:
+                    self.logger.warn("Empty input source. Skipping.")
+                    continue
+
                 images_batch = []
                 for input_data_array in array_batch:
                     if self._identifier_task is not None:

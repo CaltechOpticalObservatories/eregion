@@ -79,7 +79,7 @@ def load_image_fits(filename: str) -> tuple[list[Any], list[fits.Header]]:
         A tuple containing a list of data arrays (image/table/...) for each HDU and a list of corresponding FITS headers.
     """
     input_data_array, input_headers = [], []
-    with fits.open(filename) as hdulist:
+    with fits.open(filename, decompress_in_memory=True) as hdulist:
         for hdu in hdulist:
             input_data_array.append(hdu.data)
             input_headers.append(hdu.header)
