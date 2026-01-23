@@ -250,7 +250,8 @@ class ImageCreator(LazyTask):
                  identifier_func: Optional[Callable[..., str]] = None,
                  identifier_kwargs: Optional[dict[str, Any]] = None,
                  fitsloader_func: Optional[Callable[..., str]] = None,
-                 fitsloader_kwargs: Optional[dict[str, Any]] = None
+                 fitsloader_kwargs: Optional[dict[str, Any]] = None,
+                 require_data: bool = True,
     ) -> Generator[dict[str, list], None, None]:
         """
         Main lazy run method to generate image objects from input source.
@@ -265,9 +266,15 @@ class ImageCreator(LazyTask):
             Custom FITS loading function.
         :param fitsloader_kwargs: dict, optional
             Additional keyword arguments for the FITS loader function.
+        :param require_data: bool
+            If True, raises an error if no files are found in the input source.
         :return: {"images": list of DetImage}
             Generator yielding lists of DetImage objects, stored under the key 'images' in the yielded dict.
         """
+        if self.watch_mode:
+            self.logger.info("Running in watch mode, will monitor input source for new data, setting require_data=False")
+            require_data = False
+
         identifier_kwargs = identifier_kwargs or {}
         if identifier_func is not None:
             self.set_identifier(identifier_func)
@@ -282,6 +289,8 @@ class ImageCreator(LazyTask):
                 ## if file_batch is empty, print a warning
                 if len(file_batch) == 0:
                     self.logger.warn("Empty input source. Skipping.")
+                    if require_data:
+                        raise FileNotFoundError("No FITS files found in the input source.")
                     continue
 
                 images_batch = []
@@ -309,6 +318,8 @@ class ImageCreator(LazyTask):
                 ## if array_batch is empty, print a warning
                 if len(array_batch) == 0:
                     self.logger.warn("Empty input source. Skipping.")
+                    if require_data:
+                        raise ValueError("Empty input source.")
                     continue
 
                 images_batch = []
@@ -326,7 +337,8 @@ class ImageCreator(LazyTask):
             identifier_func: Optional[str | Callable[..., str]] = None,
             identifier_kwargs: Optional[dict[str, Any]] = None,
             fitsloader_func: Optional[str | Callable[..., str]] = None,
-            fitsloader_kwargs: Optional[dict[str, Any]] = None
+            fitsloader_kwargs: Optional[dict[str, Any]] = None,
+            require_data: bool = True,
     ) -> dict[str, list]:
         """
         Eager run method to generate image objects from input source.
@@ -341,10 +353,12 @@ class ImageCreator(LazyTask):
             Custom FITS loading function.
         :param fitsloader_kwargs: dict, optional
             Additional keyword arguments for the FITS loader function.
+        :param require_data: bool
+            If True, raises an error if no files are found in the input source.
         :return: {"images": list of DetImage}
             List of DetImage objects stored under the key 'images' in the returned dict.
         """
         all_images = []
-        for batch in self.lazy_run(input_source, identifier_func, identifier_kwargs, fitsloader_func, fitsloader_kwargs):
+        for batch in self.lazy_run(input_source, identifier_func, identifier_kwargs, fitsloader_func, fitsloader_kwargs, require_data):
             all_images.extend(batch['images'])
         return {'images':all_images}
