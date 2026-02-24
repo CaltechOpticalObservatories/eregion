@@ -1,7 +1,5 @@
 import numpy as np
 import xarray as xr
-from typing import Any
-from astropy.io import fits
 
 def ensure_dataarray(data: xr.DataArray | np.ndarray) -> xr.DataArray:
     """
@@ -69,18 +67,3 @@ def slice_data(data: xr.DataArray, slicer: tuple[slice, ...]) -> xr.DataArray:
     else:
         raise ValueError("DataArray must be 2D or 3D.")
 
-
-def load_image_fits(filename: str) -> tuple[list[Any], list[fits.Header]]:
-    """
-    Load FITS file and return the data as a list with hdu extensions as the first axis.
-    :param filename: str
-        Path to the FITS file.
-    :return: Tuple[List[Any], List[fits.Header]]
-        A tuple containing a list of data arrays (image/table/...) for each HDU and a list of corresponding FITS headers.
-    """
-    input_data_array, input_headers = [], []
-    with fits.open(filename, decompress_in_memory=True) as hdulist:
-        for hdu in hdulist:
-            input_data_array.append(hdu.data)
-            input_headers.append(hdu.header)
-    return input_data_array, input_headers

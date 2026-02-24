@@ -1,13 +1,15 @@
+import os
+import glob2
+import time
+import importlib
+from typing import Iterator, Generator, Callable, Optional, Iterable, Any
+from joblib import Parallel, delayed
+
 from eregion.datamodels.image import *
-from eregion.datamodels.image_utils import ensure_dataarray, load_image_fits
+from eregion.datamodels.image_utils import ensure_dataarray
 from eregion.configs.config import DetectorConfig
 from eregion.tasks.task import LazyTask
-
-import os, glob2, time
-import importlib
-from typing import Iterator, Generator, Callable, Optional, Iterable
-
-from joblib import Parallel, delayed
+from eregion.core.io_utils import load_image_fits, parse_list_of_files, guess_image_type_from_header
 
 
 ## Classes to handle image generation from configuration files
@@ -63,38 +65,6 @@ class ImageCreator(LazyTask):
                 raise ValueError(f"Error loading FITS loader function '{func}': {e}")
         self._fitsloader_task = func
 
-    def _guess_image_type_from_header(self, header, keywords=None):
-        """
-        Default image type guessing logic based on FITS header.
-        Parameters
-        ----------
-        header : astropy.io.fits.Header
-            FITS header to inspect for image type.
-        keywords : list of str, optional
-            List of header keywords to check for image type.
-        """
-        # Check given keywords first
-        if keywords:
-            for key in keywords:
-                if key in header:
-                    return header[key].lower()
-
-        # Check common header keywords for image type
-        if 'IMAGETYP' in header:
-            return header['IMAGETYP'].lower()
-        elif 'OBSTYPE' in header:
-            return header['OBSTYPE'].lower()
-        elif 'OBJECT' in header:
-            obj_name = header['OBJECT'].lower()
-            if 'bias' in obj_name:
-                return 'bias'
-            elif 'flat' in obj_name:
-                return 'flat'
-            elif 'dark' in obj_name:
-                return 'dark'
-            elif 'science' in obj_name or 'object' in obj_name:
-                return 'science'
-        return 'unknown'  # Default assumption
 
     # ----------------- Input sources -----------------
     def from_files(self, input_path: str | list[str]) -> Iterator[list[str]]:
@@ -105,59 +75,28 @@ class ImageCreator(LazyTask):
         """
         def _discover_once() -> list[str]:
             if isinstance(input_path, list):
-                self.logger.info("Provided input_path is a list of files, checking each...")
-                filenames = []
-                for f in input_path:
-                    if os.path.exists(f) and os.path.isfile(f) and '.fits' in f:
-                        filenames.append(f)
+                self.logger.info("Provided input_path is a list, checking each item")
+                list_to_process = []
+                for ipath in input_path:
+                    if '*' in ipath:
+                        self.logger.info(f"Item {ipath} is a glob pattern")
+                        list_to_process.extend(glob2.glob(ipath, recursive=True))
                     else:
-                        self.logger.warn(f"Path {f} either doesn't exist, is not a file or is not a FITS file")
-                return sorted(filenames)
+                        self.logger.info(f"Item {ipath} is a regular path string")
+                        list_to_process.append(ipath)
+                return parse_list_of_files(list_to_process)
 
             elif isinstance(input_path, str):
                 if '*' in input_path:
-                    if '.fits' in input_path:
-                        self.logger.info(f"Provided input_path is a glob pattern for FITS files, {input_path}")
-                        filenames = glob2.glob(input_path, recursive=True)
-                        if len(filenames) == 0:
-                            self.logger.warn(f"No FITS files found that match {input_path}")
-                            return []
-
-                    else:
-                        self.logger.info(f"Provided input_path is a glob pattern, {input_path}, searching for all FITS files within.")
-                        filenames = glob2.glob(os.path.join(input_path, '**/*.fits*'), recursive=True)
-                        if len(filenames) == 0:
-                            self.logger.warn(f"No FITS files found in directories and sub-directories of {input_path}")
-                            return []
-                    return sorted(filenames)
-
+                    self.logger.info(f"Item {input_path} is a glob pattern")
+                    return parse_list_of_files(glob2.glob(input_path, recursive=True))
                 else:
-                    if os.path.exists(input_path):
-                        if os.path.isdir(input_path):
-                            self.logger.info(f"Provided input_path is a directory, {input_path}")
-                            filenames = glob2.glob(os.path.join(input_path, '**/*.fits*'), recursive=True)
-                            if len(filenames) == 0:
-                                self.logger.warn(f"No FITS files found in {input_path}")
-                                return []
-
-                        else:
-                            if '.fits' in input_path:
-                                self.logger.info(f"Provided input_path is a FITS file, {input_path}")
-                                filenames = [input_path]
-                            else:
-                                self.logger.error(f"Provided input_path is not a FITS file, {input_path}")
-                                raise ValueError("Provided input_path is not a FITS file")
-                        return sorted(filenames)
-
-                    else:
-                        self.logger.error(f"Provided input_path does not exist, {input_path}")
-                        raise FileNotFoundError("Provided input_path does not exist")
+                    self.logger.info(f"Item {input_path} is a regular path string")
+                    return parse_list_of_files([input_path])
 
             else:
                 self.logger.error(f"Invalid input")
-                raise ValueError(
-                    "Input path must be a FITS file, a list of FITS files, "
-                    "a directory with FITS files, or a glob pattern for FITS files.")
+                raise ValueError("input_path must be a string or list of strings representing file paths, directories, or glob patterns.")
 
         if not self.watch_mode:
             batch = _discover_once()
@@ -293,7 +232,7 @@ class ImageCreator(LazyTask):
                         raise FileNotFoundError("No FITS files found in the input source.")
                     continue
 
-                images_batch = []
+                images_batch = {}
                 for filename in file_batch:
                     self.logger.info("Processing file %s", filename)
                     # Load FITS data
@@ -302,16 +241,22 @@ class ImageCreator(LazyTask):
                     else:
                         input_data_array, input_headers = load_image_fits(filename)
                     self.logger.debug("Loaded %d HDU from file %s", len(input_data_array), filename)
+                    if len(input_data_array) == 0:
+                        self.logger.warn("No data found in file %s, skipping.", filename)
+                        continue
+
                     # Determine image type
                     if self._identifier_task is not None:
                         image_type = self._identifier_task(filename=filename, **identifier_kwargs)
                     else:
-                        image_type = self._guess_image_type_from_header(input_headers[0], **identifier_kwargs)
+                        image_type = guess_image_type_from_header(input_headers[0], **identifier_kwargs)
                     self.logger.debug("Identified image type as %s for file %s", image_type, filename)
+
                     # Build image objects
                     images = self._build_image_objects(input_data_array, input_headers, image_type, filename=filename)
-                    images_batch.extend(images)
-                yield {'images':images_batch}
+                    images_batch[image_type] = images_batch.get(image_type, []) + images
+                yield images_batch
+
         else:
             array_batches = self.from_arrays(input_source)
             for array_batch in array_batches:
@@ -322,15 +267,15 @@ class ImageCreator(LazyTask):
                         raise ValueError("Empty input source.")
                     continue
 
-                images_batch = []
+                images_batch = {}
                 for input_data_array in array_batch:
                     if self._identifier_task is not None:
                         image_type = self._identifier_task()
                     else:
                         image_type = 'unknown'
                     images = self._build_image_objects(input_data_array, image_type, filename=None)
-                    images_batch.extend(images)
-                yield {'images':images_batch}
+                    images_batch[image_type] = images_batch.get(image_type, []) + images
+                yield images_batch
 
     def run(self,
             input_source: str | list[str] | Iterable[np.ndarray],
@@ -358,7 +303,8 @@ class ImageCreator(LazyTask):
         :return: {"images": list of DetImage}
             List of DetImage objects stored under the key 'images' in the returned dict.
         """
-        all_images = []
+        all_images = {}
         for batch in self.lazy_run(input_source, identifier_func, identifier_kwargs, fitsloader_func, fitsloader_kwargs, require_data):
-            all_images.extend(batch['images'])
-        return {'images':all_images}
+            for image_type, images in batch.items():
+                all_images[image_type] = all_images.get(image_type, []) + images
+        return all_images
