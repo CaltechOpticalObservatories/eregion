@@ -1,0 +1,55 @@
+## Config file for creating instances of an image class (here DetImage) for a basic CCD detector
+## The DetImage instance contains the outputs from a "single" detector.
+## The "image" can be stored in one FITS file with one extension that has all the detectors/outputs,
+## OR in multiple FITS extensions, one per detector/output, OR in multiple FITS files, one per detector/output.
+## The config structure should describe how to load one FITS file.
+---
+description: Basic single CCD detector, one channel
+detector_type: CCD # (specify the type of detector, e.g., CCD, CMOS, H2RG, etc.)
+detector_output_class: CCDOutput
+
+# List of class objects, each containing a list of outputs.
+# An output is described by the FITS file it is in, the extension in that file, and the slices that define its data.
+objects:
+  - name: 'det_1'
+    class: DetImage
+    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    properties:
+      x_size: 2048
+      y_size: 4096
+      saturation_level: 65535  # ADU
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'chan_1'
+        ext_id: 1 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+      - id: 'chan_2'
+        ext_id: 1 # FITS extension ID
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1024, 1024]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [4096, 4096]
+        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
+        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        gain: 1.0  # electrons/ADU
+        read_noise: 5.0  # electrons
+        bias_level: 1000  # ADU
+    focal_plane_position:
+      x_cen: 0.0  # mm
+      y_cen: 0.0  # mm
+      angle: 0.0  # degrees
+
+
+
