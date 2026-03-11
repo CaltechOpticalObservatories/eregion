@@ -20,10 +20,10 @@ objects:
         ext_id: 1 # FITS extension ID
         ext_slice: [!slice [0, 4125], !slice [0, 1094]]  # Slice of the ext_id that has the data for this output
         data_slice: [!slice [0, 4125], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [0, 0]
-        serial_overscan: !slice [1094, 1094]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4125, 4125]
+        serial_prescan: !slice [0, 50]
+        serial_overscan: !slice [1074, 1094]
+        parallel_prescan: !slice [0, 50]
+        parallel_overscan: !slice [4105, 4125]
         parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # top left pixel
         gain: 1.0  # electrons/ADU
@@ -33,10 +33,10 @@ objects:
         ext_id: 2 # FITS extension ID
         ext_slice: [!slice [0, 4125], !slice [0, 1094]] # Slice of the ext_id that has the data for this output
         data_slice: [!slice [0, 4125], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [0, 0]
-        serial_overscan: !slice [1094, 1094]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4125, 4125]
+        serial_prescan: !slice [1094, 1044]
+        serial_overscan: !slice [20, 0]
+        parallel_prescan: !slice [0, 50]
+        parallel_overscan: !slice [4105, 4125]
         parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 1094]  # top right pixel
         gain: 1.0  # electrons/ADU
