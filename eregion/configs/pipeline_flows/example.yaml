@@ -1,0 +1,67 @@
+# This is an example pipeline flow configuration
+
+debug: false   # Optional: set to true to enable debug mode (more verbose logging, etc.)
+
+pipelines:
+  - name: PIPE_1  # Name of the pipeline flow, required
+    description: Pipeline flow 1
+    lazy: false  # Set true if this sub-pipeline should be run lazily (i.e. as images arrive)
+
+    nodes:  # List of tasks (nodes) in the pipeline flow
+      - name: TASK_1   # Name of the task node, required
+        task: package.module.class   # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
+
+        init:  # Initialization parameters (for Task.__init__)
+          inputs: # Specify any args needed from outputs of other tasks in this config
+            arg_1: pipe_name.node_name.data.key  # Output of tasks are wrapped in TaskResult objects by the engine, and the data produced by the task is in the TaskResult.data dict; specify the path to the data you want to use as input for this task
+            # etc.
+          params: # Specify any additional kwargs (which are not task outputs) needed; refer to the task documentation for required and optional params and kwargs
+            param_1: value
+            param_2: value
+            # etc.
+
+        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters, as above, use `inputs` to specify data coming from outputs of other tasks, and `params` for any additional parameters
+          inputs:
+            arg_1: pipe_name.node_name.data.key
+                # etc.
+          params:
+            param_1: value
+            param_2: value
+            # etc.
+
+      - name: TASK_2
+        task: package.module.class
+        init:
+          inputs:
+            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from TASK_1 as input for TASK_2
+          params:
+            param_1: value
+            # etc.
+        run:
+          inputs:
+            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from TASK_1 as input for TASK_2
+          params:
+            param_1: value
+            # etc.
+
+        depends_on: [TASK_1]   # should be specified if this task depends on the output of another task; ensures correct execution order in the pipeline flow
+
+  - name: PIPE_2
+    description: Pipeline flow 2
+    lazy: true  # This sub-pipeline will be run lazily (i.e. as images arrive)
+    nodes:
+      - name: TASK_3
+        task: package.module.class
+        init:
+          inputs:
+            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from a task in another pipeline flow as input
+          params:
+            param_1: value
+            # etc.
+        run:
+          inputs:
+            arg_1: PIPE_1.TASK_2.data.key  # Example of using output from a task in another pipeline flow as input
+          params:
+            param_1: value
+            # etc.
+        depends_on: [PIPE_1.TASK_1, PIPE_1.TASK_2]   # specify dependencies across pipeline flows as well
