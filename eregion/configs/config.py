@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import yaml
-import logging
+from utils.misc_utils import configure_logger
 
 # A yaml constructor for slice objects
 def slice_constructor(loader, node):
@@ -31,7 +31,7 @@ class ConfigLoader(ABC):
             Path to a YAML config file or config data as a string or dictionary.
         """
         self.config = None
-        self.logger = logging.getLogger(__name__)
+        self.logger = configure_logger(self.__class__.__name__)
 
         if isinstance(config_input, str) and config_input.endswith(('.yaml', '.yml')):
             self.set_from_file(config_input)
@@ -110,7 +110,8 @@ class DetectorConfig(ConfigLoader):
 
 ### Pipeline Configuration Class ###
 class PipelineConfig(ConfigLoader):
-    required_keys = ['pipeline']
+    required_keys = ['pipelines']
+    required_pipeline_keys = ['name', 'lazy', 'nodes']
 
     def __init__(self, config_input):
         """
@@ -124,3 +125,11 @@ class PipelineConfig(ConfigLoader):
         for key in self.required_keys:
             if key not in self.config:
                 raise ValueError(f"Missing required config key: {key}")
+
+        for pipeline in self.config['pipelines']:
+            for key in self.required_pipeline_keys:
+                if key not in pipeline:
+                    raise ValueError(f"Missing required pipeline key: {key} in pipeline {pipeline.get('name', 'unknown')}")
+
+            if pipeline['lazy']:
+                assert 'source' in pipeline, f"Missing required key 'source' for lazy pipeline {pipeline.get('name', 'unknown')}"
