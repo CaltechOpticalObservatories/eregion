@@ -9,7 +9,6 @@ def ensure_dataarray(data: xr.DataArray | np.ndarray) -> xr.DataArray:
     :raises TypeError: if data is not xarray.DataArray or numpy.ndarray
     :return: xarray.DataArray with dims ('y','x') or ('y','x','t')
     """
-
     if isinstance(data, xr.DataArray):
         # Ensure dims ordering is ('y','x'); rename if unnamed
         if data.ndim == 2 and data.dims != ("y", "x"):
@@ -49,6 +48,21 @@ def ensure_dataarray(data: xr.DataArray | np.ndarray) -> xr.DataArray:
             )
 
     raise TypeError("data must be an xarray.DataArray, or numpy.ndarray")
+
+def ensure_numpy(data: xr.DataArray | np.ndarray) -> np.ndarray:
+    """
+    Coerce xarray.DataArray to numpy.ndarray
+    :type data: Union[xr.DataArray, np.ndarray]
+    :rtype: np.ndarray
+    :raises TypeError: if data is not xarray.DataArray or numpy.ndarray
+    :return: numpy.ndarray
+    """
+    if isinstance(data, np.ndarray):
+        return data
+    elif isinstance(data, xr.DataArray):
+        return data.values
+    else:
+        raise TypeError("data must be an xarray.DataArray, or numpy.ndarray")
 
 def slice_data(data: xr.DataArray, slicer: tuple[slice, ...]) -> xr.DataArray:
     """

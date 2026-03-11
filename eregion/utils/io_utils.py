@@ -4,10 +4,12 @@ from typing import Any
 from astropy.io import fits
 import shutil
 
+from utils.misc_utils import configure_logger
+logger = configure_logger(__name__)
 
 def search_directory_for_fits_files(directory: str) -> list[str]:
     fits_files = glob2.glob(os.path.join(directory, '**/*.fits*'), recursive=True)
-    print(f"Found {len(fits_files)} FITS files in directory {directory} and its sub-directories.")
+    logger.info(f"Found {len(fits_files)} FITS files in directory {directory} and its sub-directories.")
     return fits_files
 
 
@@ -47,18 +49,18 @@ def parse_list_of_files(items: list[str]) -> list[str]:
     for item in items:
         # if item is a compressed archive, unpack it and search for fits files within
         if is_archive_file(item):
-            print(f"Found archive file {item}, unpacking and searching for FITS files within.")
+            logger.info(f"Found archive file {item}, unpacking and searching for FITS files within.")
             # unpack archive to parent directory and search for fits files within
             extraction_dir = os.path.join(os.path.dirname(item), str(os.path.basename(item).split('.')[0]))
             shutil.unpack_archive(item, extraction_dir)
             new_items.extend(search_directory_for_fits_files(extraction_dir))
         elif is_fits_file(item):
-            print(f"Found FITS file {item}.")
+            logger.info(f"Found FITS file {item}.")
             new_items.append(item)
         elif is_directory(item):
             new_items.extend(search_directory_for_fits_files(item))
         else:
-            print(f"Unrecognized item: {item}, not a FITS file, archive or directory, skipping.")
+            logger.info(f"Unrecognized item: {item}, not a FITS file, archive or directory, skipping.")
     return sorted(new_items)
 
 
@@ -71,7 +73,7 @@ def load_image_fits(filename: str) -> tuple[list[Any], list[fits.Header]]:
         A tuple containing a list of data arrays (image/table/...) for each HDU and a list of corresponding FITS headers.
     """
     if ".fits.fz" in filename:
-        print(f"Loading compressed FITS file {filename} using fits.open() with in-memory decompression enabled.")
+        logger.info(f"Loading compressed FITS file {filename} using fits.open() with in-memory decompression enabled.")
     input_data_array, input_headers = [], []
     try:
         with fits.open(filename, decompress_in_memory=True) as hdulist:
@@ -79,7 +81,7 @@ def load_image_fits(filename: str) -> tuple[list[Any], list[fits.Header]]:
                 input_data_array.append(hdu.data)
                 input_headers.append(hdu.header)
     except Exception as e:
-        print(f"Error loading FITS file {filename}: {e}")
+        logger.info(f"Error loading FITS file {filename}: {e}")
 
     return input_data_array, input_headers
 
