@@ -8,11 +8,11 @@ import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 from astropy.io import fits
-import logging
 
-from eregion.datamodels.image_utils import ensure_dataarray, slice_data
+from utils.image_utils import ensure_dataarray, slice_data, ensure_numpy
+from utils.misc_utils import configure_logger
 
-logger = logging.getLogger(__name__)
+logger = configure_logger(__name__)
 
 
 class DetectorProperties(BaseModel):
@@ -50,6 +50,45 @@ class DetImageMeta(BaseModel):
             if not hasattr(self, key):
                 setattr(self, key, value)
 
+    # --- Mapping protocol implementation ---------------------------------
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError as exc:
+            raise KeyError(key) from exc
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        setattr(self, key, value)
+
+    def __delitem__(self, key: str) -> None:
+        if hasattr(self, key):
+            delattr(self, key)
+        else:
+            raise KeyError(key)
+
+    def __iter__(self):
+        # iterate over keys present in the model dump
+        return iter(self.model_dump().keys())
+
+    def __len__(self) -> int:
+        return len(self.model_dump())
+
+    def keys(self):
+        return self.model_dump().keys()
+
+    def items(self):
+        return self.model_dump().items()
+
+    def values(self):
+        return self.model_dump().values()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+    def to_dict(self) -> dict:
+        """Return a plain dict snapshot of the current model state."""
+        return self.model_dump()
+    
 class Output(BaseModel):
     """
     One amplifier/output region within a detector image.
@@ -81,10 +120,10 @@ class Output(BaseModel):
     def set_data_in_parent(self, new_data: xr.DataArray | np.ndarray):
         if self.parent is None or getattr(self.parent, "data", None) is None:
             raise ValueError("Attach this Output to a DetImage with valid data.")
-        # Ensure new_data is xr.DataArray
-        new_data_da = ensure_dataarray(new_data)
+        # Convert new_data to numpy array if it's an xarray DataArray, to ensure compatibility with parent data array.
+        new_data_np = ensure_numpy(new_data)
         # Assign new data to the appropriate slice in the parent DetImage
-        self.parent.data[self.output_slice] = new_data_da
+        self.parent.data.values[self.output_slice] = new_data_np
 
     def show(self, ax=None, save=None, **imshow_kwargs):
         if ax is None:
@@ -236,9 +275,14 @@ class DetImage:
         except:
             raise ValueError(f"Output with id {output_id} not found.")
 
-    def add_output(self, output: Output):
+    def add_output(self, output: Output, overwrite: bool = True):
         output.parent = self
-        self.outputs[output.id] = output
+        if output.id in self.outputs:
+            logger.warning(f"Output with id {output.id} already exists, overwrite is set to {overwrite}.")
+            if overwrite:
+                self.outputs[output.id] = output
+        else:
+            self.outputs[output.id] = output
 
     @property
     def num_outputs(self) -> int:

@@ -1,9 +1,9 @@
 import numpy as np
 
-from eregion.tasks.task import Task
-from eregion.datamodels.image import DetImage
-from eregion.datamodels.image_utils import ensure_dataarray
-from eregion.core.image_operations import median_combine
+from tasks.task import Task
+from datamodels.image import DetImage
+from utils.image_utils import ensure_dataarray
+from utils.misc_utils import load_class
 
 
 # Task to generate master bias
@@ -22,6 +22,11 @@ class MasterBias(Task):
         # Check that bias_images are DetImage instances
         if not isinstance(bias_images, list) or not all(isinstance(img, DetImage) for img in bias_images):
             raise ValueError("bias_images must be a list of DetImage instances.")
+        # Verify that all input images are of 'bias' image_type
+        # TODO: Add a init kwarg to specify the expected image_type of input bias frames, and check against that instead of hardcoding 'bias'
+        for img in bias_images:
+            if 'bias' not in img.image_type.lower():
+                raise ValueError(f"All input images must have image_type 'bias'. Found '{img.image_type}' in {img.meta.filename}.")
 
         # Group bias images by detector name
         bias_dict = {}
@@ -58,12 +63,9 @@ class MasterBias(Task):
         :return: master_bias: numpy array
             The generated master bias frame.
         """
-        if method == 'median':
-            return median_combine(biases)
-        else:
-            # print available methods
-            self.print_methods()
-            raise NotImplementedError
+        self.set_method(method)
+        method_cls = load_class(self.methods[method])
+        return method_cls(biases)
 
     @property
     def methods(self):
@@ -73,9 +75,8 @@ class MasterBias(Task):
             Dictionary with method names as keys and function signatures as values.
         """
         return {
-            'median': 'core.image_operations.median_combine(images: list[np.ndarray]) -> np.ndarray',
+            'median': 'core.image_operations.median_combine',
         }
-
 
     def __call__(self, biases: list[np.ndarray],  method='median') -> np.ndarray:
         return self._create_masterbias(biases, method=method)
