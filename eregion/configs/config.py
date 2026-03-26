@@ -7,14 +7,15 @@ def slice_constructor(loader, node):
     values = loader.construct_sequence(node)
     # slice will be created from a list, e.g., [start, stop, step]
     start, stop, step = None, None, None
-    if len(values) == 1:
-        stop = values[0]
-    elif len(values) == 2:
-        start, stop = values
-    elif len(values) == 3:
-        start, stop, step = values
-    else:
-        raise ValueError("Invalid number of arguments for slice.")
+    match len(values):
+        case 1:
+            stop = values[0]
+        case 2:
+            start, stop = values
+        case 3:
+            start, stop, step = values
+        case _:
+            raise ValueError("Invalid number of arguments for slice.")
     return slice(start, stop, step)
 
 yaml.add_constructor('!slice', slice_constructor)
@@ -33,14 +34,16 @@ class ConfigLoader(ABC):
         self.config = None
         self.logger = configure_logger(self.__class__.__name__)
 
-        if isinstance(config_input, str) and config_input.endswith(('.yaml', '.yml')):
-            self.set_from_file(config_input)
-        elif isinstance(config_input, str) and not config_input.endswith(('.yaml', '.yml')):
-            self.set_from_string(config_input)
-        elif isinstance(config_input, dict):
-            self.set_from_dict(config_input)
-        else:
-            raise ValueError("config_input must be either a file path, string or a dictionary.")
+        match config_input:
+            case str():
+                if config_input.endswith(('.yaml', '.yml')):
+                    self.set_from_file(config_input)
+                else:
+                    self.set_from_string(config_input)
+            case dict():
+                self.set_from_dict(config_input)
+            case _:
+                raise ValueError("config_input must be either a file path, string or a dictionary.")
 
     def set_from_file(self, input: str):
         try:
