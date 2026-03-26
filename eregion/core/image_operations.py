@@ -1,6 +1,6 @@
 ### Collection of utility functions for image processing tasks.
 import numpy as np
-from typing import Callable, Any
+from typing import Callable, Any, Optional
 from astropy.stats import sigma_clip
 
 def median_combine(images: list[np.ndarray]) -> np.ndarray:
@@ -37,7 +37,7 @@ def mean_combine(images: list[np.ndarray]) -> np.ndarray:
     stacked_images = np.stack(images, axis=0)
     return np.mean(stacked_images, axis=0)
 
-def subtract_from_image(image: np.ndarray, subtract_object: np.ndarray | float, method: Callable, *args):
+def subtract_from_image(image: np.ndarray, subtract_object: np.ndarray | float, method: Optional[Callable]=None, **kwargs):
     """
     Subtract a given object (array or scalar) from an image.
 
@@ -46,16 +46,19 @@ def subtract_from_image(image: np.ndarray, subtract_object: np.ndarray | float, 
     image : np.ndarray
         2D numpy array representing the image.
     subtract_object : np.ndarray or float
-        The object to subtract from the image. Can be an array of any size from which the value to subtract is derived.
-    method : Callable
+        The object to subtract from the image. Can be an array of any size from which the object to subtract is derived.
+    method : Optional[Callable]
         A function that takes the subtract_object and returns a scalar/array to subtract from the image.
+    kwargs :
+        Additional keyword arguments to pass to the method function.
     Returns
     -------
     np.ndarray
         The resulting image after subtraction.
     """
-    value_to_subtract = method(subtract_object, *args)
-    return image - value_to_subtract, value_to_subtract
+    if method:
+        subtract_object = method(subtract_object, **kwargs)
+    return image - subtract_object, subtract_object
 
 def simple_median(data: np.ndarray, *args) -> Any:
     return np.median(data)

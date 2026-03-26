@@ -2,14 +2,14 @@ import os
 import glob2
 import time
 import importlib
-from typing import Iterator, Generator, Callable, Optional, Iterable, Any
+from typing import Iterator, Generator, Callable, Iterable
 from joblib import Parallel, delayed
 
-from eregion.datamodels.image import *
-from eregion.datamodels.image_utils import ensure_dataarray
-from eregion.configs.config import DetectorConfig
-from eregion.tasks.task import LazyTask
-from eregion.core.io_utils import load_image_fits, parse_list_of_files, guess_image_type_from_header
+from datamodels.image import *
+from utils.image_utils import ensure_dataarray
+from configs.config import DetectorConfig
+from tasks.task import LazyTask
+from utils.io_utils import load_image_fits, parse_list_of_files, guess_image_type_from_header
 
 
 ## Classes to handle image generation from configuration files
@@ -276,35 +276,3 @@ class ImageCreator(LazyTask):
                     images = self._build_image_objects(input_data_array, image_type, filename=None)
                     images_batch[image_type] = images_batch.get(image_type, []) + images
                 yield images_batch
-
-    def run(self,
-            input_source: str | list[str] | Iterable[np.ndarray],
-            identifier_func: Optional[str | Callable[..., str]] = None,
-            identifier_kwargs: Optional[dict[str, Any]] = None,
-            fitsloader_func: Optional[str | Callable[..., str]] = None,
-            fitsloader_kwargs: Optional[dict[str, Any]] = None,
-            require_data: bool = True,
-    ) -> dict[str, list]:
-        """
-        Eager run method to generate image objects from input source.
-        :param input_source: str or list of str or Iterable of np.ndarray
-            Input source can be a path to FITS files (file, directory, glob pattern),
-            a list of FITS file paths, or an iterable of numpy arrays.
-        :param identifier_func: str (from pipeline config) or Callable (if using directly), optional
-            Custom image type identification function.
-        :param identifier_kwargs: dict, optional
-            Additional keyword arguments for the identifier function.
-        :param fitsloader_func: str (from pipeline config) or Callable (if using directly), optional
-            Custom FITS loading function.
-        :param fitsloader_kwargs: dict, optional
-            Additional keyword arguments for the FITS loader function.
-        :param require_data: bool
-            If True, raises an error if no files are found in the input source.
-        :return: {"images": list of DetImage}
-            List of DetImage objects stored under the key 'images' in the returned dict.
-        """
-        all_images = {}
-        for batch in self.lazy_run(input_source, identifier_func, identifier_kwargs, fitsloader_func, fitsloader_kwargs, require_data):
-            for image_type, images in batch.items():
-                all_images[image_type] = all_images.get(image_type, []) + images
-        return all_images

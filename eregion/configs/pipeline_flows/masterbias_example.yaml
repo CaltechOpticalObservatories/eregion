@@ -1,32 +1,69 @@
 # This is an example pipeline flow configuration for creating a master bias frame
-# Example
 
-debug: false                    # Optional: set to true to enable debug mode (more verbose logging, etc.)
-pipeline:
-  - name: image_creator
-    task: tasks.imagegen.ImageCreator
+debug: false
+pipelines:
+  - name: calib_flow
+    description: Pipeline flow to create a master bias frame from bias images
     lazy: false
-    init:                                                                                                     # Initialization parameters for the image creator
-      detector_config: "/Users/yashvi/Desktop/Detector Characterization Tools/eregion/configs/detectors/deimos_singledet.yaml"      # For required params, see the task documentation
-                                                                                                              # Any additional params are passed as kwargs that get set in the task's meta dict
-                                                                                                              # See task documentation for which kwargs are used
+    nodes:
+      - name: image_creator
+        task: tasks.imagegen.ImageCreator
+        init:
+          params:
+            detector_config: "/Users/yashvi/Desktop/Detector Characterization Tools/eregion/eregion/configs/detectors/deimos_singledet.yaml"
+        run:
+          params:
+            input_source: "/Users/yashvi/Desktop/Detector Characterization Tools/DTU_dettest/DTU_singledet_acceptance/PTC/SCI/20250812-101350/*_bias_*.fits"
+            identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
 
-    run:                                                                                                      # Run-time inputs and parameters for the image creator
-      params:                                                                                                 # Check which params go here in the task documentation
-        input_source: "/Users/yashvi/Desktop/Detector Characterization Tools/DTU_dettest/DTU_singledet_acceptance/PTC/SCI/20250812-101350/*_bias_*.fits"
-        identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
+      - name: master_bias
+        task: tasks.calibration.MasterBias
+        init:
+          params:
+            method: "median"
+        run:
+          inputs:
+            bias_images: calib_flow.image_creator.data.bias
+        depends_on: [calib_flow.image_creator]
 
-
-  - name: master_bias
-    task: tasks.calibration.MasterBias
+  - name: preproc_flow
+    description: Example pre-processing pipeline flow
     lazy: false
-    init:
-      method: "median"                                      # Optional param (kwarg) method to combine bias frames; see task documentation for options
-    run:
-      inputs:                                               # use inputs to specify data input coming in from output of other tasks
-        bias_images: image_creator.data.images              # E.g. Input images from the image creator task's output
-                                                            # Each task's outputs are objects of class TaskResult
-                                                            # TaskResult.data is a dict containing the actual data produced by the task
-                                                            # Check which outputs are available in the task documentation
+    nodes:
+      - name: image_creator
+        task: tasks.imagegen.ImageCreator
+        init:
+          params:
+            detector_config: "/Users/yashvi/Desktop/Detector Characterization Tools/eregion/eregion/configs/detectors/deimos_singledet.yaml"
+        run:
+          params:
+            input_source: "/Users/yashvi/Desktop/Detector Characterization Tools/DTU_dettest/DTU_singledet_acceptance/PTC/SCI/20250812-101350/*flat_0.000*.fits"
+            identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
 
-    depends_on: [image_creator]
+      - name: bias_subtraction
+        task: tasks.preprocessing.BiasSubtraction
+        init:
+          inputs:
+            master_biases: calib_flow.master_bias.data.master_biases
+        run:
+          inputs:
+            images: preproc_flow.image_creator.data.flat
+        depends_on: [preproc_flow.image_creator, calib_flow.master_bias]
+
+      - name: overscan_subtraction
+        task: tasks.preprocessing.ScanSubtraction
+        init:
+          params:
+            which_scan: 'serial_overscan'
+            method: 'median_by_axis'
+        run:
+          inputs:
+            images: preproc_flow.bias_subtraction.data.flat
+        depends_on: [preproc_flow.bias_subtraction]
+
+      - name: badpixel_masking
+        task: tasks.preprocessing.SigmaClipMasking
+        run:
+          inputs:
+            images: preproc_flow.overscan_subtraction.data.flat
+        depends_on: [preproc_flow.overscan_subtraction]
