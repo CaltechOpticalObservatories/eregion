@@ -1,19 +1,22 @@
-## Config file for creating instances of an image class (here DetImage) for a basic CCD detector
-## The DetImage instance contains the outputs from a "single" detector.
-## The "image" can be stored in one FITS file with one extension that has all the detectors/outputs,
-## OR in multiple FITS extensions, one per detector/output, OR in multiple FITS files, one per detector/output.
-## The config structure should describe how to load one FITS file.
+## Config file for creating instances of DetImage image class for a basic CCD detector
+## The DetImage instance is designed to contain the outputs of a SINGLE detector (not mosaic).
+## The flexibility provided by YAML allows instantiating image(s) from one FITS file with one extension that has all the detectors/outputs,
+## OR from multiple FITS extensions, one per detector/output, OR from multiple FITS files, one per detector/output.
+## The config structure should describe what's contained per FITS file.
+
+## The following example describes a single CCD detector with two outputs (channels) that are read out from the same FITS extension.
+## The data for each output is defined by a slice of the FITS extension (ext_slice), and the location of that data in the full DetImage data array is also defined by a slice (data_slice).
 ---
 description: Basic single CCD detector, one channel
 detector_type: CCD # (specify the type of detector, e.g., CCD, CMOS, H2RG, etc.)
-detector_output_class: CCDOutput
+detector_output_class: CCDOutput # (use the correct class here for the detector output type)
 
-# List of class objects, each containing a list of outputs.
+# List of Output class objects, each containing a list of outputs.
 # An output is described by the FITS file it is in, the extension in that file, and the slices that define its data.
 objects:
   - name: 'det_1'
     class: DetImage
-    filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    filename_format: '*.fits*'  # Use wildcard to pattern match filename if needed
     properties:
       x_size: 2048
       y_size: 4096
@@ -22,27 +25,27 @@ objects:
     outputs:
       - id: 'chan_1'
         ext_id: 1 # FITS extension ID
-        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [0, 0]
-        serial_overscan: !slice [1024, 1024]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4096, 4096]
+        ext_slice: [!slice [0, 4096], !slice [0, 1024]]  # Slice of the ext_id that has the data for this output (left half)
+        data_slice: [!slice [0, 4096], !slice [0, 1024]] # Slice of the full DetImage data array where this output's data will go (left half)
+        serial_prescan: !slice [0, 20] # 20 prescan columns w.r.t. the data_slice
+        serial_overscan: !slice [1004, 1024] # 20 overscan columns w.r.t. the data_slice
+        parallel_prescan: !slice [0, 20] # 20 prescan rows w.r.t. the data_slice
+        parallel_overscan: !slice [4076, 4096] # 20 overscan rows w.r.t. the data_slice
         parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
-        readout_pixel: [0, 0]  # Readout starts at (0,0)
+        readout_pixel: [0, 0]  # Readout of this amplifier (top left)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU
       - id: 'chan_2'
-        ext_id: 1 # FITS extension ID
-        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4096], !slice [1024, 2048]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [0, 0]
-        serial_overscan: !slice [1024, 1024]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4096, 4096]
-        parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
-        readout_pixel: [0, 2047]  # Readout starts at (0,2047)
+        ext_id: 1
+        ext_slice: [!slice [0, 4096], !slice [1024, 2048]] #(right half)
+        data_slice: [!slice [0, 4096], !slice [1024, 2048]]  #(right half)
+        serial_prescan: !slice [2048, 2027] # 20 prescan columns w.r.t. the data_slice (on the right since readout is from the right)
+        serial_overscan: !slice [1044, 1023] # 20 overscan columns w.r.t. the data_slice
+        parallel_prescan: !slice [0, 20] # 20 prescan rows w.r.t. the data_slice
+        parallel_overscan: !slice [4076, 4096] # 20 overscan rows w.r.t. the data_slice
+        parallel_axis: 'y'
+        readout_pixel: [0, 2047]  # Readout of this amplifier (top right)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU

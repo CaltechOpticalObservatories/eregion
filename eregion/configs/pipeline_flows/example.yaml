@@ -10,20 +10,21 @@ pipelines:
     nodes:  # List of tasks (nodes) in the pipeline flow
       - name: TASK_1   # Name of the task node, required
         task: package.module.class   # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
-
         init:  # Initialization parameters (for Task.__init__)
           inputs: # Specify any args needed from outputs of other tasks in this config
-            arg_1: pipe_name.node_name.data.key  # Output of tasks are wrapped in TaskResult objects by the engine, and the data produced by the task is in the TaskResult.data dict; specify the path to the data you want to use as input for this task
+            arg_1: pipe_name.node_name.data.key # Output of tasks are wrapped in TaskResult objects by the engine, and the data
+                                                # produced by the task is in the TaskResult.data dict; specify the path to the
+                                                # data you want to use as input for this task
             # etc.
           params: # Specify any additional kwargs (which are not task outputs) needed; refer to the task documentation for required and optional params and kwargs
             param_1: value
             param_2: value
             # etc.
-
-        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters, as above, use `inputs` to specify data coming from outputs of other tasks, and `params` for any additional parameters
+        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters, as above, use `inputs` to specify data coming from
+              # outputs of other tasks, and `params` for any additional parameters
           inputs:
             arg_1: pipe_name.node_name.data.key
-                # etc.
+            # etc.
           params:
             param_1: value
             param_2: value
@@ -43,7 +44,6 @@ pipelines:
           params:
             param_1: value
             # etc.
-
         depends_on: [TASK_1]   # should be specified if this task depends on the output of another task; ensures correct execution order in the pipeline flow
 
   - name: PIPE_2

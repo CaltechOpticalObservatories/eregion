@@ -123,14 +123,12 @@ class Output(BaseModel):
         # Convert new_data to numpy array if it's an xarray DataArray, to ensure compatibility with parent data array.
         new_data_np = ensure_numpy(new_data)
         # Assign new data to the appropriate slice in the parent DetImage
-        self.parent.data.values[self.output_slice] = new_data_np
+        self.parent.data[self.output_slice] = new_data_np
 
     def show(self, ax=None, save=None, **imshow_kwargs):
         if ax is None:
             _, ax = plt.subplots(1,1, figsize=(6, 6), tight_layout=True)
-        image = self.data
-        im = ax.imshow(image, **imshow_kwargs)
-        ax.figure.colorbar(im, ax=ax)
+        im = xr.plot.imshow(self.data, ax=ax, **imshow_kwargs)
         if save is not None:
             ax.figure.savefig(save)
         return ax
@@ -161,42 +159,40 @@ class CCDOutput(Output):
     def get_prescan(self, kind: str) -> xr.DataArray:
         slc = self.serial_prescan if kind == "serial" else self.parallel_prescan
         axis = self.serial_axis if kind == "serial" else self.parallel_axis
-        return self.data.isel(**{axis: slc})
+        return slice_data(self.data, {axis: slc})
 
     def get_overscan(self, kind: str) -> xr.DataArray:
         slc = self.serial_overscan if kind == "serial" else self.parallel_overscan
         axis = self.serial_axis if kind == "serial" else self.parallel_axis
-        return self.data.isel(**{axis: slc})
+        return self.data.sel(**{axis: slc})
 
     def show(self, ax=None, shade_regions=False, save=None, **imshow_kwargs):
-        if ax is None:
-            _, ax = plt.subplots(1,1, figsize=(6, 6), tight_layout=True)
-        image = self.data
-        im = ax.imshow(image.values, **imshow_kwargs)
+        ax = super().show(ax=ax, save=None, **imshow_kwargs)
 
         if shade_regions:
             ## Shade the prescan and overscan regions
-            spandict = {0: ax.axvspan, 1: ax.axhspan}
-
             def _bounds(s: slice, n: int) -> tuple[int, int]:
-                s0 = 0 if s.start is None else (n + s.start if s.start < 0 else s.start)
-                s1 = n if s.stop is None else (n + s.stop if s.stop < 0 else s.stop)
+                s0 = s.start if s.start is not None else (0 if s.step > 0 else n)
+                s1 = (s.stop-1 if s.step>0 else s.stop+1) if s.stop is not None else (n if s.step>0 else 0)
                 return s0, s1
 
+            spandict = {0: ax.axvspan, 1: ax.axhspan}
             regions = [
-                (self.serial_prescan, self.parallel_axis, "gold", "Serial Prescan"),
-                (self.serial_overscan, self.parallel_axis, "red", "Serial Overscan"),
-                (self.parallel_prescan, self.serial_axis, "cyan", "Parallel Prescan"),
-                (self.parallel_overscan, self.serial_axis, "blue", "Parallel Overscan"),
+                (self.serial_prescan, self.parallel_axis, "gold", "S Prescan"),
+                (self.serial_overscan, self.parallel_axis, "red", "S Overscan"),
+                (self.parallel_prescan, self.serial_axis, "cyan", "P Prescan"),
+                (self.parallel_overscan, self.serial_axis, "blue", "P Overscan"),
             ]
-            shape = image.shape
+            shape = self.data.shape
             for s, axis, color, label in regions:
                 axis_idx = 0 if axis=='y' else 1
                 a, b = _bounds(s, shape[axis_idx])
                 spandict[axis_idx](a, b, color=color, alpha=0.3, label=label)
-            ax.legend(loc=(0.01, 1.01), fontsize=8)
+            ax.scatter(self.readout_pixel[1],
+                       self.readout_pixel[0],
+                       marker='x', color='red', s=100)
+            ax.legend(loc=(0.55, 1.05), fontsize=7)
 
-        ax.figure.colorbar(im, ax=ax)
         if save is not None:
             ax.figure.savefig(save)
         return ax
@@ -293,8 +289,7 @@ class DetImage:
             raise ValueError("DetImage has no data to show.")
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
-        im = ax.imshow(self.data.values, **imshow_kwargs)
-        ax.figure.colorbar(im, ax=ax)
+        im = xr.plot.imshow(self.data, ax=ax, **imshow_kwargs)
         if save is not None:
             ax.figure.savefig(save)
         return ax

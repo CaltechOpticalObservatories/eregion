@@ -16,6 +16,14 @@ def slice_constructor(loader, node):
             start, stop, step = values
         case _:
             raise ValueError("Invalid number of arguments for slice.")
+
+    if step is None:
+        if start > stop:
+            step = -1
+        else:
+            step = 1
+    if stop == -1:
+        stop = None
     return slice(start, stop, step)
 
 yaml.add_constructor('!slice', slice_constructor)

@@ -174,6 +174,12 @@ class ImageCreator(LazyTask):
             image_data_size[1] = max(image_data_size[1], output_obj.output_slice[1].stop)
             image.add_output(output_obj)
 
+        # verify that calculated image size is consistent with set size in obj properties (if given)
+        if 'properties' in obj and 'x_size' in obj['properties'] and 'y_size' in obj['properties']:
+            if image_data_size != [obj['properties']['y_size'], obj['properties']['x_size']]:
+                self.logger.error(f"Calculated image size {image_data_size} does not match specified size in config"
+                                  f" {obj['properties']['y_size'], obj['properties']['x_size']} for {obj['name']}")
+
         # Assemble full image data from outputs
         image_data = np.zeros(image_data_size)
         for output_id in image.outputs:
