@@ -69,7 +69,7 @@ def ensure_numpy(data: xr.DataArray | np.ndarray) -> np.ndarray:
         case _:
             raise TypeError("data must be an xarray.DataArray, or numpy.ndarray")
 
-def slice_data(data: xr.DataArray, slicer: tuple[slice, ...] | dict[str:slice]) -> xr.DataArray:
+def slice_data(data: xr.DataArray, slicer: tuple[slice, ...] | dict[str, slice]) -> xr.DataArray:
     """
     Slice a 2D or 3D DataArray using ('y','x','t) positional slices.
     """

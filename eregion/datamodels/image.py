@@ -9,11 +9,10 @@ import xarray as xr
 import matplotlib.pyplot as plt
 from astropy.io import fits
 
-from utils.image_utils import ensure_dataarray, slice_data, ensure_numpy
-from utils.misc_utils import configure_logger
+from utils import ensure_dataarray, slice_data, ensure_numpy, configure_logger
+from core.image_operations import flip_and_rotate
 
 logger = configure_logger(__name__)
-
 
 class DetectorProperties(BaseModel):
     """
@@ -128,7 +127,7 @@ class Output(BaseModel):
     def show(self, ax=None, save=None, **imshow_kwargs):
         if ax is None:
             _, ax = plt.subplots(1,1, figsize=(6, 6), tight_layout=True)
-        im = xr.plot.imshow(self.data, ax=ax, **imshow_kwargs)
+        im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
         if save is not None:
             ax.figure.savefig(save)
         return ax
@@ -247,6 +246,7 @@ class DetImage:
             self.meta = {}
         # Merge any additional kwargs into meta
         self.meta.update(kwargs)
+        self.id = self.meta.name
 
 
         # Outputs
@@ -289,7 +289,7 @@ class DetImage:
             raise ValueError("DetImage has no data to show.")
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
-        im = xr.plot.imshow(self.data, ax=ax, **imshow_kwargs)
+        im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
         if save is not None:
             ax.figure.savefig(save)
         return ax
@@ -300,9 +300,9 @@ class FocalPlaneImage:
     :param num_detectors: int
         Number of detector tiles expected.
     :param dim: tuple[int, int]
-        Dimensions of the focal plane image (height, width) in pixels.
+        Dimensions of the focal plane image (height, width) in mm.
     :param fp_center: Optional[Tuple[float, float]]
-        Pixels coordinates (y, x) corresponding to the focal plane center with respect to the image array origin (top-left).
+        Coordinates (y, x) in mm corresponding to the focal plane center with respect to the image array origin (top-left).
         Default is dim/2 i.e. (ydim/2, xdim/2).
     :param det_images: Optional[List[DetImage]]
         List of DetImage objects to place on the focal plane.
@@ -311,64 +311,81 @@ class FocalPlaneImage:
     def __init__(
         self,
         num_detectors: int,
-        dim: tuple[int, int],
-        fp_center: Optional[tuple[float, float]] = None,
+        dim: Optional[tuple[int, int]] = None,
         det_images: Optional[list[DetImage]] = None,
         **kwargs,
     ):
         self.meta: dict = {}
         if kwargs:
             self.meta.update(kwargs)
-        self.num_detectors = int(num_detectors)
-        self.dim = tuple(dim)
-        self.fp_cen_pix = fp_center if fp_center is not None else (dim[0] / 2, dim[1] / 2)
-        self.det_images: list[DetImage] = []
-        if det_images:
-            for di in det_images:
-                self.add_DetImage(di)
 
-        if self.det_images:
-            self.construct_focal_plane_image()
+        self.num_detectors = int(num_detectors)
+        self.dim_mm = tuple(dim) if dim is not None else None
+        self.pixel_size = None
+        self.data: xr.DataArray | None = None   # To hold det image data in one array
+        self.table: pd.DataFrame | None = None  # To keep track of det_image data position within focal-plane data array
+
+        self.det_images: dict[str, DetImage] = {}
+        if det_images is not None:
+            self.update(det_images)
+
+    def update(self, det_images: list[DetImage]) -> None:
+        self.add_det_images(det_images)
+        self.construct_focal_plane_image()
+
+    def add_det_images(self, det_images):
+        det_images = det_images if len(det_images) > 0 else [det_images]
+        for det_image in det_images:
+            if len(self.det_images) == self.num_detectors:
+                logger.error(
+                    f"Number of DetImages added have reached number of detectors present in this focal-plane.")
+                break
+            self.validate_det_image(det_image)
+            det_image.focal_plane = self
+            self.det_images[det_image.id] = det_image
 
     def validate_det_image(self, det_image: DetImage) -> None:
         """
         Accepts either validated DetImageMeta or legacy dict with required keys.
         """
-        if isinstance(det_image.meta, DetImageMeta):
-            return
-        if not isinstance(det_image.meta, dict):
+        import datamodels
+        if not (isinstance(det_image.meta, datamodels.DetImageMeta) or isinstance(det_image.meta, dict)):
             raise ValueError("DetImage.meta must be DetImageMeta or dict.")
         required = {"properties", "focal_plane_position"}
         if not required.issubset(det_image.meta.keys()):
             raise ValueError("DetImage.meta missing required keys for focal-plane placement.")
         # attempt to coerce for consistent downstream access
-        det_image.meta = DetImageMeta.model_validate(det_image.meta)
+        det_image.meta = datamodels.DetImageMeta.model_validate(det_image.meta)
+
+        # check pixel size is same for all det images
+        pixsize = det_image.meta.properties.pixel_size
+        if self.pixel_size is None:
+            self.pixel_size = pixsize
+        elif pixsize != self.pixel_size:
+            raise ValueError("All DetImage objects must have the same pixel_size for focal-plane assembly.")
 
     def construct_focal_plane_image(self):
-        if not self.det_images:
+        if len(self.det_images) == 0:
             raise ValueError("No DetImage objects to assemble.")
-        # Cast all to validated meta
-        for di in self.det_images:
-            self.validate_det_image(di)
-
-        pixsize = self.det_images[0].meta.properties.pixel_size # type: ignore[union-attr]
 
         frames = []
-        for det_image in self.det_images:
+        for det_id, det_image in self.det_images.items():
             props = det_image.meta.properties  # type: ignore[union-attr]
             pos = det_image.meta.focal_plane_position  # type: ignore[union-attr]
             xhalf, yhalf = props.x_size / 2, props.y_size / 2
             frames.append(
                 {
-                    "det_id": getattr(det_image.meta, "name", None) or "unknown",  # type: ignore[arg-type]
-                    "x_min": pos.x_cen / pixsize - xhalf,
-                    "x_max": pos.x_cen / pixsize + xhalf,
-                    "y_min": pos.y_cen / pixsize - yhalf,
-                    "y_max": pos.y_cen / pixsize + yhalf,
+                    "det_id": det_id,  # type: ignore[arg-type]
+                    "x_min": int(pos.x_cen / self.pixel_size - xhalf),
+                    "x_max": int(pos.x_cen / self.pixel_size - xhalf) + props.x_size,
+                    "y_min": int(pos.y_cen / self.pixel_size - yhalf),
+                    "y_max": int(pos.y_cen / self.pixel_size - yhalf) + props.y_size,
+                    "angle": pos.angle if hasattr(pos, "angle") else None,
+                    "flip_x": pos.flip_x if hasattr(pos, "flip_x") else None,
+                    "flip_y": pos.flip_y if hasattr(pos, "flip_y") else None,
                 }
             )
-
-        frames_df = pd.DataFrame(frames, index=range(len(self.det_images)))
+        frames_df = pd.DataFrame(frames)
 
         # Verify that there are no overlapping detectors, i.e. area covered inside corners should not overlap
         for i in range(len(frames_df)):
@@ -381,63 +398,56 @@ class FocalPlaneImage:
                     raise ValueError(f"Detectors {a['det_id']} and {b['det_id']} overlap in focal plane.")
 
         # Verify the size of the focal plane image
-        fp_ymin = int(frames_df["y_min"].min())
-        fp_ymax = int(frames_df["y_max"].max())
-        fp_xmin = int(frames_df["x_min"].min())
-        fp_xmax = int(frames_df["x_max"].max())
-        calc_dim = (fp_ymax - fp_ymin, fp_xmax - fp_xmin)
-        if calc_dim != self.dim:
-            logger.warning("Provided dim %s != computed dim %s.", self.dim, calc_dim)
-
-        # Calculate the positions to place each det_image in the focal plane array
-        # Flip y-axis and shift origin (specified by self.fp_cen_pix) to top-left corner
-        frames_df["y_min_fp"] = (self.fp_cen_pix[0] - frames_df["y_max"]).astype(int)
-        frames_df["y_max_fp"] = (self.fp_cen_pix[0] - frames_df["y_min"]).astype(int)
-        frames_df["x_min_fp"] = (frames_df["x_min"] + self.fp_cen_pix[1]).astype(int)
-        frames_df["x_max_fp"] = (frames_df["x_max"] + self.fp_cen_pix[1]).astype(int)
+        calc_dim = np.array([frames_df["y_max"].max() - frames_df["y_min"].min(),
+                            frames_df["x_max"].max() - frames_df["x_min"].min()])
+        if self.dim_mm is not None:
+            dim_pix = np.array(self.dim_mm) / self.pixel_size
+            if any(calc_dim > dim_pix):
+                logger.warning("Provided dim %s < computed dim %s.", dim_pix, calc_dim)
+        else:
+            dim_pix = calc_dim.astype(int)
 
         # Initialize DataArray
-        self.data: xr.DataArray = xr.DataArray(
-            np.zeros(self.dim, dtype=float),
+        self.data = xr.DataArray(
+            np.zeros(dim_pix, dtype=float),
             dims=("y", "x"),
-            coords={"y": np.arange(self.dim[0]), "x": np.arange(self.dim[1])},
+            coords={"y": np.arange(frames_df["y_min"].min(), frames_df["y_max"].max(), 1),
+                    "x": np.arange(frames_df["x_min"].min(), frames_df["x_max"].max(), 1)}
         )
 
         # Place tiles
-        for i, det_image in enumerate(self.det_images):
-            if det_image.data is None:
+        for i in range(len(frames_df)):
+            row = frames_df.iloc[i]
+            di = self.det_images[row["det_id"]]
+            if di.data is None:
                 raise ValueError(f"DetImage at index {i} has no data.")
-            yslc = slice(int(frames_df.loc[i, "y_min_fp"]), int(frames_df.loc[i, "y_max_fp"]))
-            xslc = slice(int(frames_df.loc[i, "x_min_fp"]), int(frames_df.loc[i, "x_max_fp"]))
-            self.data[yslc, xslc] = det_image.data.values
+            else:
+                imdata = flip_and_rotate(di.data.values, angle=row['angle'], flip_x=row['flip_x'],
+                                         flip_y=row['flip_y'])
 
-        self.frames_df = frames_df
+            slc = {'y':slice(row['y_min'], row['y_max']-1), 'x':slice(row['x_min'], row['x_max']-1)}
+            self.data.loc[slc] = imdata
 
-    def add_DetImage(self, det_image: DetImage):
-        if len(self.det_images) >= self.num_detectors:
-            raise ValueError(f"Number of det_images ({len(self.det_images)}) reached limit ({self.num_detectors}).")
-        self.validate_det_image(det_image)
-        det_image.focal_plane = self
-        self.det_images.append(det_image)
+        self.table = frames_df
 
-    def show(self, ax=None, save=None, **imshow_kwargs):
+    def show(self, ax=None, save=None, show_det_id=False, **imshow_kwargs):
         if ax is None:
             _, ax = plt.subplots(1,1, figsize=(8, 8), tight_layout=True)
-        im = ax.imshow(self.data.values, **imshow_kwargs)
+        im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
         # Draw detector boundaries
-        if hasattr(self, "frames_df"):
-            for _, row in self.frames_df.iterrows():
+        if hasattr(self, "table"):
+            for _, row in self.table.iterrows():
                 rect = plt.Rectangle(
-                    (row["x_min_fp"], row["y_min_fp"]),
-                    row["x_max_fp"] - row["x_min_fp"],
-                    row["y_max_fp"] - row["y_min_fp"],
+                    (row["x_min"], row["y_min"]),
+                    row["x_max"] - row["x_min"],
+                    row["y_max"] - row["y_min"],
                     linewidth=1,
                     edgecolor="r",
                     facecolor="none",
                 )
                 ax.add_patch(rect)
-                ax.text(row["x_min_fp"] + 150, row["y_min_fp"] + 150, str(row["det_id"]), color="white", fontsize=8)
-        ax.figure.colorbar(im, ax=ax)
+                if show_det_id:
+                    ax.text(row["x_min"] + 150, row["y_min"] + 150, str(row["det_id"]), color="white", fontsize=8)
         if save is not None:
             ax.figure.savefig(save)
         return ax

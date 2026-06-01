@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import yaml
-from utils.misc_utils import configure_logger
+from utils import configure_logger
 
 # A yaml constructor for slice objects
 def slice_constructor(loader, node):

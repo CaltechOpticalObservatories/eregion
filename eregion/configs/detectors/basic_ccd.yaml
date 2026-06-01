@@ -32,7 +32,7 @@ objects:
         parallel_prescan: !slice [0, 20] # 20 prescan rows w.r.t. the data_slice
         parallel_overscan: !slice [4076, 4096] # 20 overscan rows w.r.t. the data_slice
         parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
-        readout_pixel: [0, 0]  # Readout of this amplifier (top left)
+        readout_pixel: [0, 0]  # Readout of this amplifier (assumed to be away from this corner in both directions)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU
@@ -45,7 +45,7 @@ objects:
         parallel_prescan: !slice [0, 20] # 20 prescan rows w.r.t. the data_slice
         parallel_overscan: !slice [4076, 4096] # 20 overscan rows w.r.t. the data_slice
         parallel_axis: 'y'
-        readout_pixel: [0, 2047]  # Readout of this amplifier (top right)
+        readout_pixel: [0, 2047]  # Readout of this amplifier (assumed to be away from this corner in both directions)
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU

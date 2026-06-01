@@ -8,8 +8,7 @@ import multiprocessing
 from astropy.time import Time
 import inspect
 
-from utils.io_utils import configure_logger
-from utils.misc_utils import load_class
+from utils import configure_logger, load_class
 
 # Base abstract class for tasks, should have a call method for direct execution and a run method for pipeline workflows
 class Task(ABC):

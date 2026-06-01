@@ -1,15 +1,13 @@
 import os
 import glob2
 import time
-import importlib
-from typing import Iterator, Generator, Callable, Iterable
+import numpy as np
+from typing import Iterator, Generator, Callable, Iterable, Optional, Any
 from joblib import Parallel, delayed
 
-from datamodels.image import *
-from utils.image_utils import ensure_dataarray
-from configs.config import DetectorConfig
-from tasks.task import LazyTask
-from utils.io_utils import load_image_fits, parse_list_of_files, guess_image_type_from_header
+from configs import DetectorConfig
+from tasks import LazyTask
+from utils import load_image_fits, parse_list_of_files, guess_image_type_from_header, load_class, ensure_dataarray
 
 
 ## Classes to handle image generation from configuration files
@@ -44,8 +42,7 @@ class ImageCreator(LazyTask):
         """
         if not callable(func):
             try:
-                module, cls = func.rsplit('.', 1)
-                func = getattr(importlib.import_module(module), cls)
+                func = load_class(func)
             except Exception as e:
                 raise ValueError(f"Error loading identifier function '{func}': {e}")
         self._identifier_task = func
@@ -59,8 +56,7 @@ class ImageCreator(LazyTask):
         """
         if not callable(func):
             try:
-                module, cls = func.rsplit('.', 1)
-                func = getattr(importlib.import_module(module), cls)
+                func = load_class(func)
             except Exception as e:
                 raise ValueError(f"Error loading FITS loader function '{func}': {e}")
         self._fitsloader_task = func
@@ -160,8 +156,11 @@ class ImageCreator(LazyTask):
         outputs = obj.pop('outputs')
         self.logger.info("Building object %s with %s %s outputs and type %s from file %s", obj['class'], len(outputs),
                          output_class, image_type, filename or 'array input')
-        ImageClass = globals()[obj.pop('class')]
-        OutputClass = globals()[output_class]
+        imclass = obj.pop('class')
+        imclass = "datamodels."+imclass if "datamodels" not in imclass else imclass
+        ImageClass = load_class(imclass)
+        outclass = "datamodels."+output_class if "datamodels" not in output_class else output_class
+        OutputClass = load_class(outclass)
 
         # instantiate image object
         image = ImageClass(image_type=image_type, **obj, filename=filename or 'none')

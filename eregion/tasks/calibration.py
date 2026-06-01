@@ -1,9 +1,8 @@
 import numpy as np
 
-from tasks.task import Task
-from datamodels.image import DetImage
-from utils.image_utils import ensure_dataarray
-from utils.misc_utils import load_class
+from tasks import Task
+from datamodels import DetImage
+from utils import ensure_dataarray, load_class
 
 
 # Task to generate master bias
