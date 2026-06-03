@@ -178,6 +178,7 @@ class ImageCreator(LazyTask):
             if image_data_size != [obj['properties']['y_size'], obj['properties']['x_size']]:
                 self.logger.error(f"Calculated image size {image_data_size} does not match specified size in config"
                                   f" {obj['properties']['y_size'], obj['properties']['x_size']} for {obj['name']}")
+                raise ValueError("Calculated image size does not match specified size in config")
 
         # Assemble full image data from outputs
         image_data = np.zeros(image_data_size)
@@ -241,6 +242,7 @@ class ImageCreator(LazyTask):
                 for filename in file_batch:
                     self.logger.info("Processing file %s", filename)
                     # Load FITS data
+                    # TODO: fitsloader and identifier can be combined
                     if self._fitsloader_task is not None:
                         input_data_array, input_headers = self._fitsloader_task(filename=filename, **fitsloader_kwargs)
                     else:
