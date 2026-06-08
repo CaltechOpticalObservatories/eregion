@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Any, Literal
+from typing import Optional, Any, Literal, Callable
 from pydantic import BaseModel, Field, ConfigDict
 
 import numpy as np
@@ -210,7 +210,7 @@ class DetImage:
     Base detector image holding 2D (only spatial) pixel data and outputs.
 
     Args:
-        data: 2D image array.
+        data: 2D image array or Callable
         output_objects: Prebuilt Output regions.
         image_type: Optional label like "bias", "flat".
         meta: Dict or DetImageMeta; validated if provided.
@@ -218,7 +218,7 @@ class DetImage:
     """
     def __init__(
         self,
-        data: Optional[xr.DataArray | np.ndarray] = None,
+        data: Optional[xr.DataArray | np.ndarray | Callable] = None,
         output_objects: Optional[dict[str, Output]] = None,
         image_type: Optional[str] = None,
         meta: Optional[DetImageMeta | dict[str, Any]] = None,
@@ -226,14 +226,18 @@ class DetImage:
     ):
 
         self.ndim = 2
-        self.data: Optional[xr.DataArray] = ensure_dataarray(data) if data is not None else None
         self.image_type = image_type
         self.outputs = {}
+        self.meta: DetImageMeta | dict[str, Any] = {}
+        self._data = None
+        self._dataloader = None
+
+        if data:
+            self.set_data(data)
 
         # Normalize meta to DetImageMeta if possible; allow empty until placement on focal plane.
         if meta is None and kwargs:
             meta = kwargs
-
         if isinstance(meta, DetImageMeta):
             self.meta: DetImageMeta | dict[str, Any] = meta
         elif isinstance(meta, dict) and meta:
@@ -242,19 +246,16 @@ class DetImage:
                 self.meta = DetImageMeta.model_validate(meta)
             else:
                 self.meta = dict(meta)
-        else:
-            self.meta = {}
         # Merge any additional kwargs into meta
         self.meta.update(kwargs)
-        self.id = self.meta.name
-
+        self.id = self.meta['name']
 
         # Outputs
-        if output_objects is None and self.data is not None:
+        if output_objects is None and self._data is not None:
             logger.info("Creating default Output for DetImage (covers full array).")
-            h, w = self.data.shape
+            h, w = self.shape
             self.outputs['0'] = Output(id='0',
-                                       input_array_axis=1,
+                                       input_array_axis=0,
                                        input_slice=(slice(0, h), slice(0, w)),
                                        output_slice=(slice(0, h), slice(0, w)),
                                        parent=self)
@@ -280,9 +281,60 @@ class DetImage:
         else:
             self.outputs[output.id] = output
 
+    def set_data(self, data: xr.DataArray | np.ndarray | Callable):
+        if isinstance(data, Callable):
+            self._dataloader = data
+        elif isinstance(data, xr.DataArray) or isinstance(data, np.ndarray):
+            self._data = data
+        else:
+            raise TypeError(
+                "If provided, data must be an xr.DataArray or np.ndarray or Callable for loading on demand.")
+
+    def load(self):
+        """
+        Load data from disk into _data attribute. self.data returns xarray _data when called.
+        """
+        if self._dataloader is not None:
+            idata, iheaders = self._dataloader(self.meta['filename'])
+            self._data = np.zeros(self.shape)
+            for out_id, output in self.outputs.items():
+                output.fits_header = iheaders[output.input_array_axis]
+                self._data[*output.output_slice] = idata[output.input_array_axis][*output.input_slice]
+            del idata, iheaders
+        else:
+            raise ValueError("No dataloader function provided for this DetImage, cannot load data.")
+
+    def unload(self):
+        """
+        Unload data from _data attribute to free up memory.
+        """
+        del self._data
+        self._data = None
+
+    @property
+    def data(self) -> xr.DataArray:
+        if self._data is None:
+            self.load()
+        return ensure_dataarray(self._data)
+
     @property
     def num_outputs(self) -> int:
         return len(self.outputs)
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        if 'properties' in self.meta:
+            if 'x_size' in self.meta['properties'] and 'y_size' in self.meta['properties']:
+                return self.meta['properties']['y_size'], self.meta['properties']['x_size']
+        if 'shape' in self.meta:
+            return self.meta['shape']
+        if len(self.outputs) > 0:
+            imsize = [0] * self.ndim
+            for _, output in self.outputs.items():
+                imsize[0] = max(imsize[0], output.output_slice[0].stop)
+                imsize[1] = max(imsize[1], output.output_slice[1].stop)
+            return tuple(imsize)
+        raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")
 
     def show(self, ax=None, save=None, **imshow_kwargs):
         if self.data is None:
@@ -293,6 +345,7 @@ class DetImage:
         if save is not None:
             ax.figure.savefig(save)
         return ax
+
 
 class FocalPlaneImage:
     """

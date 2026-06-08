@@ -1,3 +1,5 @@
+from functools import partial
+
 import os
 import glob2
 import time
@@ -7,7 +9,7 @@ from joblib import Parallel, delayed
 
 from configs import DetectorConfig
 from tasks import LazyTask
-from utils import load_image_fits, parse_list_of_files, guess_image_type_from_header, load_class, ensure_dataarray
+from utils import load_image_fits, parse_list_of_files, guess_image_type_from_header, load_class
 
 
 ## Classes to handle image generation from configuration files
@@ -19,10 +21,10 @@ class ImageCreator(LazyTask):
         self.det_config = DetectorConfig(config_input=detector_config)
 
         # Store a custom function for identification
-        self._identifier_task: Optional[Callable[..., str]] = None
+        self._identifier_task: Optional[Callable] = guess_image_type_from_header
 
         # Store a custom function for image loading
-        self._fitsloader_task: Optional[Callable[..., np.ndarray]] = None
+        self._fileloader_task: Optional[Callable] = load_image_fits
 
         # Store processed filenames
         self._seen_files: set[str] = set()
@@ -35,7 +37,7 @@ class ImageCreator(LazyTask):
         """
         self.det_config = DetectorConfig(config_input=detector_config)
 
-    def set_identifier(self, func: str | Callable[..., str]) -> None:
+    def set_identifier(self, func: str | Callable, **kwargs) -> None:
         """
         Register a custom image-type identification function.
         Expected signature: func(filename: str, **kwargs) -> str
@@ -45,13 +47,16 @@ class ImageCreator(LazyTask):
                 func = load_class(func)
             except Exception as e:
                 raise ValueError(f"Error loading identifier function '{func}': {e}")
-        self._identifier_task = func
+        self._identifier_task = partial(func, **kwargs)
 
-    def set_fitsloader(self, func: str | Callable[..., str]) -> None:
+    def set_fileloader(self, func: str | Callable, **kwargs) -> None:
         """
-        Register a custom FITS loading function. It should return a tuple of
-        (data_list, header_list).
-        Must have filename as a required argument.
+        Register a custom FITS/file loading function. It should return a tuple of (data_list, header_list) and
+        must have filename as a required argument.
+
+        In case of loading data from memory instead of files, this custom function can be used to just supply headers,
+        with filename as None.
+
         Expected signature: func(filename: str, **kwargs) -> Tuple(List[Any], List[astropy.io.fits.Header])
         """
         if not callable(func):
@@ -59,7 +64,7 @@ class ImageCreator(LazyTask):
                 func = load_class(func)
             except Exception as e:
                 raise ValueError(f"Error loading FITS loader function '{func}': {e}")
-        self._fitsloader_task = func
+        self._fileloader_task = partial(func, **kwargs)
 
 
     # ----------------- Input sources -----------------
@@ -122,7 +127,39 @@ class ImageCreator(LazyTask):
             yield [array]
 
     # ----------------- Image object builders -----------------
-    def _build_image_objects(self, input_data_array, input_headers, image_type, filename=None):
+    def _build_image_objects(self, input_data, data_on_demand=False) -> list[Any]:
+        """
+        Internal method to parallely build DetImage objects from a given filename or in-memory array.
+        :param input_data: str or array
+        :param data_on_demand: If True, the actual data loading into memory is done when DetImage data is accessed,
+                            instead of during image object creation, to save memory usage.
+        :return: list of DetImage objects
+        """
+        if not data_on_demand and isinstance(input_data, str):
+            input_data_array, input_headers = self._fileloader_task(filename=input_data)
+            filename = input_data
+            self.logger.debug("Loaded %d HDU from file %s", len(input_data_array), input_data)
+        elif data_on_demand and isinstance(input_data, str):
+            input_data_array, input_headers = [], []  # placeholders, actual loading will be done in DetImage when data is accessed
+            filename = input_data
+            self.logger.debug("Data will be loaded on demand for file %s", input_data)
+        elif isinstance(input_data, np.ndarray):
+            data_on_demand = False
+            _, input_headers = self._fileloader_task(filename=None)
+            input_data_array = input_data
+            filename = None
+            self.logger.debug("Data provided as array input, got %d HDU worth of headers", len(input_headers))
+        else:
+            raise ValueError("Must provide either input filename or array")
+
+        if (not data_on_demand) and (len(input_data_array) == 0):
+            self.logger.error("No data found in file %s, skipping this input.")
+            return []
+
+        # Determine image type
+        image_type = self._identifier_task(filename=input_data if isinstance(input_data, str) else None)
+        self.logger.debug("Identified image type as %s", image_type)
+
         cfg = self.det_config.config
         ## use joblib to parallelize building image objects
         images = []
@@ -135,6 +172,10 @@ class ImageCreator(LazyTask):
         for img in results:
             if img is not None:
                 images.append(img)
+
+        # free up memory
+        del input_data_array, input_headers
+
         return images
 
     def _build_single_image_object(self,
@@ -151,7 +192,6 @@ class ImageCreator(LazyTask):
                             filename, obj['filename_format'])
                 return None
 
-
         # pop outputs and class from object
         outputs = obj.pop('outputs')
         self.logger.info("Building object %s with %s %s outputs and type %s from file %s", obj['class'], len(outputs),
@@ -167,7 +207,7 @@ class ImageCreator(LazyTask):
         image_data_size = [0] * image.ndim
         for output in outputs:
             output_obj = OutputClass(**output)
-            output_obj.fits_header = input_headers[output_obj.input_array_axis]
+            output_obj.fits_header = input_headers[output_obj.input_array_axis] if len(input_headers) > 0 else None
             # Determine full image size
             image_data_size[0] = max(image_data_size[0], output_obj.output_slice[0].stop)
             image_data_size[1] = max(image_data_size[1], output_obj.output_slice[1].stop)
@@ -179,23 +219,29 @@ class ImageCreator(LazyTask):
                 self.logger.error(f"Calculated image size {image_data_size} does not match specified size in config"
                                   f" {obj['properties']['y_size'], obj['properties']['x_size']} for {obj['name']}")
                 raise ValueError("Calculated image size does not match specified size in config")
+        # add image size to meta
+        image.meta['shape'] = tuple(image_data_size)
 
-        # Assemble full image data from outputs
-        image_data = np.zeros(image_data_size)
-        for output_id in image.outputs:
-            output_obj = image.outputs[output_id]
-            image_data[*output_obj.output_slice] = (
-                input_data_array)[output_obj.input_array_axis][*output_obj.input_slice]
-        image.data = ensure_dataarray(image_data)
+        # Assemble full image data from outputs if not data_on_demand
+        if len(input_data_array) > 0:
+            image_data = np.zeros(image_data_size)
+            for output_id, output_obj in image.outputs.items():
+                image_data[*output_obj.output_slice] = (
+                    input_data_array)[output_obj.input_array_axis][*output_obj.input_slice]
+        else:
+            image_data = self._fileloader_task
+        image.set_data(image_data)
+
         return image
 
     # ----------------- Main lazy run method -----------------
     def lazy_run(self,
                  input_source: str | list[str] | Iterable[np.ndarray],
-                 identifier_func: Optional[Callable[..., str]] = None,
+                 identifier_func: Optional[str | Callable] = None,
                  identifier_kwargs: Optional[dict[str, Any]] = None,
-                 fitsloader_func: Optional[Callable[..., str]] = None,
-                 fitsloader_kwargs: Optional[dict[str, Any]] = None,
+                 fileloader_func: Optional[str | Callable] = None,
+                 fileloader_kwargs: Optional[dict[str, Any]] = None,
+                 data_on_demand: bool = False,
                  require_data: bool = True,
     ) -> Generator[dict[str, list], None, None]:
         """
@@ -207,10 +253,12 @@ class ImageCreator(LazyTask):
             Custom image type identification function.
         :param identifier_kwargs: dict, optional
             Additional keyword arguments for the identifier function.
-        :param fitsloader_func: str (from pipeline config) or Callable (if using directly), optional
+        :param fileloader_func: str (from pipeline config) or Callable (if using directly), optional
             Custom FITS loading function.
-        :param fitsloader_kwargs: dict, optional
+        :param fileloader_kwargs: dict, optional
             Additional keyword arguments for the FITS loader function.
+        :param data_on_demand: bool
+            If True, the actual data loading from FITS is done when DetImage objects are being used, to save memory usage.
         :param require_data: bool
             If True, raises an error if no files are found in the input source.
         :return: {"images": list of DetImage}
@@ -222,64 +270,39 @@ class ImageCreator(LazyTask):
 
         identifier_kwargs = identifier_kwargs or {}
         if identifier_func is not None:
-            self.set_identifier(identifier_func)
+            self.set_identifier(identifier_func, **identifier_kwargs)
 
-        fitsloader_kwargs = fitsloader_kwargs or {}
-        if fitsloader_func is not None:
-            self.set_fitsloader(fitsloader_func)
+        fileloader_kwargs = fileloader_kwargs or {}
+        if fileloader_func is not None:
+            self.set_fileloader(fileloader_func, **fileloader_kwargs)
 
+        _file_input = False
         if isinstance(input_source, (str, list[str])):
-            file_batches = self.from_files(input_source)
-            for file_batch in file_batches:
-                ## if file_batch is empty, print a warning
-                if len(file_batch) == 0:
-                    self.logger.warn("Empty input source. Skipping.")
-                    if require_data:
-                        raise FileNotFoundError("No FITS files found in the input source.")
-                    continue
-
-                images_batch = {}
-                for filename in file_batch:
-                    self.logger.info("Processing file %s", filename)
-                    # Load FITS data
-                    # TODO: fitsloader and identifier can be combined
-                    if self._fitsloader_task is not None:
-                        input_data_array, input_headers = self._fitsloader_task(filename=filename, **fitsloader_kwargs)
-                    else:
-                        input_data_array, input_headers = load_image_fits(filename)
-                    self.logger.debug("Loaded %d HDU from file %s", len(input_data_array), filename)
-                    if len(input_data_array) == 0:
-                        self.logger.warn("No data found in file %s, skipping.", filename)
-                        continue
-
-                    # Determine image type
-                    if self._identifier_task is not None:
-                        image_type = self._identifier_task(filename=filename, **identifier_kwargs)
-                    else:
-                        image_type = guess_image_type_from_header(input_headers[0], **identifier_kwargs)
-                    self.logger.debug("Identified image type as %s for file %s", image_type, filename)
-
-                    # Build image objects
-                    images = self._build_image_objects(input_data_array, input_headers, image_type, filename=filename)
-                    images_batch[image_type] = images_batch.get(image_type, []) + images
-                yield images_batch
-
+            input_batches = self.from_files(input_source)
+            _file_input = True
+        elif isinstance(input_source, Iterable):
+            input_batches = self.from_arrays(input_source)
         else:
-            array_batches = self.from_arrays(input_source)
-            for array_batch in array_batches:
-                ## if array_batch is empty, print a warning
-                if len(array_batch) == 0:
-                    self.logger.warn("Empty input source. Skipping.")
-                    if require_data:
-                        raise ValueError("Empty input source.")
-                    continue
+            raise TypeError("Input source must be either a path to FITS files or an iterable of numpy arrays")
 
-                images_batch = {}
-                for input_data_array in array_batch:
-                    if self._identifier_task is not None:
-                        image_type = self._identifier_task()
+        for batch in input_batches:
+            ## if batch is empty, print a warning
+            if len(batch) == 0:
+                self.logger.warn("Empty input source. Skipping.")
+                if require_data:
+                    if _file_input:
+                        raise FileNotFoundError("No files found in the input source.")
                     else:
-                        image_type = 'unknown'
-                    images = self._build_image_objects(input_data_array, image_type, filename=None)
+                        raise ValueError("Empty iterable input source.")
+                continue
+
+            images_batch = {}
+            for inp in batch:
+                if _file_input:
+                    self.logger.debug("Processing file %s", inp)
+                # Build image objects
+                images = self._build_image_objects(inp, data_on_demand=data_on_demand)
+                if len(images) > 0:
+                    image_type = images[0].image_type
                     images_batch[image_type] = images_batch.get(image_type, []) + images
-                yield images_batch
+            yield images_batch
