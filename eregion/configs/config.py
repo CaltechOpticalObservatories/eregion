@@ -85,7 +85,7 @@ class ConfigLoader(ABC):
     def validate_config(self):
         for key in self.required_keys:
             if key not in self.config:
-                raise ValueError(f"Missing required config key: {key}")
+                raise KeyError(f"Missing required config key: {key}")
 
 
 ### Detector Configuration Class ###
@@ -106,16 +106,16 @@ class DetectorConfig(ConfigLoader):
     def validate_config(self):
         for key in self.required_keys:
             if key not in self.config:
-                raise ValueError(f"Missing required config key: {key}")
+                raise KeyError(f"Missing required config key: {key}")
 
         for obj in self.config['objects']:
             for key in self.required_objects_keys:
                 if key not in obj:
-                    raise ValueError(f"Missing required object key: {key} in object {obj.get('name', 'unknown')}")
+                    raise KeyError(f"Missing required object key: {key} in object {obj.get('name', 'unknown')}")
 
             for prop_key in self.required_properties_keys:
                 if prop_key not in obj['properties']:
-                    raise ValueError(f"Missing required property key: {prop_key} in object {obj.get('name', 'unknown')}")
+                    raise KeyError(f"Missing required property key: {prop_key} in object {obj.get('name', 'unknown')}")
 
 
 
@@ -135,12 +135,12 @@ class PipelineConfig(ConfigLoader):
     def validate_config(self):
         for key in self.required_keys:
             if key not in self.config:
-                raise ValueError(f"Missing required config key: {key}")
+                raise KeyError(f"Missing required config key: {key}")
 
         for pipeline in self.config['pipelines']:
             for key in self.required_pipeline_keys:
                 if key not in pipeline:
-                    raise ValueError(f"Missing required pipeline key: {key} in pipeline {pipeline.get('name', 'unknown')}")
+                    raise KeyError(f"Missing required pipeline key: {key} in pipeline {pipeline.get('name', 'unknown')}")
 
             if pipeline['lazy']:
                 assert 'source' in pipeline, f"Missing required key 'source' for lazy pipeline {pipeline.get('name', 'unknown')}"

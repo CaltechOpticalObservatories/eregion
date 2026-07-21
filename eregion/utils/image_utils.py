@@ -1,5 +1,6 @@
 import numpy as np
 import xarray as xr
+from typing import Literal
 
 def ensure_dataarray(data: xr.DataArray | np.ndarray) -> xr.DataArray:
     """
@@ -69,7 +70,7 @@ def ensure_numpy(data: xr.DataArray | np.ndarray) -> np.ndarray:
         case _:
             raise TypeError("data must be an xarray.DataArray, or numpy.ndarray")
 
-def slice_data(data: xr.DataArray, slicer: tuple[slice, ...] | dict[str, slice]) -> xr.DataArray:
+def slice_data(data: xr.DataArray, slicer: tuple[slice, ...] | dict[Literal, slice]) -> xr.DataArray:
     """
     Slice a 2D or 3D DataArray using ('y','x','t) positional slices.
     """
@@ -92,7 +93,7 @@ def slice_data(data: xr.DataArray, slicer: tuple[slice, ...] | dict[str, slice])
 
     # hack to not include last element of slices but still use .sel() which includes the stop index
     for k, sl in slicer.items():
-        if sl.step > 0:
+        if sl.step is None or sl.step > 0:
             slicer[k] = slice(sl.start, sl.stop - 1, sl.step)
         else:
             slicer[k] = slice(sl.start, sl.stop + 1, sl.step)

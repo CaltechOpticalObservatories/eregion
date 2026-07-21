@@ -87,41 +87,24 @@ def load_image_fits(filename: str | None, **kwargs) -> tuple[list[Any], list[fit
         return input_data_array, input_headers
     return [], []
 
-def guess_image_type_from_header(filename, keywords=None):
+def guess_image_type_from_header(headers: list[fits.Header | dict], keywords=None) -> dict[str, Any]:
     """
     Default image type guessing logic based on FITS header.
     Parameters
     ----------
-    filename : str | None
-        FITS input file
-    keywords : list of str, optional
-        List of header keywords to check for image type.
+    headers: list[fits.Header | dict]
+        List of FITS headers to check for image type.
+    keywords : dict[str, list[str]] optional
+        Dictionary specifying keywords to check for different image identifiers
     """
-    if filename:
-        _, headers = load_image_fits(filename)
-
-        for header in headers:
-            # Check given keywords first
-            if keywords:
-                for key in keywords:
-                    if key in header:
-                        return header[key].lower()
-
-            # Check common header keywords for image type
-            if 'IMAGETYP' in header:
-                return header['IMAGETYP'].lower()
-            elif 'OBSTYPE' in header:
-                return header['OBSTYPE'].lower()
-            elif 'OBJECT' in header:
-                obj_name = header['OBJECT'].lower()
-                if 'bias' in obj_name:
-                    return 'bias'
-                elif 'flat' in obj_name:
-                    return 'flat'
-                elif 'dark' in obj_name:
-                    return 'dark'
-                elif 'science' in obj_name or 'object' in obj_name:
-                    return 'science'
-            else:
-                continue
-    return 'unknown'
+    imtype = {'type': 'unknown', 'exptime': None}
+    for header in headers:
+        # Check given keywords first
+        if keywords is None:
+            keywords = {'type':['IMAGETYP', 'OBSTYPE', 'OBJECT'], 'exptime': ['EXPTIME', 'EXPOSURE']}
+        for key, hkeys in keywords.items():
+            for hkey in hkeys:
+                if hkey in header:
+                    imtype[key] = header[hkey].lower()
+                    break
+    return imtype
