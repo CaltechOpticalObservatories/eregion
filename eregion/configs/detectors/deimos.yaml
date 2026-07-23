@@ -1,6 +1,6 @@
-## Example detector definition file for the DEIMOS instrument CCD array
-## A single FITS file contains 8 extensions, one per detector, so 8 DetImage instances are created from this file.
-## Each DetImage instance has two outputs (two channels per detector).
+## Example detector definition file for the OLD DEIMOS full array.
+## A single FITS file contains (at least) 8 extensions, one per detector (both outputs in same extension).
+## 8 DetImage instances are defined below.
 ---
 description: DEIMOS CCD detector array, 8 detectors with two channel readout each
 detector_type: CCD # (specify the type of detector, e.g., CCD, CMOS, H2RG, etc.)
@@ -46,6 +46,8 @@ objects:
       x_cen: -46.08  # mm
       y_cen: 30.72  # mm
       angle: 0.0  # degrees
+      flip_x: false   # flip to place in focal plane assuming 0,0 is bottom left and +y is up, +x is right
+      flip_y: true
 
   - name: 'det_2'
     class: DetImage
@@ -86,6 +88,8 @@ objects:
       x_cen: -15.36  # mm
       y_cen: 30.72  # mm
       angle: 0.0  # degrees
+      flip_x: false
+      flip_y: true
 
   - name: 'det_3'
     class: DetImage
@@ -126,6 +130,8 @@ objects:
       x_cen: 15.36  # mm
       y_cen: 30.72  # mm
       angle: 0.0  # degrees
+      flip_x: false
+      flip_y: true
 
   - name: 'det_4'
     class: DetImage
@@ -166,6 +172,8 @@ objects:
       x_cen: 46.08  # mm
       y_cen: 30.72  # mm
       angle: 0.0  # degrees
+      flip_x: false
+      flip_y: true
 
   - name: 'det_5'
     class: DetImage
@@ -203,9 +211,11 @@ objects:
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU
     focal_plane_position:
-      x_cen: 46.08  # mm
+      x_cen: -46.08  # mm
       y_cen: -30.72  # mm
       angle: 0.0  # degrees
+      flip_x: true
+      flip_y: false
 
   - name: 'det_6'
     class: DetImage
@@ -243,9 +253,11 @@ objects:
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU
     focal_plane_position:
-      x_cen: 15.36  # mm
+      x_cen: -15.36  # mm
       y_cen: -30.72  # mm
       angle: 0.0  # degrees
+      flip_x: true
+      flip_y: false
 
   - name: 'det_7'
     class: DetImage
@@ -283,9 +295,11 @@ objects:
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU
     focal_plane_position:
-      x_cen: -15.36  # mm
+      x_cen: 15.36  # mm
       y_cen: -30.72  # mm
       angle: 0.0  # degrees
+      flip_x: true
+      flip_y: false
 
   - name: 'det_8'
     class: DetImage
@@ -323,10 +337,11 @@ objects:
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU
     focal_plane_position:
-      x_cen: -46.08  # mm
+      x_cen: 46.08  # mm
       y_cen: -30.72  # mm
       angle: 0.0  # degrees
-
+      flip_x: true
+      flip_y: false
 
 
 

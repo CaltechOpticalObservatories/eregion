@@ -15,6 +15,7 @@ pipelines:
           params:
             input_source: "/Users/yashvi/Desktop/Detector Characterization Tools/DTU_dettest/DTU_singledet_acceptance/PTC/SCI/20250812-101350/*_bias_*.fits"
             identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
+            fitsloader_func: tasks.custom.load_image_fits_DEIMOS
 
       - name: master_bias
         task: tasks.calibration.MasterBias
@@ -39,6 +40,7 @@ pipelines:
           params:
             input_source: "/Users/yashvi/Desktop/Detector Characterization Tools/DTU_dettest/DTU_singledet_acceptance/PTC/SCI/20250812-101350/*flat_0.000*.fits"
             identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
+            fitsloader_func: tasks.custom.load_image_fits_DEIMOS
 
       - name: bias_subtraction
         task: tasks.preprocessing.BiasSubtraction

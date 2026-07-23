@@ -3,14 +3,12 @@ from abc import abstractmethod
 from typing import Optional, Iterable, Iterator, Any
 import numpy as np
 import xarray as xr
-
-from tasks.task import LazyTask
-from datamodels.image import DetImage, Output
-from utils.image_utils import ensure_dataarray, ensure_numpy
-from utils.misc_utils import load_class
-from core.image_operations import subtract_from_image, sigma_clip_image
-
 from joblib import Parallel, delayed
+
+from tasks import LazyTask
+from datamodels import DetImage, Output
+from utils import ensure_dataarray, ensure_numpy, load_class
+from core.image_operations import subtract_from_image, sigma_clip_image
 
 ########### BasePreprocessingTask ###########
 class BasePreprocessingTask(LazyTask):

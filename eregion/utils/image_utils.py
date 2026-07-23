@@ -1,5 +1,6 @@
 import numpy as np
 import xarray as xr
+from typing import Literal
 
 def ensure_dataarray(data: xr.DataArray | np.ndarray) -> xr.DataArray:
     """
@@ -69,18 +70,35 @@ def ensure_numpy(data: xr.DataArray | np.ndarray) -> np.ndarray:
         case _:
             raise TypeError("data must be an xarray.DataArray, or numpy.ndarray")
 
-def slice_data(data: xr.DataArray, slicer: tuple[slice, ...]) -> xr.DataArray:
+def slice_data(data: xr.DataArray, slicer: tuple[slice, ...] | dict[Literal, slice]) -> xr.DataArray:
     """
     Slice a 2D or 3D DataArray using ('y','x','t) positional slices.
     """
-    if not isinstance(slicer, tuple) or not all(isinstance(s, slice) for s in slicer):
-        raise ValueError("slicer must be a tuple of slice objects.")
-
-    match (data.ndim, data.dims):
-        case (2, ("y", "x")):
-            return data.isel(y=slicer[0], x=slicer[1])
-        case (3, ("y", "x", "t")):
-            return data.isel(y=slicer[0], x=slicer[1], t=slicer[2])
+    match slicer:
+        case tuple():
+            if not all(isinstance(s, slice) for s in slicer):
+                raise ValueError("All elements of slicer tuple must be slices.")
+            match (data.ndim, data.dims):
+                case (2, ("y", "x")):
+                    slicer = {"y": slicer[0], "x": slicer[1]}
+                case (3, ("y", "x", "t")):
+                    slicer = {"y": slicer[0], "x": slicer[1], "t": slicer[2]}
+                case _:
+                    raise ValueError("DataArray must be 2D with dims ('y','x') or 3D with dims ('y','x','t').")
+        case dict():
+            if not all(isinstance(s, slice) for s in slicer.values()):
+                raise ValueError("All values of slicer dict must be slices.")
         case _:
-            raise ValueError("DataArray must be 2D with dims ('y','x') or 3D with dims ('y','x','t').")
+            raise ValueError("slicer must be a tuple of slices or a dict of {dim: slice}.")
+
+    # hack to not include last element of slices but still use .sel() which includes the stop index
+    for k, sl in slicer.items():
+        if sl.step is None or sl.step > 0:
+            slicer[k] = slice(sl.start, sl.stop - 1, sl.step)
+        else:
+            slicer[k] = slice(sl.start, sl.stop + 1, sl.step)
+
+    return data.sel(**slicer)
+
+
 

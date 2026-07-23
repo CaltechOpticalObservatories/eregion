@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 
-from eregion.datamodels.image import (
+from eregion.datamodels import (
     DetectorProperties,
     FocalPlanePosition,
     DetImageMeta,
@@ -9,6 +9,7 @@ from eregion.datamodels.image import (
     CCDOutput,
     DetImage,
     FocalPlaneImage,
+    ImageBundle
 )
 
 
@@ -78,7 +79,7 @@ def test_ccdoutput_serial_axis_and_regions():
 
 def test_detimage_default_output_creation_and_lookup():
     data = make_dataarray((7, 9))
-    det = DetImage(data=data, image_type="bias")
+    det = DetImage(data=data)
     # default output exists
     assert det.num_outputs == 1
     out = det.output_by_id("0")
@@ -113,7 +114,31 @@ def test_focalplaneimage_construct_and_place_tiles():
             focal_plane_position=FocalPlanePosition(x_cen=8.0, y_cen=2.0),
         ),
     )
-    fp = FocalPlaneImage(num_detectors=2, dim=(4, 10), fp_center=(4, 0), det_images=[img1, img2])
+    fp = FocalPlaneImage(num_detectors=2, dim=(4, 10), det_images=[img1, img2])
     assert fp.data.shape == (4, 10)
     # Ensure both tiles are placed
     assert np.count_nonzero(fp.data.values) > 0
+
+def test_imagebundle_construct_and_access():
+    props = DetectorProperties(pixel_size=1.0, x_size=4, y_size=4)
+    imgs = []
+    for i in range(4):
+        for imtype in [{'type': 'bias', 'exptime': 0}, {'type': 'dark', 'exptime': 10}, {'type': 'flat', 'exptime': 10}]:
+            img = DetImage(
+                data=make_dataarray((4, 4)),
+                properties=props,
+                focal_plane_position=FocalPlanePosition(x_cen=0.0, y_cen=0.0),
+                image_type=imtype,
+                name=f"D{i}")
+            imgs.append(img)
+
+    bundle = ImageBundle(images=imgs)
+    assert len(bundle.images) == 12
+    assert len(bundle.list) == 12
+    # Test filtering by type
+    assert len(bundle(det_id="D0")) == 3
+    assert len(bundle(type="bias")) == 4
+    assert len(bundle(exptime=10)) == 8
+    assert len(bundle(exptime=10, type="flat")) == 4
+    assert len(bundle(exptime=10, type="dark", det_id="D1")) == 1
+    assert [isinstance(im, DetImage) for im in bundle()]

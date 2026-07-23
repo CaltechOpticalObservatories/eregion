@@ -91,3 +91,26 @@ def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray, sigma: float, axis: 
     """
     masked = sigma_clip(image, sigma=sigma, axis=axis, **kwargs)
     return masked
+
+def flip_and_rotate(image: np.ndarray, angle: float, flip_x: bool=False, flip_y: bool=False) -> np.ndarray:
+    """
+    Flip and rotate an image. Rotation angle is assumed to be in degrees and positive for counter-clockwise direction,
+    and has to be a multiple of 90.
+    :param image: 2D numpy array
+    :param angle: in degrees
+    :param flip_x: True to flip left-right
+    :param flip_y: True to flip up-down
+    :return: flipped and rotated image
+    """
+    if image.ndim != 2:
+        raise ValueError('Input image is not a 2D array.')
+    if flip_y:
+        image = np.flipud(image)
+    if flip_x:
+        image = np.fliplr(image)
+    if angle % 90 != 0:
+        raise ValueError('Angle must be a multiple of 90 degrees.')
+    else:
+        k = (angle // 90) % 4
+        image = np.rot90(image, int(k))
+    return image

@@ -1,9 +1,8 @@
 import numpy as np
 
-from tasks.task import Task
-from datamodels.image import DetImage
-from utils.image_utils import ensure_dataarray
-from utils.misc_utils import load_class
+from tasks import Task
+from datamodels import DetImage
+from utils import ensure_dataarray, load_class
 
 
 # Task to generate master bias
@@ -11,7 +10,7 @@ class MasterBias(Task):
     def __init__(self, name=None, **kwargs):
         super().__init__(name=name, **kwargs)
 
-    def run(self, bias_images: list[DetImage]) -> dict[str,list[DetImage]]:
+    def run(self, bias_images: list[DetImage], **kwargs) -> dict[str,list[DetImage]]:
         """
         Generate master bias frames from a list of bias DetImage objects.
         :param bias_images: list of DetImage
@@ -22,13 +21,9 @@ class MasterBias(Task):
         # Check that bias_images are DetImage instances
         if not isinstance(bias_images, list) or not all(isinstance(img, DetImage) for img in bias_images):
             raise ValueError("bias_images must be a list of DetImage instances.")
-        # Verify that all input images are of 'bias' image_type
-        # TODO: Add a init kwarg to specify the expected image_type of input bias frames, and check against that instead of hardcoding 'bias'
-        for img in bias_images:
-            if 'bias' not in img.image_type.lower():
-                raise ValueError(f"All input images must have image_type 'bias'. Found '{img.image_type}' in {img.meta.filename}.")
 
         # Group bias images by detector name
+        # TODO: add a generic group_by utility
         bias_dict = {}
         for img in bias_images:
             det_name = img.meta.name if 'name' in img.meta else 'default'
@@ -51,7 +46,7 @@ class MasterBias(Task):
             master_bias.meta.update({'filenames':', '.join([img.meta.filename for img in imgs])})
             master_bias.outputs.update(imgs[0].outputs)
             master_biases.append(master_bias)
-        return {'master_biases': master_biases}
+        return {'master_bias': master_biases}
 
     def _create_masterbias(self, biases: list[np.ndarray], method='median')-> np.ndarray:
         """

@@ -1,6 +1,6 @@
-## Example detector definition file for the DEIMOS instrument CCD array
-## A single FITS file contains 8 extensions, one per detector, so 8 DetImage instances are created from this file.
-## Each DetImage instance has two outputs (two channels per detector).
+## Example detector definition file for DEIMOS single detector.
+## A single FITS file contains data for one detector, with the 2 outputs in 2 separate extensions.
+## One DetImage instance is defined below.
 ---
 description: DEIMOS CCD detector single
 detector_type: CCD # (specify the type of detector, e.g., CCD, CMOS, H2RG, etc.)
@@ -22,7 +22,7 @@ objects:
         data_slice: [!slice [0, 4125], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
         serial_prescan: !slice [0, 50]
         serial_overscan: !slice [1074, 1094]
-        parallel_prescan: !slice [0, 50]
+        parallel_prescan: !slice [0, 1]
         parallel_overscan: !slice [4105, 4125]
         parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
         readout_pixel: [0, 0]  # top left pixel
@@ -33,18 +33,18 @@ objects:
         ext_id: 2 # FITS extension ID
         ext_slice: [!slice [0, 4125], !slice [0, 1094]] # Slice of the ext_id that has the data for this output
         data_slice: [!slice [0, 4125], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [1094, 1044]
-        serial_overscan: !slice [20, 0]
-        parallel_prescan: !slice [0, 50]
+        serial_prescan: !slice [2187, 2137]
+        serial_overscan: !slice [1113, 1093]
+        parallel_prescan: !slice [0, 1]
         parallel_overscan: !slice [4105, 4125]
         parallel_axis: 'y' # First axis in the data array (rows) represent parallel readout direction
-        readout_pixel: [0, 1094]  # top right pixel
+        readout_pixel: [0, 2187]  # top right pixel
         gain: 1.0  # electrons/ADU
         read_noise: 5.0  # electrons
         bias_level: 1000  # ADU
     focal_plane_position:
-      x_cen: -46.08  # mm
-      y_cen: 30.72  # mm
+      x_cen: 0  # mm
+      y_cen: 0   # mm
       angle: 0.0  # degrees
 
 

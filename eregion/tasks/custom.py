@@ -1,5 +1,10 @@
 ### File for custom input functions/tasks defined by the user. ###
 import os
+import numpy as np
+from typing import Any
+from astropy.io import fits
+
+from utils import load_image_fits
 
 def guess_image_type_from_filename_DEIMOS(filename: str) -> str:
     """
@@ -20,3 +25,10 @@ def guess_image_type_from_filename_DEIMOS(filename: str) -> str:
         return 'science'
     else:
         return 'unknown'
+
+def load_image_fits_DEIMOS(filename: str) -> tuple[list[Any], list[fits.Header]]:
+    input_data_array, input_headers = load_image_fits(filename)
+    for i, hdr in enumerate(input_headers):
+        if "TAPOFFS" in hdr:
+            input_data_array[i] = (input_data_array[i].astype(np.int64) >> 12) - hdr["TAPOFFS"]
+    return input_data_array, input_headers
