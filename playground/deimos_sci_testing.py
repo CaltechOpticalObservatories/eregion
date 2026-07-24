@@ -115,11 +115,13 @@ def main():
         flpair = cr_mask.run(images=flpair.data)
         ptcres = ptc_task.run(images=flpair.data)
 
+        del flpair
+
         if count == 0:
-            preproc_res = flpair
+            # preproc_res = flpair
             ptc_res = ptcres
         else:
-            preproc_res = preproc_res.combine(flpair)
+            # preproc_res = preproc_res.combine(flpair)
             ptc_res = ptc_res.combine(ptcres)
         count += 1
         print("Pairs processed: ", count)
