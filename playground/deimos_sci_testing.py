@@ -17,6 +17,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--detector-config", required=True)
     parser.add_argument("--input-dir", required=True)
+    parser.add_argument("--output-base-dir", required=True)
     parser.add_argument("--sigma_lower", type=float, default=5)
     parser.add_argument("--sigma_upper", type=float, default=5)
     parser.add_argument("--max-batch-size", type=int, default=2)
@@ -30,7 +31,7 @@ def main():
 
     input_files = glob2.glob(os.path.join(args.input_dir,'*.fits'))[0]
     rawpath = os.path.dirname(input_files)
-    outpath = rawpath.replace("/DTU_dettest/", "/DTU_detreduce/")
+    outpath = os.path.join(args.output_base_dir, rawpath.split("DTU_dettest/")[1])
     if not os.path.exists(outpath):
         os.makedirs(outpath)
 
