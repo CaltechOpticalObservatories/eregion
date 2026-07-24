@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from typing import Literal
 
 from datamodels import ImageBundle
 
@@ -19,69 +20,85 @@ import eregion.tasks.ptc as ptc
 
 def init_live_plot():
     plt.ion()
-    fig, ax = plt.subplots(2,4, figsize=(12,6))
+    fig, ax = plt.subplots(2,4, figsize=(12,6), tight_layout=True)
     return fig, ax
 
 def update_live_plot(fig, ax, ptc_table,
-                     cols, x_col='exptime'):
+                     cols, x_col='exptime',
+                     yscale='linear', xscale='linear'):
     if not cols:
         return
     sel = cols + [x_col, 'exptime', 'diff', 'det_id', 'output']
     df = ptc_table.copy()
     if 'variance' in cols:
-        df['variance'] = np.log10(df['std']**2)
+        df['variance'] = df['std']**2
     df = df[sel]
+
     axkey = {"det_1": ax[0,3], "det_2": ax[0,2], "det_3": ax[0,1], "det_4": ax[0,0],
              "det_5": ax[1,0], "det_6": ax[1,1], "det_7": ax[1,2], "det_8": ax[1,3]}
+    markers_list = list(Line2D.markers.keys())
 
     for det_id, axs in axkey.items():
         axs.clear()
-        dfdetE = df[(df['det_id']==det_id) & (df['output']=='E')]
-        dfdetF = df[(df['det_id']==det_id) & (df['output']=='F')]
-        if len(dfdetE) == 0 or len(dfdetF) == 0:
-            continue
+        for out, color in zip(['E', 'F'], ['blue', 'red']):
+            df_flats = df[(df['det_id']==det_id) & (df['output']==out) & (~df['diff'])]
+            df_diffs = df[(df['det_id']==det_id) & (df['output']==out) & (df['diff'])]
+            selcols = cols + [x_col, 'exptime']
+            df_flats = df_flats[selcols].groupby('exptime').mean()
+            df_diffs = df_diffs[selcols]
 
-        markers_list = list(Line2D.markers.keys())
-        for i,col in enumerate(cols):
-            if 'mean' in col or 'median' in col:
-                yE = np.log10(dfdetE[~dfdetE['diff']].groupby('exptime')[col].mean())
-                yF = np.log10(dfdetF[~dfdetF['diff']].groupby('exptime')[col].mean())
-            else:
-                yE = list(dfdetE.loc[dfdetE['diff'], col])
-                yF = list(dfdetF.loc[dfdetF['diff'], col])
+            xdf = df_diffs if (x_col in ['std','variance']) else df_flats
+            for i,col in enumerate(cols):
+                ydf = df_diffs if (col in ['std','variance']) else df_flats
+                axs.plot(list(xdf[x_col]), list(ydf[col]), color=color, label=col+'_'+out, marker=markers_list[i],
+                         alpha=0.7)
 
-            if 'mean' in x_col or 'median' in x_col:
-                xE = np.log10(dfdetE[~dfdetE['diff']].groupby('exptime')[x_col].mean())
-                xF = np.log10(dfdetF[~dfdetF['diff']].groupby('exptime')[x_col].mean())
-            else:
-                xE = list(dfdetE.loc[dfdetE['diff'], x_col])
-                xF = list(dfdetF.loc[dfdetF['diff'], x_col])
-
-            axs.plot(xE, yE, marker=markers_list[i], label=col+'_E', color='blue')
-            axs.plot(xF, yF, marker=markers_list[i], label=col+'_F', color='red')
-
-        axs.set_xlabel(x_col)
-        axs.set_title(det_id)
-        axs.legend(ncols=1, loc=(1.01,0.7), fontsize=8)
+        axs.set_xlabel(x_col, fontsize=10)
+        axs.set_title(det_id, fontsize=12)
         axs.grid(True)
+        axs.set_yscale(yscale)
+        axs.set_xscale(xscale)
+
+    ax[0,3].legend(ncols=1, loc=(1.01, 0.7), fontsize=8)
     fig.canvas.draw()
     fig.canvas.flush_events()
     plt.pause(0.001)
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--detector-config", required=True)
-    parser.add_argument("--input-dir", required=True)
-    parser.add_argument("--output-base-dir", required=True)
-    parser.add_argument("--sigma_lower", type=float, default=5)
-    parser.add_argument("--sigma_upper", type=float, default=5)
-    parser.add_argument("--max-batch-size", type=int, default=2)
-    parser.add_argument("--skip-correlations", action="store_true", default=False)
-    parser.add_argument("--break_after", type=int, default=0)
-    parser.add_argument("--live_plot", action="store_true", default=False)
-    parser.add_argument("--plot_cols", nargs="+", default=["variance"])
-    parser.add_argument("--plot-x", default="mean")
-    return parser.parse_args()
+def ptc_plot(runpath, which: Literal['ptc','lin']='ptc'):
+    ptc_res = ptc.PTCResult.load(runpath)
+    df = ptc_res.ptc_table.copy()
+    del ptc_res
+
+    fig, ax = plt.subplots(2, 4, figsize=(12,8), tight_layout=True)
+    axkey = {"det_1": ax[0,3], "det_2": ax[0,2], "det_3": ax[0,1], "det_4": ax[0,0],
+             "det_5": ax[1,0], "det_6": ax[1,1], "det_7": ax[1,2], "det_8": ax[1,3]}
+
+    for det_id, axs in axkey.items():
+        for out, color in zip(['E', 'F'], ['blue', 'red']):
+            df_flats = df[(df['det_id']==det_id) & (df['output']==out) & (~df['diff'])]
+            df_diffs = df[(df['det_id']==det_id) & (df['output']==out) & (df['diff'])]
+            selcols = ['exptime', 'mean', 'med', 'std']
+            gdf_flats = df_flats[selcols].groupby('exptime').mean()
+
+            if which == 'ptc':
+                axs.scatter(gdf_flats['mean'], df_diffs['std']**2, label=out, color=color, marker='.', alpha=0.7)
+                xlabel, ylabel = 'Mean Signal', 'Variance'
+                xscale, yscale = 'log', 'log'
+            elif which == 'lin':
+                axs.scatter(gdf_flats['exptime'], gdf_flats['mean'], label=out, color=color, marker='.', alpha=0.7)
+                xlabel, ylabel = 'Integration time', 'Mean Signal'
+                xscale, yscale = 'linear', 'linear'
+            else:
+                raise ValueError("Can only plot ptc or linearity.")
+
+        axs.grid(True)
+        axs.set_title(det_id, fontsize=12)
+        axs.set_xlabel(xlabel, fontsize=10)
+        axs.set_ylabel(ylabel, fontsize=10)
+        axs.set_xscale(xscale)
+        axs.set_yscale(yscale)
+    ax[0,3].legend(ncols=1, loc=(1.01, 0.7), fontsize=8)
+    plt.show()
 
 
 def main():
@@ -147,7 +164,7 @@ def main():
             del ptc_res.diff_images
             ptc_res.diff_images = ImageBundle()
             if args.live_plot:
-                update_live_plot(fig, ax, ptc_res.ptc_table, args.plot_cols, args.plot_x)
+                update_live_plot(fig, ax, ptc_res.ptc_table, args.plot_cols, args.plot_x, args.yscale, args.xscale)
 
         if count >= args.break_after and args.break_after > 0:
             break
@@ -155,6 +172,22 @@ def main():
     ptc_res.save(outpath)
     plt.close(fig)
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--detector-config", required=True)
+    parser.add_argument("--input-dir", required=True)
+    parser.add_argument("--output-base-dir", required=True)
+    parser.add_argument("--sigma_lower", type=float, default=5)
+    parser.add_argument("--sigma_upper", type=float, default=5)
+    parser.add_argument("--max-batch-size", type=int, default=2)
+    parser.add_argument("--skip-correlations", action="store_true", default=False)
+    parser.add_argument("--break_after", type=int, default=0)
+    parser.add_argument("--live_plot", action="store_true", default=False)
+    parser.add_argument("--plot_cols", nargs="+", default=["variance"])
+    parser.add_argument("--plot-x", default="mean")
+    parser.add_argument("--yscale", type=float, default='log')
+    parser.add_argument("--xscale", type=float, default='log')
+    return parser.parse_args()
 
 if __name__ == "__main__":
     main()

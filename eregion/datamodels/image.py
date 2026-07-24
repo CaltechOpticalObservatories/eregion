@@ -402,6 +402,7 @@ class DetImage:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
 
         if with_mask:
+            mask_built = False
             if self.masks is None:
                 mask_built = self.build_full_mask()
             if mask_built and mask_key in self.masks.data_vars:
