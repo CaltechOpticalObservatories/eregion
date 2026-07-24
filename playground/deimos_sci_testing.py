@@ -83,9 +83,9 @@ def ptc_plot(runpath, which: Literal['ptc','lin']='ptc'):
             if which == 'ptc':
                 axs.scatter(gdf_flats['mean'], df_diffs['std']**2, label=out, color=color, marker='.', alpha=0.7)
                 xlabel, ylabel = 'Mean Signal', 'Variance'
-                xscale, yscale = 'log', 'log'
+                xscale, yscale = 'symlog', 'symlog'
             elif which == 'lin':
-                axs.scatter(gdf_flats['exptime'], gdf_flats['mean'], label=out, color=color, marker='.', alpha=0.7)
+                axs.scatter(gdf_flats.index, gdf_flats['mean'], label=out, color=color, marker='.', alpha=0.7)
                 xlabel, ylabel = 'Integration time', 'Mean Signal'
                 xscale, yscale = 'linear', 'linear'
             else:
@@ -95,8 +95,14 @@ def ptc_plot(runpath, which: Literal['ptc','lin']='ptc'):
         axs.set_title(det_id, fontsize=12)
         axs.set_xlabel(xlabel, fontsize=10)
         axs.set_ylabel(ylabel, fontsize=10)
-        axs.set_xscale(xscale)
-        axs.set_yscale(yscale)
+        try:
+            axs.set_xscale(xscale)
+        except:
+            pass
+        try:
+            axs.set_yscale(yscale)
+        except:
+            pass
     ax[0,3].legend(ncols=1, loc=(1.01, 0.7), fontsize=8)
     plt.show()
 
