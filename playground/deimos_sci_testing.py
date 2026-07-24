@@ -3,6 +3,9 @@ import os
 import glob2
 import sys
 from pathlib import Path
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -12,6 +15,42 @@ from eregion.tasks.custom import guess_image_type_from_filename_DEIMOS, load_ima
 from eregion.tasks.preprocessing import BiasSubtraction, ScanSubtraction, SigmaClipMasking
 import eregion.tasks.ptc as ptc
 
+def init_live_plot():
+    plt.ion()
+    fig, ax = plt.subplots(2,4, figsize=(12,6))
+    return fig, ax
+
+def update_live_plot(fig, ax, ptc_table,
+                     cols, x_col='exptime'):
+    if not cols:
+        return
+
+    df = ptc_table.copy()
+    df = df[df['diff']]
+    if 'variance' in cols:
+        df['variance'] = df['std']**2
+    axkey = {"det_1": ax[0,3], "det_2": ax[0,2], "det_3": ax[0,1], "det_4": ax[0,0],
+             "det_5": ax[1,0], "det_6": ax[1,1], "det_7": ax[1,2], "det_8": ax[1,3]}
+
+    for det_id, axs in axkey.items():
+        axs.clear()
+        dfdetE = df[(df['det_id']==det_id) & (df['output']=='E')]
+        dfdetF = df[(df['det_id']==det_id) & (df['output']=='F')]
+        if len(dfdetE) == 0 or len(dfdetF) == 0:
+            continue
+
+        markers_list = list(Line2D.markers.keys())
+        for i,col in enumerate(cols):
+            axs.plot(list(dfdetE[x_col]), list(dfdetE[col]), marker=markers_list[i], label=col+'_E', color='blue')
+            axs.plot(list(dfdetF[x_col]), list(dfdetF[col]), marker=markers_list[i], label=col+'_F', color='red')
+
+        axs.set_xlabel(x_col)
+        axs.set_title(det_id)
+        axs.legend(ncols=1, loc=(1.01,0.7), fontsize=8)
+        axs.grid(True)
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    plt.pause(0.001)
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -23,11 +62,18 @@ def parse_args():
     parser.add_argument("--max-batch-size", type=int, default=2)
     parser.add_argument("--skip-correlations", action="store_true", default=False)
     parser.add_argument("--break_after", type=int, default=0)
+    parser.add_argument("--live_plot", action="store_true", default=False)
+    parser.add_argument("--plot_cols", nargs="+", default=["mean"])
+    parser.add_argument("--plot-x", default="exptime")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+
+    fig = ax = None
+    if args.live_plot:
+        fig, ax = init_live_plot()
 
     input_files = glob2.glob(os.path.join(args.input_dir,'*.fits'))[0]
     rawpath = os.path.dirname(input_files)
@@ -77,8 +123,14 @@ def main():
             ptc_res = ptc_res.combine(ptcres)
         count += 1
         print("Pairs processed: ", count)
+
+        if count % 20 == 0:
+            ptc_res.save(outpath)
         if count >= args.break_after and args.break_after > 0:
             break
+
+        if args.live_plot:
+            update_live_plot(fig, ax, ptc_res.ptc_table, args.plot_cols, args.plot_x)
 
     ptc_res.save(outpath)
 
