@@ -191,8 +191,8 @@ def parse_args():
     parser.add_argument("--live_plot", action="store_true", default=False)
     parser.add_argument("--plot_cols", nargs="+", default=["variance"])
     parser.add_argument("--plot-x", default="mean")
-    parser.add_argument("--yscale", type=float, default='log')
-    parser.add_argument("--xscale", type=float, default='log')
+    parser.add_argument("--yscale", type=str, default='log')
+    parser.add_argument("--xscale", type=str, default='log')
     return parser.parse_args()
 
 if __name__ == "__main__":
