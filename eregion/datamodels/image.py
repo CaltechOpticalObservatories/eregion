@@ -313,7 +313,7 @@ class DetImage:
     def add_output(self, output: Output, overwrite: bool = True):
         output.parent = self
         if output.id in self.outputs:
-            logger.warning(f"Output with id {output.id} already exists, overwrite is set to {overwrite}.")
+            logger.debug(f"Output with id {output.id} already exists, overwrite is set to {overwrite}.")
             if overwrite:
                 self.outputs[output.id] = output
         else:
