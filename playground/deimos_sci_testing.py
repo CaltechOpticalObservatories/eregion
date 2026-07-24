@@ -45,7 +45,7 @@ def main():
                                     fileloader_func=load_image_fits_DEIMOS,
                                     data_on_demand=True)
         mb_task = MasterBias(method='median')
-        mb_res = mb_task.run(images=bias_res.data('type == "bias"'))
+        mb_res = mb_task.run(bias_images=bias_res.data('type == "bias"'))
         mb_res.save(outpath)
         del bias_res
 
