@@ -26,11 +26,11 @@ def update_live_plot(fig, ax, ptc_table,
                      cols, x_col='exptime'):
     if not cols:
         return
-
+    sel = cols + [x_col, 'exptime', 'diff', 'det_id', 'output']
     df = ptc_table.copy()
-    df = df[df['diff']]
     if 'variance' in cols:
-        df['variance'] = df['std']**2
+        df['variance'] = np.log10(df['std']**2)
+    df = df[sel]
     axkey = {"det_1": ax[0,3], "det_2": ax[0,2], "det_3": ax[0,1], "det_4": ax[0,0],
              "det_5": ax[1,0], "det_6": ax[1,1], "det_7": ax[1,2], "det_8": ax[1,3]}
 
@@ -43,8 +43,22 @@ def update_live_plot(fig, ax, ptc_table,
 
         markers_list = list(Line2D.markers.keys())
         for i,col in enumerate(cols):
-            axs.plot(list(dfdetE[x_col]), list(dfdetE[col]), marker=markers_list[i], label=col+'_E', color='blue')
-            axs.plot(list(dfdetF[x_col]), list(dfdetF[col]), marker=markers_list[i], label=col+'_F', color='red')
+            if 'mean' in col or 'median' in col:
+                yE = np.log10(dfdetE[~dfdetE['diff']].groupby('exptime')[col].mean())
+                yF = np.log10(dfdetF[~dfdetF['diff']].groupby('exptime')[col].mean())
+            else:
+                yE = list(dfdetE.loc[dfdetE['diff'], col])
+                yF = list(dfdetF.loc[dfdetF['diff'], col])
+
+            if 'mean' in x_col or 'median' in x_col:
+                xE = np.log10(dfdetE[~dfdetE['diff']].groupby('exptime')[x_col].mean())
+                xF = np.log10(dfdetF[~dfdetF['diff']].groupby('exptime')[x_col].mean())
+            else:
+                xE = list(dfdetE.loc[dfdetE['diff'], x_col])
+                xF = list(dfdetF.loc[dfdetF['diff'], x_col])
+
+            axs.plot(xE, yE, marker=markers_list[i], label=col+'_E', color='blue')
+            axs.plot(xF, yF, marker=markers_list[i], label=col+'_F', color='red')
 
         axs.set_xlabel(x_col)
         axs.set_title(det_id)
@@ -65,8 +79,8 @@ def parse_args():
     parser.add_argument("--skip-correlations", action="store_true", default=False)
     parser.add_argument("--break_after", type=int, default=0)
     parser.add_argument("--live_plot", action="store_true", default=False)
-    parser.add_argument("--plot_cols", nargs="+", default=["mean"])
-    parser.add_argument("--plot-x", default="exptime")
+    parser.add_argument("--plot_cols", nargs="+", default=["variance"])
+    parser.add_argument("--plot-x", default="mean")
     return parser.parse_args()
 
 
