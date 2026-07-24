@@ -146,14 +146,14 @@ def main():
             ptc_res.save(outpath)
             del ptc_res.diff_images
             ptc_res.diff_images = ImageBundle()
+            if args.live_plot:
+                update_live_plot(fig, ax, ptc_res.ptc_table, args.plot_cols, args.plot_x)
 
         if count >= args.break_after and args.break_after > 0:
             break
 
-        if args.live_plot:
-            update_live_plot(fig, ax, ptc_res.ptc_table, args.plot_cols, args.plot_x)
-
     ptc_res.save(outpath)
+    plt.close(fig)
 
 
 if __name__ == "__main__":
