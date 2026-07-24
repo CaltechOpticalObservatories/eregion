@@ -96,8 +96,10 @@ class PTC(LazyTask):
         for result in results:
             stats.extend(result[0])
             diff_images.extend(result[1])
+        statsdf = pd.DataFrame(stats)
 
-        yield self.task_result(ptc_table=pd.DataFrame(stats), diff_images=diff_images)
+        self.logger.info(f"Processed {len(images)} flats, upto exptime {max(exptimes)}")
+        yield self.task_result(ptc_table=statsdf, diff_images=diff_images)
 
     # @wraps(lazy_run)
     # def run(self, *args, **kwargs):
