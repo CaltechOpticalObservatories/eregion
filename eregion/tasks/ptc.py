@@ -80,7 +80,7 @@ class PTC(LazyTask):
         self.PSD_size = psd_size
         self.exptime_key = exptime_key
 
-    def lazy_run(self, images: ImageBundle | list[DetImage], **kwargs) -> Generator[PTCResult]:
+    def lazy_run(self, images: ImageBundle | list[DetImage], **kwargs) -> Generator[PTCResult, None, None]:
         images = images if isinstance(images, ImageBundle) else ImageBundle(images)
 
         expkey = self.exptime_key

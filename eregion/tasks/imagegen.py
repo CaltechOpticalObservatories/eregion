@@ -306,7 +306,7 @@ class ImageCreator(LazyTask):
                  data_on_demand: bool = False,
                  require_data: bool = True,
                  **kwargs
-    ) -> Generator[ImageResult]:
+    ) -> Generator[ImageResult, None, None]:
         """
         :param input_source: str or list of str or Iterable of np.ndarray
             Input source can be a path to FITS files (file, directory, glob pattern),

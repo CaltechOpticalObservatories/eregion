@@ -141,7 +141,7 @@ class LazyTask(Task):
         self.max_batch_size = max_batch_size
 
     @abstractmethod
-    def lazy_run(self, *args, **kwargs) -> Generator[TaskResult]:
+    def lazy_run(self, *args, **kwargs) -> Generator[TaskResult, None, None]:
         """Run the task lazily, yielding results (which should be in dict format)."""
         pass
 
