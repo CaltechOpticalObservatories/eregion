@@ -7,6 +7,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+from datamodels import ImageBundle
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eregion.tasks import ImageCreator
@@ -128,6 +130,9 @@ def main():
 
         if count % 20 == 0:
             ptc_res.save(outpath)
+            del ptc_res.diff_images
+            ptc_res.diff_images = ImageBundle()
+
         if count >= args.break_after and args.break_after > 0:
             break
 
