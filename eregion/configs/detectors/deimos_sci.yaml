@@ -10,6 +10,7 @@ objects:
   - name: 'det_1'
     class: DetImage
     filename_format: '*SCI_1_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -52,6 +53,7 @@ objects:
   - name: 'det_2'
     class: DetImage
     filename_format: '*SCI_2_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -94,6 +96,7 @@ objects:
   - name: 'det_3'
     class: DetImage
     filename_format: '*SCI_3_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -136,6 +139,7 @@ objects:
   - name: 'det_4'
     class: DetImage
     filename_format: '*SCI_4_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -178,6 +182,7 @@ objects:
   - name: 'det_5'
     class: DetImage
     filename_format: '*SCI_5_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -220,6 +225,7 @@ objects:
   - name: 'det_6'
     class: DetImage
     filename_format: '*SCI_6_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -262,6 +268,7 @@ objects:
   - name: 'det_7'
     class: DetImage
     filename_format: '*SCI_7_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -304,6 +311,7 @@ objects:
   - name: 'det_8'
     class: DetImage
     filename_format: '*SCI_8_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124

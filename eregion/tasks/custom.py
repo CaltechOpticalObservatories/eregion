@@ -4,27 +4,25 @@ import numpy as np
 from typing import Any
 from astropy.io import fits
 
-from utils import load_image_fits
+from utils import load_image_fits, configure_logger
+logger = configure_logger(__name__)
 
-def guess_image_type_from_filename_DEIMOS(filename: str) -> str:
+def guess_image_type_from_filename_DEIMOS(filename: str) -> dict[str, Any]:
     """
     Custom function to guess the image type for DEIMOS based on filename patterns.
     :param filename: str
         The name of the FITS file.
-    :return: str
-        The guessed image type (e.g., 'bias', 'flat', 'science', etc.)
+    :return: dict
+        Dictionary containing guessed image type metadata.
     """
-    filename_lower = os.path.basename(filename).lower()
-    if 'bias' in filename_lower:
-        return 'bias'
-    elif 'flat' in filename_lower:
-        return 'flat'
-    elif 'arc' in filename_lower or 'lamp' in filename_lower:
-        return 'arc'
-    elif 'science' in filename_lower or 'obj' in filename_lower:
-        return 'science'
-    else:
-        return 'unknown'
+    imtype = {'type':'unknown', 'exptime':0.}
+    try:
+        f = os.path.basename(filename).split('DTU_DT-')[1].split('_')
+        imtype['type'] = f[2]
+        imtype['exptime'] = float(f[3]) if f[2]!='bias' else 0.0
+    except:
+        logger.warning("Could not guess image type for DEIMOS file %s", filename)
+    return imtype
 
 def load_image_fits_DEIMOS(filename: str) -> tuple[list[Any], list[fits.Header]]:
     input_data_array, input_headers = load_image_fits(filename)

@@ -27,6 +27,10 @@ class PipelineEngine:
     pipeline_config_input : str | dict
         Path to a configuration file (e.g. YAML/JSON) or a dictionary containing pipeline
         definitions that will be parsed by `PipelineConfig`.
+    runtime_variables : dict, optional
+        Dictionary of runtime variables that can be used to resolve placeholders in the configuration.
+    enable_env_vars : bool, optional
+        If True, environment variables can be used to resolve placeholders in the configuration.
 
     Attributes
     ----------
@@ -45,9 +49,16 @@ class PipelineEngine:
         Stores TaskResult objects keyed by node/task names produced during runs.
     """
 
-    def __init__(self, pipeline_config_input: str | dict):
+    def __init__(self, pipeline_config_input: str | dict, runtime_variables: dict | None = None,
+                 enable_env_vars: bool = False):
 
-        self.pipeline_config = PipelineConfig(pipeline_config_input)
+        self.runtime_variables = dict(runtime_variables or {})
+        self.enable_env_vars = enable_env_vars
+        self.pipeline_config = PipelineConfig(
+            pipeline_config_input,
+            runtime_variables=self.runtime_variables,
+            enable_env_vars=self.enable_env_vars,
+        )
         self.debug = self.pipeline_config.config.get("debug", False)
         logger.info("Number of pipelines defined: {}".format(len(self.pipeline_config.config["pipelines"])))
 
@@ -63,15 +74,24 @@ class PipelineEngine:
         self.execution_orders = self.build_execution_order(all_node_dependencies)
         self.results = {}
 
-    def update(self, new_config: str | dict):
+    def update(self, new_config: str | dict, runtime_variables: dict | None = None, enable_env_vars: bool | None = None):
         """
             Update the pipeline configuration and rebuild the pipelines and execution orders.
         :param new_config: str or dict
             New pipeline configuration as a path to a YAML/JSON file or a dictionary.
+        :param runtime_variables: dict, optional
+            New runtime variables to use for resolving placeholders in the configuration.
+        :param enable_env_vars: bool, optional
+            Whether to enable environment variable interpolation in the new configuration.
         """
-        self.__init__(pipeline_config_input=new_config)
+        self.__init__(
+            pipeline_config_input=new_config,
+            runtime_variables=self.runtime_variables if runtime_variables is None else runtime_variables,
+            enable_env_vars=self.enable_env_vars if enable_env_vars is None else enable_env_vars
+        )
 
-    def build_pipeline_nodes(self, pipeline_cfg: dict):
+    @staticmethod
+    def build_pipeline_nodes(pipeline_cfg: dict):
         """
         Build the task nodes for a single pipeline based on its configuration.
          - For each node, load the corresponding task class

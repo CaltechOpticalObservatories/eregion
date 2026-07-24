@@ -9,6 +9,7 @@ objects:
   - name: 'det_1'
     class: DetImage
     filename_format: '*.fits*'
+    header_index: 0
     properties:
       x_size: 2188
       y_size: 4125
@@ -45,6 +46,7 @@ objects:
   - name: 'det_2'
     class: DetImage
     filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    header_index: 0
     properties:
       x_size: 2188
       y_size: 4125
@@ -81,6 +83,7 @@ objects:
   - name: 'det_3'
     class: DetImage
     filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    header_index: 0
     properties:
       x_size: 2188
       y_size: 4125
@@ -117,6 +120,7 @@ objects:
   - name: 'det_4'
     class: DetImage
     filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    header_index: 0
     properties:
       x_size: 2188
       y_size: 4125
@@ -153,6 +157,7 @@ objects:
   - name: 'det_5'
     class: DetImage
     filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    header_index: 0
     properties:
       x_size: 2188
       y_size: 4125
@@ -189,6 +194,7 @@ objects:
   - name: 'det_6'
     class: DetImage
     filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    header_index: 0
     properties:
       x_size: 2188
       y_size: 4125
@@ -225,6 +231,7 @@ objects:
   - name: 'det_7'
     class: DetImage
     filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    header_index: 0
     properties:
       x_size: 2188
       y_size: 4125
@@ -261,6 +268,7 @@ objects:
   - name: 'det_8'
     class: DetImage
     filename_format: '*.fits*'  # Use wildcard to indicate the filename
+    header_index: 0
     properties:
       x_size: 2188
       y_size: 4125

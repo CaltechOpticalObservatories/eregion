@@ -70,35 +70,25 @@ def ensure_numpy(data: xr.DataArray | np.ndarray) -> np.ndarray:
         case _:
             raise TypeError("data must be an xarray.DataArray, or numpy.ndarray")
 
-def slice_data(data: xr.DataArray, slicer: tuple[slice, ...] | dict[Literal, slice]) -> xr.DataArray:
+def slice_data(data: xr.DataArray | xr.Dataset, slicer: tuple[slice, ...] | dict[Literal, slice]) -> xr.DataArray | xr.Dataset:
     """
     Slice a 2D or 3D DataArray using ('y','x','t) positional slices.
     """
-    match slicer:
-        case tuple():
-            if not all(isinstance(s, slice) for s in slicer):
-                raise ValueError("All elements of slicer tuple must be slices.")
-            match (data.ndim, data.dims):
-                case (2, ("y", "x")):
-                    slicer = {"y": slicer[0], "x": slicer[1]}
-                case (3, ("y", "x", "t")):
-                    slicer = {"y": slicer[0], "x": slicer[1], "t": slicer[2]}
-                case _:
-                    raise ValueError("DataArray must be 2D with dims ('y','x') or 3D with dims ('y','x','t').")
-        case dict():
-            if not all(isinstance(s, slice) for s in slicer.values()):
-                raise ValueError("All values of slicer dict must be slices.")
-        case _:
-            raise ValueError("slicer must be a tuple of slices or a dict of {dim: slice}.")
-
-    # hack to not include last element of slices but still use .sel() which includes the stop index
-    for k, sl in slicer.items():
-        if sl.step is None or sl.step > 0:
-            slicer[k] = slice(sl.start, sl.stop - 1, sl.step)
-        else:
-            slicer[k] = slice(sl.start, sl.stop + 1, sl.step)
-
+    slicer = decrease_slicer_stop_index(slicer)
     return data.sel(**slicer)
 
+def decrease_slicer_stop_index(slicer: tuple[slice, ...] | dict[Literal, slice]) -> dict[Literal, slice]:
+    if isinstance(slicer, tuple):
+        dim = ["y", "x", "t"]
+        slicer = {dim[i]:s for i, s in enumerate(slicer)}
+
+    if isinstance(slicer, dict) and all(isinstance(s, slice) for s in slicer.values()):
+        for k, sl in slicer.items():
+            step = sl.step if sl.step is not None else 1
+            slicer[k] = slice(sl.start, sl.stop - step, step) if sl.start is not None and sl.stop is not None else sl
+    else:
+        raise TypeError("slicer must be a tuple of slices or a dict of {dim: slice}.")
+
+    return slicer
 
 
