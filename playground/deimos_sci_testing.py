@@ -69,7 +69,7 @@ def ptc_plot(runpath, which: Literal['ptc','lin']='ptc'):
     df = ptc_res.ptc_table.copy()
     del ptc_res
 
-    fig, ax = plt.subplots(2, 4, figsize=(12,8), tight_layout=True)
+    fig, ax = plt.subplots(2, 4, figsize=(20,8), tight_layout=True)
     axkey = {"det_1": ax[0,3], "det_2": ax[0,2], "det_3": ax[0,1], "det_4": ax[0,0],
              "det_5": ax[1,0], "det_6": ax[1,1], "det_7": ax[1,2], "det_8": ax[1,3]}
 
@@ -79,7 +79,9 @@ def ptc_plot(runpath, which: Literal['ptc','lin']='ptc'):
             df_diffs = df[(df['det_id']==det_id) & (df['output']==out) & (df['diff'])]
             selcols = ['exptime', 'mean', 'med', 'std']
             gdf_flats = df_flats[selcols].groupby('exptime').mean()
-
+            if len(df_diffs) == 0:
+                axs.set_visible(False)
+                continue
             if which == 'ptc':
                 axs.scatter(gdf_flats['mean'], df_diffs['std']**2, label=out, color=color, marker='.', alpha=0.7)
                 xlabel, ylabel = 'Mean Signal', 'Variance'
@@ -103,7 +105,7 @@ def ptc_plot(runpath, which: Literal['ptc','lin']='ptc'):
             axs.set_yscale(yscale)
         except:
             pass
-    ax[0,3].legend(ncols=1, loc=(1.01, 0.7), fontsize=8)
+    ax[0, 3].legend(ncols=1, loc='upper left', bbox_to_anchor=(1.02, 1.0), fontsize=8, borderaxespad=0)
     plt.show()
 
 
