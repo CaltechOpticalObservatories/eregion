@@ -17,9 +17,11 @@ def guess_image_type_from_filename_DEIMOS(filename: str) -> dict[str, Any]:
     """
     imtype = {'type':'unknown', 'exptime':0.}
     try:
-        f = os.path.basename(filename).split('DTU_DT-')[1].split('_')
+        f = os.path.basename(filename).split('DTU_DT-')[1].replace('bias_','bias_0.000_').split('_')
         imtype['type'] = f[2]
-        imtype['exptime'] = float(f[3]) if f[2]!='bias' else 0.0
+        imtype['exptime'] = float(f[3])
+        imtype['seqnum'] = int(f[4])
+        imtype['obstime'] = f[5].replace('.fits','')
     except:
         logger.warning("Could not guess image type for DEIMOS file %s", filename)
     return imtype

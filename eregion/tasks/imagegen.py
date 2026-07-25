@@ -1,5 +1,4 @@
 import json
-
 from functools import partial, wraps
 import inspect
 import os
@@ -13,18 +12,28 @@ from itertools import batched
 
 from utils import load_image_fits, parse_list_of_files, guess_image_type_from_header, load_class
 from configs import DetectorConfig
-from datamodels import TaskResult, ImageBundle
-from tasks import LazyTask
+from datamodels import TaskResult, ImageBundle, DetImage, FocalPlaneImage, FPImageBundle
+from tasks import LazyTask, Task
 
 ##################### Class to handle image generation from configuration files ####################################
 class ImageResult(TaskResult):
-    data: ImageBundle
+    data: ImageBundle | FPImageBundle
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     @field_validator("data", mode="before")
     @classmethod
     def parse_images(cls, inp):
-        return inp if isinstance(inp, ImageBundle) else ImageBundle(inp)
+        if isinstance(inp, (ImageBundle, FPImageBundle)):
+            return inp
+        elif isinstance(inp, list):
+            if all(isinstance(x, DetImage) for x in inp):
+                return ImageBundle(images=inp)
+            elif all(isinstance(x, FocalPlaneImage) for x in inp):
+                return FPImageBundle(images=inp)
+            else:
+                raise ValueError("Invalid input for ImageResult data. Must be a list of DetImage or FocalPlaneImage objects.")
+        else:
+            raise ValueError("Invalid input for ImageResult data. Must be ImageBundle, FPImageBundle, list of DetImage, or path to saved ImageBundle.")
 
     def save(self, filepath: str, prefix: str='', **kwargs) -> None:
         if not os.path.exists(filepath):
@@ -371,3 +380,56 @@ class ImageCreator(LazyTask):
     @wraps(lazy_run)
     def run(self, *args, **kwargs):
         return super().run(*args, **kwargs)
+
+
+class AssembleFocalPlane(Task):
+    """
+    From an ImageBundle or path to ImageBundle, load the bundle and identify images that belong to the same exposure
+    by matching observation time, and assemble them into FocalPlaneImage objects.
+    The assembled objects are returned as an ImageBundle wrapped in ImageResult.
+    """
+    task_result = ImageResult
+
+    def __init__(self,
+                 num_detectors: int,
+                 dim: tuple[float, ...] = None,
+                 name: str = None, **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.bundle = None
+        self.num_detectors = num_detectors
+        self.FPClass = partial(FocalPlaneImage, num_detectors=num_detectors, dim=dim)
+
+    def group_by(self, columns: list[str]) -> Generator:
+        """
+        Group the images in the bundle by the specified columns.
+        :param columns: A list of column names to group by.
+        :return: Grouped images as list of ImageBundle objects.
+        """
+        groups = self.bundle.list.groupby(by=columns)
+        for group in groups:
+            # verify that each group has len <= num_detectors
+            if not (len(group[1]) <= self.num_detectors and group[1]['det_id'].is_unique):
+                self.logger.warning(f"Group with column values {group[0]} has incorrect number of detectors."
+                                    f"Check that the grouping columns are correct to uniquely identify the images."
+                                    f"Skipping this group.")
+                continue
+            yield ImageBundle(group[1]['object'].to_list())
+
+    def run(self,
+            from_path: str = None,
+            from_images: ImageBundle | list[DetImage] = None,
+            grouping_columns: list[str] = None,
+            **kwargs)-> ImageResult:
+
+        if from_path is not None:
+            self.bundle = ImageBundle.load(from_path)
+        elif from_images is not None:
+            self.bundle = from_images if isinstance(from_images, ImageBundle) else ImageBundle(from_images)
+        else:
+            raise ValueError("Must provide either from_path or from_images to assemble focal plane images.")
+
+        fp_images = []
+        for imbundle in self.group_by(columns=grouping_columns):
+            fp_images.append(self.FPClass(det_images=imbundle))
+        return self.task_result(data=FPImageBundle(images=fp_images))
+

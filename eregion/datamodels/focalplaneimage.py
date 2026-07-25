@@ -54,7 +54,6 @@ class FocalPlaneImage:
                     f"Number of DetImages added have reached number of detectors present in this focal-plane.")
                 break
             self.validate_det_image(det_image)
-            det_image.focal_plane = self
             self.det_images.append(det_image)
 
     def validate_det_image(self, det_image: DetImage) -> None:
@@ -163,3 +162,26 @@ class FocalPlaneImage:
         if save is not None:
             ax.figure.savefig(save)
         return ax
+
+    # TODO: Add to_netcdf() and from_netcdf() methods
+
+
+class FPImageBundle(ImageBundle):
+    """
+    To store list of FocalPlaneImage objects.
+    """
+    image_class = FocalPlaneImage
+
+    def __init__(self, images: image_class | list[image_class] | None = None):
+        super().__init__(images)
+
+    def tabulate(self) -> pd.DataFrame:
+        tab = []
+        for fpimage in self.images:
+            imtypedf = fpimage.det_images.list
+            imtype = {'object': fpimage}
+            for col in imtypedf.columns:
+                if imtypedf[col].nunique() == 1:
+                    imtype[col] = imtypedf[col].iloc[0]
+            tab.append(imtype)
+        self.list = pd.DataFrame(tab)

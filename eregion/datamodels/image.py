@@ -249,7 +249,6 @@ class DetImage:
         meta: DetImageMeta or dict - Metadata for the detector image.
         id: str | int - Identifier for the corresponding detector taken from 'name' key in detector config.
         image_type: dict[str, Any] - Mapping of any image identifying keys to their values like 'type', 'exptime', 'mode', etc.
-        focal_plane: FocalPlaneImage - Pointer to the focal plane image object this DetImage is placed on, if any.
         _data: Internal attribute for storing image data when loaded.
         _dataloader: Internal variable for storing data loader Callable for on-demand loading.
 
@@ -301,7 +300,6 @@ class DetImage:
             for out_id, out in self.outputs.items():
                 out.parent = self
 
-        self.focal_plane = None
         self.masks: xr.Dataset = None
 
     def output_by_id(self, output_id: str) -> Output:
@@ -472,20 +470,23 @@ class ImageBundle:
     """
     Class to hold a list of images. Contains methods to tabulate metadata of the images for easy filtering.
     """
+    image_class = DetImage
 
-    def __init__(self, images: DetImage | list[DetImage] | None = None):
+    def __init__(self, images: image_class | list[image_class] | None = None):
         """
         :param images: List of input images.
-
+        :type images: image_class | list[image_class] | None
+        :return: ImageBundle instance.
+        :rtype: ImageBundle
         Attributes
         ----------
-        images: list[DetImage]
+        images: list[image_class]
             List of input images.
         list: pd.DataFrame
-            DataFrame containing image identifying metadata from DetImage.image_type.
+            DataFrame containing image identifying metadata from image_class.image_type.
         """
         images = images if isinstance(images, list) else [images] if images is not None else []
-        assert all([isinstance(image, DetImage) for image in images])
+        assert all([isinstance(image, self.image_class) for image in images])
         self.images = images
         self.tabulate()
 
@@ -505,7 +506,7 @@ class ImageBundle:
             tab.append(imtype)
         self.list = pd.DataFrame(tab)
 
-    def filter(self, pd_query: str='') -> list[DetImage]:
+    def filter(self, pd_query: str='') -> list[image_class]:
         """
         Filters images based on column values supplied as criteria.
         :param pd_query: str
@@ -515,17 +516,21 @@ class ImageBundle:
         df = self.list.query(pd_query) if pd_query != '' else self.list
         return df['object'].to_list()
 
-    def append(self, image: DetImage):
-        if isinstance(image, DetImage):
+    def append(self, image):
+        if isinstance(image, self.image_class):
             self.images.append(image)
             self.tabulate()
         else:
-            raise TypeError(f"Not a DetImage: {type(image)}")
+            raise TypeError(f"Not a {self.image_class.__name__}: {type(image)}")
 
     def save(self, filepath: str, **kwargs):
         """
         Call to_netcdf() for each detimage, and save them in one folder path
         """
+        # check if image_class has to_netcdf method
+        if not hasattr(self.image_class, 'to_netcdf'):
+            raise AttributeError(f"{self.image_class.__name__} does not have a to_netcdf() method.")
+
         if not os.path.exists(filepath):
             os.makedirs(filepath)
 
@@ -534,10 +539,19 @@ class ImageBundle:
 
     @classmethod
     def load(cls, filepath: str):
+        """
+        Load all netcdf files in a folder and create an ImageBundle from them.
+        :param filepath:
+        :return:
+        """
+        # check if image_class has from_netcdf method
+        if not hasattr(cls.image_class, 'from_netcdf'):
+            raise AttributeError(f"{cls.image_class.__name__} does not have a from_netcdf() method.")
+
         files = sorted(glob2.glob(os.path.join(filepath, '*.nc')))
         images = []
         for file in files:
-            im = DetImage.from_netcdf(file)
+            im = cls.image_class.from_netcdf(file)
             images.append(im)
         return cls(images=images)
 
