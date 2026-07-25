@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from typing import Literal
 
 from datamodels import ImageBundle
 
@@ -18,22 +17,7 @@ from eregion.tasks.custom import guess_image_type_from_filename_DEIMOS, load_ima
 from eregion.tasks.preprocessing import BiasSubtraction, ScanSubtraction, SigmaClipMasking
 import eregion.tasks.ptc as ptc
 
-def init_live_plot():
-    plt.ion()
-    fig, ax = plt.subplots(2,4, figsize=(12,6), tight_layout=True)
-    return fig, ax
-
-def update_live_plot(fig, ax, ptc_table,
-                     cols, x_col='exptime',
-                     yscale='linear', xscale='linear'):
-    if not cols:
-        return
-    sel = cols + [x_col, 'exptime', 'diff', 'det_id', 'output']
-    df = ptc_table.copy()
-    if 'variance' in cols:
-        df['variance'] = df['std']**2
-    df = df[sel]
-
+def _plot_panels(ax, df, cols, x_col, yscale, xscale):
     axkey = {"det_1": ax[0,3], "det_2": ax[0,2], "det_3": ax[0,1], "det_4": ax[0,0],
              "det_5": ax[1,0], "det_6": ax[1,1], "det_7": ax[1,2], "det_8": ax[1,3]}
     markers_list = list(Line2D.markers.keys())
@@ -41,62 +25,15 @@ def update_live_plot(fig, ax, ptc_table,
     for det_id, axs in axkey.items():
         axs.clear()
         for out, color in zip(['E', 'F'], ['blue', 'red']):
-            df_flats = df[(df['det_id']==det_id) & (df['output']==out) & (~df['diff'])]
-            df_diffs = df[(df['det_id']==det_id) & (df['output']==out) & (df['diff'])]
-            selcols = cols + [x_col, 'exptime']
-            df_flats = df_flats[selcols].groupby('exptime').mean()
-            df_diffs = df_diffs[selcols]
-
-            xdf = df_diffs if (x_col in ['std','variance']) else df_flats
+            dfsub = df[(df['det_id']==det_id) & (df['output']==out)]
             for i,col in enumerate(cols):
-                ydf = df_diffs if (col in ['std','variance']) else df_flats
-                axs.plot(list(xdf[x_col]), list(ydf[col]), color=color, label=col+'_'+out, marker=markers_list[i],
+                axs.plot(list(dfsub[x_col]), list(dfsub[col]), color=color, label=col+'_'+out, marker=markers_list[i],
                          alpha=0.7)
 
         axs.set_xlabel(x_col, fontsize=10)
+        axs.set_ylabel('PTC column', fontsize=10)
         axs.set_title(det_id, fontsize=12)
         axs.grid(True)
-        axs.set_yscale(yscale)
-        axs.set_xscale(xscale)
-
-    ax[0,3].legend(ncols=1, loc=(1.01, 0.7), fontsize=8)
-    fig.canvas.draw()
-    fig.canvas.flush_events()
-    plt.pause(0.001)
-
-def ptc_plot(runpath, which: Literal['ptc','lin']='ptc'):
-    ptc_res = ptc.PTCResult.load(runpath)
-    df = ptc_res.ptc_table.copy()
-    del ptc_res
-
-    fig, ax = plt.subplots(2, 4, figsize=(20,8), tight_layout=True)
-    axkey = {"det_1": ax[0,3], "det_2": ax[0,2], "det_3": ax[0,1], "det_4": ax[0,0],
-             "det_5": ax[1,0], "det_6": ax[1,1], "det_7": ax[1,2], "det_8": ax[1,3]}
-
-    for det_id, axs in axkey.items():
-        for out, color in zip(['E', 'F'], ['blue', 'red']):
-            df_flats = df[(df['det_id']==det_id) & (df['output']==out) & (~df['diff'])]
-            df_diffs = df[(df['det_id']==det_id) & (df['output']==out) & (df['diff'])]
-            selcols = ['exptime', 'mean', 'med', 'std']
-            gdf_flats = df_flats[selcols].groupby('exptime').mean()
-            if len(df_diffs) == 0:
-                axs.set_visible(False)
-                continue
-            if which == 'ptc':
-                axs.scatter(gdf_flats['mean'], df_diffs['std']**2, label=out, color=color, marker='.', alpha=0.7)
-                xlabel, ylabel = 'Mean Signal', 'Variance'
-                xscale, yscale = 'symlog', 'symlog'
-            elif which == 'lin':
-                axs.scatter(gdf_flats.index, gdf_flats['mean'], label=out, color=color, marker='.', alpha=0.7)
-                xlabel, ylabel = 'Integration time', 'Mean Signal'
-                xscale, yscale = 'linear', 'linear'
-            else:
-                raise ValueError("Can only plot ptc or linearity.")
-
-        axs.grid(True)
-        axs.set_title(det_id, fontsize=12)
-        axs.set_xlabel(xlabel, fontsize=10)
-        axs.set_ylabel(ylabel, fontsize=10)
         try:
             axs.set_xscale(xscale)
         except:
@@ -106,6 +43,30 @@ def ptc_plot(runpath, which: Literal['ptc','lin']='ptc'):
         except:
             pass
     ax[0, 3].legend(ncols=1, loc='upper left', bbox_to_anchor=(1.02, 1.0), fontsize=8, borderaxespad=0)
+    return ax
+
+def init_live_plot():
+    plt.ion()
+    fig, ax = plt.subplots(2,4, figsize=(20,8), tight_layout=True)
+    return fig, ax
+
+def update_live_plot(fig, ax, ptc_table, cols, x_col='exptime',
+                     yscale='linear', xscale='linear'):
+    if not cols:
+        return
+    df = ptc_table.copy()
+    ax = _plot_panels(ax, df, cols, x_col, yscale, xscale)
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    plt.pause(0.001)
+
+def ptc_plot(runpath, cols, x_col='exptime', yscale='linear', xscale='linear'):
+    ptc_res = ptc.PTCResult.load(runpath)
+    df = ptc_res.ptc_table.copy()
+    del ptc_res
+
+    fig, ax = plt.subplots(2, 4, figsize=(20,8), tight_layout=True)
+    ax = _plot_panels(ax, df, cols, x_col, yscale, xscale)
     plt.show()
 
 
