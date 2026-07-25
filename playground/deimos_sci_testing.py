@@ -17,21 +17,23 @@ from eregion.tasks.custom import guess_image_type_from_filename_DEIMOS, load_ima
 from eregion.tasks.preprocessing import BiasSubtraction, ScanSubtraction, SigmaClipMasking
 import eregion.tasks.ptc as ptc
 
-def _plot_panels(ax, df, cols, x_col, yscale, xscale):
+def _plot_panels(ax, df, y_cols, x_cols, yscale, xscale):
     axkey = {"det_1": ax[0,3], "det_2": ax[0,2], "det_3": ax[0,1], "det_4": ax[0,0],
              "det_5": ax[1,0], "det_6": ax[1,1], "det_7": ax[1,2], "det_8": ax[1,3]}
-    markers_list = list(Line2D.markers.keys())
+    # get matplotlib's marker list
+    markers_dict = Line2D.markers
+    markers_list = [m for m in markers_dict.keys() if isinstance(m, str) and m not in [' ', 'None', '', 'none']]
 
     for det_id, axs in axkey.items():
         axs.clear()
-        for out, color in zip(['E', 'F'], ['blue', 'red']):
+        for out, ls in zip(['E', 'F'], ['--','dotted']):
             dfsub = df[(df['det_id']==det_id) & (df['output']==out)]
-            for i,col in enumerate(cols):
-                axs.plot(list(dfsub[x_col]), list(dfsub[col]), color=color, label=col+'_'+out, marker=markers_list[i],
-                         alpha=0.7)
+            for i,col in enumerate(y_cols):
+                axs.plot(list(dfsub[x_cols[i]]), list(dfsub[col]), ls=ls, label=f'{col}-{x_cols[i]}, Chan-{out}',
+                         marker=markers_list[i], alpha=0.7)
 
-        axs.set_xlabel(x_col, fontsize=10)
-        axs.set_ylabel('PTC column', fontsize=10)
+        axs.set_xlabel(','.join(np.unique(x_cols)), fontsize=10)
+        axs.set_ylabel(','.join(np.unique(y_cols)), fontsize=10)
         axs.set_title(det_id, fontsize=12)
         axs.grid(True)
         try:
@@ -42,7 +44,7 @@ def _plot_panels(ax, df, cols, x_col, yscale, xscale):
             axs.set_yscale(yscale)
         except:
             pass
-    ax[0, 3].legend(ncols=1, loc='upper left', bbox_to_anchor=(1.02, 1.0), fontsize=8, borderaxespad=0)
+    ax[0, 3].legend(ncols=1, loc='upper left', bbox_to_anchor=(0.02, 1.1), fontsize=10, borderaxespad=0)
     return ax
 
 def init_live_plot():
@@ -50,23 +52,31 @@ def init_live_plot():
     fig, ax = plt.subplots(2,4, figsize=(20,8), tight_layout=True)
     return fig, ax
 
-def update_live_plot(fig, ax, ptc_table, cols, x_col='exptime',
+def update_live_plot(fig, ax, ptc_table, cols, x_cols=['exptime'],
                      yscale='linear', xscale='linear'):
     if not cols:
         return
     df = ptc_table.copy()
-    ax = _plot_panels(ax, df, cols, x_col, yscale, xscale)
+    ax = _plot_panels(ax, df, cols, x_cols, yscale, xscale)
     fig.canvas.draw()
     fig.canvas.flush_events()
     plt.pause(0.001)
 
-def ptc_plot(runpath, cols, x_col='exptime', yscale='linear', xscale='linear'):
+def ptc_plot(runpath, cols, x_cols=['exptime'], yscale='linear', xscale='linear'):
     ptc_res = ptc.PTCResult.load(runpath)
     df = ptc_res.ptc_table.copy()
     del ptc_res
 
+    if isinstance(x_cols, str):
+        x_cols = [x_cols]
+    if len(x_cols) == 1:
+        x_cols = np.repeat(x_cols[0], len(cols))
+    if len(x_cols) != len(cols):
+        raise ValueError('x_cols and cols either must have the same length, or x_cols should have one item only,'
+                         f'got lengths x={len(x_cols)}, y={len(cols)}')
+
     fig, ax = plt.subplots(2, 4, figsize=(20,8), tight_layout=True)
-    ax = _plot_panels(ax, df, cols, x_col, yscale, xscale)
+    ax = _plot_panels(ax, df, cols, x_cols, yscale, xscale)
     plt.show()
 
 
@@ -152,10 +162,17 @@ def parse_args():
     parser.add_argument("--skip-correlations", action="store_true", default=False, help="Skip correlation calculations")
     parser.add_argument("--break_after", type=int, default=0, help="Break after processing this many pairs, set to 0 to disable")
     parser.add_argument("--live_plot", action="store_true", default=False, help="Do live plotting")
-    parser.add_argument("--plot_cols", nargs="+", default=["variance"], help="Columns to plot")
-    parser.add_argument("--plot-x", default="mean", help="Column to plot on x-axis")
+    parser.add_argument("--plot_cols", nargs="+", default=["std_diff"], help="Columns to plot")
+    parser.add_argument("--plot-x", nargs="+", default=["mean"], help="Columns to plot on x-axis")
     parser.add_argument("--yscale", type=str, default='log', help="Scale for y-axis")
     parser.add_argument("--xscale", type=str, default='log', help="Scale for x-axis")
+
+    args = parser.parse_args()
+    if len(args.plot_x) == 1:
+        args.plot_x = args.plot_x * len(args.plot_cols)
+    if len(args.plot_x) != len(args.plot_cols):
+        raise ValueError(f"Length of plot_x must be equal to length of plot_cols, or length of plot_x should be 1, "
+                         f"got lengths x={len(args.plot_x)}, cols={args.plot_cols}")
     return parser.parse_args()
 
 if __name__ == "__main__":
