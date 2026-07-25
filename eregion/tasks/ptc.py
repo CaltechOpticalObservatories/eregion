@@ -81,6 +81,12 @@ class PTC(LazyTask):
         self.exptime_key = exptime_key
 
     def lazy_run(self, images: ImageBundle | list[DetImage], **kwargs) -> Generator[PTCResult, None, None]:
+        """
+        For each unique DetImage.id and exposure time, get flat pairs and derive ptc
+        :param images:
+        :param kwargs:
+        :return:
+        """
         images = images if isinstance(images, ImageBundle) else ImageBundle(images)
 
         expkey = self.exptime_key
@@ -89,17 +95,17 @@ class PTC(LazyTask):
 
         results = Parallel(n_jobs=self.n_jobs)(
                     delayed(self._process_flat_group)(images.filter(f'{expkey} == {exptime} & det_id == "{det_id}"'))
-                    for exptime, det_id in zip(exptimes, det_ids)
+                    for exptime in exptimes for det_id in det_ids
         )
 
         stats, diff_images = [], []
         for result in results:
             stats.extend(result[0])
             diff_images.extend(result[1])
-        statsdf = pd.DataFrame(stats)
+        ptcdf = self.make_ptc_table(stats)
 
         self.logger.info(f"Processed {len(images)} flats, upto exptime {max(exptimes)}")
-        yield self.task_result(ptc_table=statsdf, diff_images=diff_images)
+        yield self.task_result(ptc_table=ptcdf, diff_images=diff_images)
 
     # @wraps(lazy_run)
     # def run(self, *args, **kwargs):
@@ -117,7 +123,7 @@ class PTC(LazyTask):
             self.logger.info(f"Doing per output stats on #{i} image of {len(flats)}")
             for out_id, output in img.outputs.items():
                 outstat = self.do_stats_per_output(output, mask_key=mask_key)
-                outstat.update({"det_id": det_id, "output": out_id, "exptime": exptime, "diff": False})
+                outstat.update({"det_id": det_id, "output": out_id, "exptime": exptime, "diff": False, "seqnum":str(i)})
                 stats.append(outstat)
 
         #do differential processing on all diffs
@@ -149,7 +155,8 @@ class PTC(LazyTask):
                 output.set_data_in_parent(diffdat)
                 output.masks['sigma_clip_mask'] = diffmask
                 diffstat = self.do_stats_per_output(output, mask_key=mask_key)
-                diffstat.update({"det_id": det_id, "output": out_id, "exptime": exptime, "diff": True})
+                diffstat.update({"det_id": det_id, "output": out_id, "exptime": exptime, "diff": True,
+                                 "seqnum":'_'.join([str(i) for i in diffpairidx])})
                 stats.append(diffstat)
             diff_images.append(diff_img)
 
@@ -262,3 +269,33 @@ class PTC(LazyTask):
         kwargs = self.meta.get('welch2d_kwargs', {})
         out = welch2d(imarr, self.PSD_size, **kwargs)
         return out
+
+    @staticmethod
+    def make_ptc_table(stats: list[dict[str, Any]]) -> pd.DataFrame:
+        """
+        Create a flattened PTC table from the provided statistics.
+        :param stats: list[dict[str, Any]]
+            List of dictionaries containing statistics for each output.
+        :return: pd.DataFrame
+            DataFrame containing the PTC table.
+        """
+        df = pd.DataFrame(stats)
+
+        statcols = [col for col in df.columns if col not in ['det_id', 'output', 'exptime', 'diff', 'seqnum']]
+        df['suffix'] = [f"{x}" if not diff else f"diff_{x}" for diff,x in zip(df['diff'],df['seqnum'])]
+        file_sfx = df[~df['diff']]['suffix'].unique()
+        diff_sfx = df[df['diff']]['suffix'].unique()
+
+        ptc_tab = []
+        for group in df.groupby(['det_id', 'output', 'exptime']):
+            gdf = group[1].reset_index(drop=True)
+            row = {"det_id": gdf['det_id'][0], "output": gdf['output'][0], "exptime": gdf['exptime'][0]}
+            for i in range(len(gdf)):
+                row.update({f"{col}_{gdf['suffix'][i]}": gdf.iloc[i][col] for col in statcols})
+            ptc_tab.append(row)
+
+        ptc_df = pd.DataFrame(ptc_tab)
+        ptc_df['mean'] = ptc_df[[f'mean_{sfx}' for sfx in file_sfx]].mean(axis=1)
+        ptc_df['med'] = ptc_df[[f'med_{sfx}' for sfx in file_sfx]].median(axis=1)
+        ptc_df['std_diff'] = ptc_df[[f'std_{sfx}' for sfx in diff_sfx]].mean(axis=1)/np.sqrt(2)
+        return ptc_df
