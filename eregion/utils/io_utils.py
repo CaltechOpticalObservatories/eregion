@@ -6,6 +6,8 @@ import shutil
 import numpy as np
 import pandas as pd
 
+import pint
+
 from .misc_utils import configure_logger
 logger = configure_logger(__name__)
 
@@ -136,6 +138,21 @@ def load_ptc_table_fits(filepath: str) -> pd.DataFrame:
                 rows[name] = [np.array(value) for value in column]
     return pd.DataFrame(rows)
 
+
+def _quantity_column_to_fits_column(name: str, series: pd.Series) -> fits.Column:
+    #already assume len >0, else how did anything else work??
+    unit_the_first = series[0].units
+
+    outcol = [_.to(unit_the_first).magnitude for _ in series]
+    #TODO: proper translation between pint strings and FITS strings...ARGH!
+    #HACK: for now, just use the pint string
+
+    #TODO: damn, still need format string
+
+    return fits.Column(name=name, array=outcol, unit=str(unit_the_first))
+
+
+
 def _dataframe_column_to_fits_column(name: str, series: pd.Series) -> fits.Column:
     values = list(series)
     non_null = [value for value in values if value is not None]
@@ -166,6 +183,9 @@ def _dataframe_column_to_fits_column(name: str, series: pd.Series) -> fits.Colum
 
     if all(isinstance(value, (float, np.floating, int, np.integer, bool, np.bool_)) for value in non_null):
         return fits.Column(name=name, array=np.asarray(values, dtype=np.float64), format="D")
+
+    if all(isinstance(value, (pint.Quantity)) for value in non_null):
+        return _quantity_column_to_fits_column(name, non_null)
 
     raise TypeError(f"Unsupported PTC table column '{name}' with values of type {type(non_null[0]).__name__}.")
 

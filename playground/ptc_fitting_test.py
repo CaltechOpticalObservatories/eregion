@@ -22,8 +22,8 @@ for root, dirs, files in TL_DATA_DIR.walk():
         if "ptc_table.fits" in files:
             print(f"fitting PTCs in directory {root}")
             ptc_results = PTCResult.load(root)
-            task = CCDPTCFit(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
-#            task = CCDPTCFitTabular(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
+#            task = CCDPTCFit(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
+            task = CCDPTCFitTabular(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
             task.logger.setLevel(logging.DEBUG)
             result = task.run(ptc_results)
 
