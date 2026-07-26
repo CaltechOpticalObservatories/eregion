@@ -163,3 +163,41 @@ def astier_approx_one_param_fit(mndat: np.ndarray, sddat: np.ndarray, Kguess: fl
     a00 = unc.ufloat(popt[1], errs[1])
     n = umath.sqrt(unc.ufloat(abs(popt[2]), errs[2]))
     return K, a00, n
+
+
+def linearity_fit(etimedat: np.ndarray, mndat: np.ndarray, fitlim: Optional[int]):
+    """Fit the linearity curve (mean vs exposure time) with a linear curve
+
+    Parameters
+    ----------
+
+    etimedat: np.ndarray
+        array of exposure times (or flux)
+
+    mndat: np.ndarray
+        array of mean values
+
+    fitlim: Optional[int]
+        if supplied, trim the data beyond this point
+
+    Returns
+    -------
+
+    tuple[np.ndarray, np.ndarray]
+    tuple containing the array of coefficients (in new numpy order, lowest coefficient first),
+    and the array of errors estimated from fit covariance
+    """
+
+
+    if fitlim is not None:
+        xdat = etimedat[:fitlim]
+        ydat = mndat[:fitlim]
+    else:
+        xdat = etimedat
+        ydat = mndat
+
+    poly = Polynomial.fit(xdat, ydat, 1)
+    ft = poly.convert().coef
+    cov = polynomial_fit_covariance_matrix(poly, xdat, ydat, 1)
+    errs = np.sqrt(np.diag(cov))
+    return ft, errs

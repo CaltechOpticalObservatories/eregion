@@ -11,7 +11,6 @@ from uncertainties import umath
 
 logger = logging.getLogger(__name__)
 
-
 def find_adc_sat_index(etime_dat: np.ndarray, mndat: np.ndarray, sigma: float = 5.0, return_spline: bool = False) -> Optional[int]:
     """find the location of an ADC saturation point in a flux vs mean graph.
     The method is to fit an interpolating spline, get the analytic 2nd derivative of that,
@@ -28,6 +27,7 @@ def find_adc_sat_index(etime_dat: np.ndarray, mndat: np.ndarray, sigma: float = 
     if return_spline:
         return out, spl
     return out
+
 
 def find_rough_full_well(mndat: np.ndarray, stddat: np.ndarray, fwfact: float = 0.9) -> tuple[int, int]:
     """find index and mean value of full well point, by simple location of the maximum in the mean vs variance graph"""
@@ -122,7 +122,7 @@ def linearity_fit(etimedat: np.ndarray, mndat: np.ndarray, fitlim: Optional[int]
 
 
 if __name__ == "__main__":
-    DATA_DIR="/scratch/DEIMOS/DTU_detreduce/PTC/SCI/20260721-095716/"
+    DATA_DIR="/scratch/DEIMOS/DTU_detreduce_old/PTC/SCI/20260721-095716/"
     from astropy.io import fits
     import os
     import matplotlib.pyplot as plt

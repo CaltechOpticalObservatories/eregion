@@ -4,8 +4,9 @@ from datamodels import TaskResult
 from ..tasks.task import Task
 from ..tasks.ptc import PTCResult
 from ..core.ptc_fit_math  import (find_adc_sat_index, find_rough_full_well,
-                                  trad_ptc_shot_noise_fit, astier_approx_one_param_fit)
-from typing import Optional, Annotated, Iterable, TypeVar, Generator
+                                  trad_ptc_shot_noise_fit, astier_approx_one_param_fit,
+                                  linearity_fit)
+from typing import Optional, Annotated, Iterable, TypeVar, Generator, Any
 from pydantic import Field
 import numpy as np
 import pandas as pd
@@ -17,6 +18,8 @@ import pint
 from pydantic_pint import PydanticPintQuantity, set_registry
 from itertools import product
 from enum import Enum
+from pydantic import field_serializer
+import os
 
 
 
@@ -41,19 +44,38 @@ class CCDPTCFitResult(TaskResult):
     full_well: Annotated[_Q, _PPQ("DN", ureg=_ureg)] = Field(description="estimated full well value")
 
     camera_gain_classic: Annotated[_Q, _PPQ("elec / DN", ureg=_ureg)] = Field(description="camera gain from classic PTC fit")
-    camera_gain_BFE: Annotated[_Q, _PPQ("elec / DN", ureg=_ureg)] | None = Field(description="camera gain from more advanced BFE fit")
-    ptc_noise_classical: Annotated[_Q, _PPQ("elec")] = Field(description="noise estimated from classical PTC fit")
-    ptc_noise_BFE: Annotated[_Q, _PPQ("elec")] | None = Field(description="noise estimated from more advanced BFE fit")
-    ptc_a00_classic: uVar | None = Field(description="estimate of brighter-fatter a00 from classic PTC fit, if requested")
-    ptc_a00_astier: uVar | None = Field(description="estimate of brighter-fatter a00 from Astier's approximate fit, if requested")
+    camera_gain_BFE: Annotated[_Q, _PPQ("elec / DN", ureg=_ureg)] | None = Field(description="camera gain from more advanced BFE fit", default=None)
+    ptc_noise_classic: Annotated[_Q, _PPQ("elec")] = Field(description="noise estimated from classical PTC fit")
+    ptc_noise_BFE: Annotated[_Q, _PPQ("elec")] | None = Field(description="noise estimated from more advanced BFE fit", default=None)
+    ptc_a00_classic: uVar | None = Field(description="estimate of brighter-fatter a00 from classic PTC fit, if requested", default= None)
+    ptc_a00_astier: uVar | None = Field(description="estimate of brighter-fatter a00 from Astier's approximate fit, if requested", default=None)
 
-    bfe_aij: np.ndarray | None = Field(description="brighter-fatter a matrix from full Astier fit, if requested")
-    bfe_bij: np.ndarray | None = Field(description="brighter-fatter b matrix from full Astier fit, if requested")
+    bfe_aij: np.ndarray | None = Field(description="brighter-fatter a matrix from full Astier fit, if requested", default=None)
+    bfe_bij: np.ndarray | None = Field(description="brighter-fatter b matrix from full Astier fit, if requested", default=None)
+
+    flux_rate: Annotated[_Q, _PPQ("DN / s", ureg=_ureg)] = Field(description="flux rate estimated from linearity fit")
+    linearity_offset: Annotated[_Q, _PPQ("DN", ureg=_ureg)] = Field(description="zero offset of the linearity fit")
+    #linearity_resid_norm: float = Field(description="L2 norm of the linearity residuals, a measure of linearity in some sense", deafult=None)
+    #ptc_mad_resid_norm: float = Field(description="L2 norm of the residuals between PTC and median-MAD curve, diagnostic for tearing or vignetting not removed by sigma clipping", default=None)
+
+    @field_serializer("ptc_a00_classic", "ptc_a00_astier")
+    def serialize(self, value: uVar) -> str:
+        #TODO: serialize to proper float when in python mode
+        return f"{value:.2u}"
 
 
 class CCDPTCFitResultCollection(TaskResult):
-    channel_id: tuple[str] = Field(description="identities of the detector channel for the fit result")
-    result: list[CCDPTCFitResult] = Field(description="list of PTC fit results")
+    fits: dict[tuple[str,...], CCDPTCFitResult] = Field(description="dictionary mapping detector channel identifiers to PTC results")
+
+    def save(self, filepath: str) -> None:
+        os.makedirs(filepath, exist_ok=True)
+        outres = os.path.join(filepath, "ptc_fit_results.json")
+
+        with open(outres, "w+") as f:
+            jsondat = self.model_dump_json(indent=2)
+            f.write(jsondat)
+
+        super().save(filepath)
 
 
 class BrighterFatterFitTypes(Enum):
@@ -66,7 +88,7 @@ class CCDPTCFit(Task):
     task_result = CCDPTCFitResultCollection
 
     def __init__(self, selection_columns: list[str], brighter_fatter: BrighterFatterFitTypes, name: Optional[str] = None,
-                 fwfact: float = 0.8,  **kwargs):
+                 fwfact: float = 0.8, lincoff: float = 0.2,  **kwargs):
         """Fit results of a PTC reduction in a CCD specific manner.
 
         Calculates usual results of a PTC test, namely:
@@ -113,6 +135,14 @@ class CCDPTCFit(Task):
         :param fwfact: float
             proportion of the full well up to which to do the classic and Astier PTC fits. Necessary because PTC models do not
             work above full well. Usually a value of 0.8 or 0.9 is a good compromise between accuracy and robustness for "clean" PTC data
+        :param lincoff: float
+           proportion of the total flux range over which to evaluate the linearity. Most modern CCDs are highly linear but
+           exhibit large nonlinearities at low values, so to assess in one number it is sensible to only consider residuals
+           above a certain proportion.
+
+        :param return_resids: bool
+           return the full residual arrays. Adds a lot of data to the result, but very useful for plotting
+
         """
 
         if name is None:
@@ -150,14 +180,12 @@ class CCDPTCFit(Task):
 
     def run(self, inp: PTCResult) -> CCDPTCFitResultCollection:
 
-        det_ids = list()
-        results = list()
+        results = dict()
 
         dat: pd.DataFrame
         for dat, skvs in self.iter_ptc_curves(inp.ptc_table):
+            resultdct: dict[str, Any]  = dict()
             #TODO: should these be configurable? proabbly not needed
-            mndat = dat["mean"]
-            det_ids.append(skvs)
 
             self.logger.debug("finding ADC saturation and full well")
             SAT_SIGMA: float = 5.0 #hardcode for now, not sure it'll ever be different
@@ -170,24 +198,45 @@ class CCDPTCFit(Task):
                 satval = _Q(float(dat["mean"].iloc[satidx]) * _ureg.DN)
                 self.logger.debug(f"saturation value: {satval:.0f}")
 
+            resultdct["sat_val"] = satval
+
             #NOTE: dat["std_diff"] is already divided by sqrt(2)
             fwfactloc, fwloc = find_rough_full_well(dat["mean"].array, dat["std_diff"].array, self.fwfact)
-            fwval = _Q(float(dat["mean"].iloc[fwloc]) *_ureg.DN)
+            resultdct["full_well"]  = _Q(float(dat["mean"].iloc[fwloc]) *_ureg.DN)
 
+            self.logger.info("doing PTC fits...")
             match self.brighter_fatter:
                 case BrighterFatterFitTypes.NO_FIT:
                     self.logger.debug("doing PTC shot noise fit with no brighter-fatter correction")
                     Kest, nest = trad_ptc_shot_noise_fit(dat["mean"].array, dat["std_diff"].array, fwfactloc, False)
+
+                    resultdct["camera_gain_classic"]  = _Q(Kest * _ureg.elec / _ureg.DN)
+                    resultdct["ptc_noise_classic"]  = _Q(nest * _ureg.elec)
                 case BrighterFatterFitTypes.ASTIER_ONE_PARAM:
                     Kest, nest, a00est, Kast, a00ast, nast = self.astier_fit_bootstrap(dat["mean"].array, dat["std_diff"].array,
                                                                                        fwfactloc, fwloc)
+                    resultdct["camera_gain_classic"] = _Q(Kest * _ureg.elec / _ureg.DN)
+                    resultdct["ptc_noise_classic"] = _Q(nest * _ureg.elec)
+                    resultdct["ptc_a00_classic"] = a00est
+                    resultdct["camera_gain_BFE"]  = _Q(Kast * _ureg.elec / _ureg.DN)
+                    resultdct["ptc_noise_BFE"] = _Q(nast * _ureg.elec)
+                    resultdct["ptc_a00_astier"] = a00ast
                 case _:
                     raise NotImplementedError("requested fit type is not implemented")
 
 
+            self.logger.info("doing linearity fit...")
+            linfit, linerr = linearity_fit(dat["mean"].array, dat["std_diff"].array, satidx)
+            resultdct["flux_rate"]  = _Q(unc.ufloat(linfit[1], linerr[1]) * _ureg.DN / _ureg.s)
+            resultdct["linearity_offset"] = _Q(unc.ufloat(linfit[0], linerr[0]) * _ureg.DN)
+
+            results[skvs] = CCDPTCFitResult(**resultdct)
+
+        return CCDPTCFitResultCollection(fits=results)
 
 
-    def astier_fit_bootstrap(self, mndat, sddat, fwfactloc, fwloc):
+
+    def astier_fit_bootstrap(self, mndat, sddat, fwfactloc, fwloc) -> tuple[uVar]:
         self.logger.debug("doing PTC shot noise fit with brighter-fatter correction")
         Kest, nest, a00est = trad_ptc_shot_noise_fit(mndat, sddat, fwfactloc, True)
         self.logger.debug("doing Astier approximated one-parameter brighter-fatter fit")
