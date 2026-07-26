@@ -24,6 +24,7 @@ dependencies = [
     "pydantic>=2.12.4",
     "joblib>=1.5.3",
     "scipy>=1.14",
+    "uncertainties>=3.2.4"
 ]
 
 [project.optional-dependencies]

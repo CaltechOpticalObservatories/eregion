@@ -42,6 +42,16 @@ def find_rough_full_well(mndat: np.ndarray, stddat: np.ndarray, fwfact: float = 
 
 
 
+def polynomial_fit_covariance_matrix(poly, xdat: np.ndarray, ydat: np.ndarray, deg: int) -> np.ndarray:
+    coefs = poly.convert().coef
+    vander = polynomial.polyvander(xdat, deg)
+    dof = len(xdat) - vander.shape[1]
+    resid = ydat - np.dot(vander, coefs)
+    chi2 = np.sum(resid**2)
+    inv_v = np.linalg.inv(np.dot(vander.T, vander))
+    cov = inv_v * (chi2 / dof)
+    return cov
+
 
 def trad_ptc_shot_noise_fit(mndat: np.ndarray, sddat: np.ndarray, limitidx: int, brighterfatter: bool=True
                             ) -> tuple[unc.ufloat, unc.ufloat] | tuple[unc.ufloat, unc.ufloat, unc.ufloat]:
@@ -56,12 +66,7 @@ def trad_ptc_shot_noise_fit(mndat: np.ndarray, sddat: np.ndarray, limitidx: int,
     #TODO: we will want this a lot, pull it into a convenience math function
     #compute covariance matrix
 
-    vander = polynomial.polyvander(xdat, deg)
-    dof = len(xdat) - vander.shape[1]
-    resid = ydat - np.dot(vander, ft)
-    chi2 = np.sum(resid**2)
-    inv_v = np.linalg.inv(np.dot(vander.T, vander))
-    cov = inv_v * (chi2 / dof)
+    cov = polynomial_fit_covariance_matrix(poly, xdat, ydat, deg)
     errs = np.sqrt(np.diag(cov))
 
     Kest = 1 / umath.sqrt(unc.ufloat(ft[1], errs[1]))
@@ -100,6 +105,22 @@ def astier_approx_one_param_fit(mndat: np.ndarray, sddat: np.ndarray, fitlim: in
     n = umath.sqrt(unc.ufloat(abs(popt[2]), errs[2]))
     return K, a00, n
 
+def linearity_fit(etimedat: np.ndarray, mndat: np.ndarray, fitlim: Optional[int]):
+    if fitlim is not None:
+        xdat = etimedat[:fitlim]
+        ydat = mndat[:fitlim]
+    else:
+        xdat = etimedat
+        ydat = mndat
+
+    poly = Polynomial.fit(xdat, ydat, 1)
+    ft = poly.convert().coef
+    cov = polynomial_fit_covariance_matrix(poly, xdat, ydat, 1)
+    errs = np.sqrt(np.diag(cov))
+    return ft, errs
+
+
+
 if __name__ == "__main__":
     DATA_DIR="/scratch/DEIMOS/DTU_detreduce/PTC/SCI/20260721-095716/"
     from astropy.io import fits
@@ -137,8 +158,8 @@ if __name__ == "__main__":
 
 
 
-    DET = "det_8"
-    OP = "F"
+    DET = "det_5"
+    OP = "E"
     FWFACT: float = 0.8
 
     for det in dets:
@@ -173,9 +194,21 @@ if __name__ == "__main__":
 
     plt.close("all")
     fig = plt.figure(figsize=(10,7), constrained_layout=True)
+    fig.suptitle(f"{DET}[{OP}]")
     gs = fig.add_gridspec(nrows=2, ncols=2, height_ratios=[3,1])
-    linax = fig.add_subplot(gs[0,0])
-    mvax = fig.add_subplot(gs[:,1])
+    linresidax = fig.add_subplot(gs[1,0])
+    linresidax.set_xlabel("exposure time (s)")
+    linax = fig.add_subplot(gs[0,0], sharex=linresidax)
+    linax.set_ylabel("$\mu$ (fDN)")
+    linax.tick_params(labelbottom=False)
+    mvresidax = fig.add_subplot(gs[1,1])
+    mvresidax.set_xlabel("$\mu$ (fDN)")
+    mvax = fig.add_subplot(gs[0,1], sharex = mvresidax)
+    mvax.tick_params(labelbottom=False)
+    mvax.set_ylabel("$\\sigma$ (fDN)")
+
+
+
     sddat = pd["diff_std_dat"] /np.sqrt(2)
 
     satpnt = find_adc_sat_index(pd["etime_dat"], pd["mean_dat"])
@@ -183,20 +216,51 @@ if __name__ == "__main__":
 
     K, n,  a00 = trad_ptc_shot_noise_fit(pd["mean_dat"], sddat, fwfactloc)
     Ka, aa, na = astier_approx_one_param_fit(pd["mean_dat"], sddat, fwloc, K.nominal_value, a00.nominal_value, n.nominal_value)
-    linax.plot(pd["etime_dat"], pd["mean_dat"], "x")
+    linax.plot(pd["etime_dat"], pd["mean_dat"], "x", label="data")
     if satpnt is not None:
         linax.axvline(pd["etime_dat"][satpnt], c="red")
+        linresidax.axvline(pd["etime_dat"][satpnt], c="red")
+
 
     fwguess = pd["mean_dat"][fwloc]
     fwfactguess = pd["mean_dat"][fwfactloc]
 
-    mvax.plot(pd["mean_dat"], pd["std_dat"], "x")
-    mvax.plot(pd["mean_dat"],  sddat, ".")
+    astprop = {"c" : "purple", "linestyle" : "--"}
+    classprop = {"c" : "green", "linestyle" : "-"}
+
+    mvax.plot(pd["mean_dat"], pd["std_dat"], "x", label="data (single)")
+    mvax.plot(pd["mean_dat"],  sddat, ".", label="data (diff pair)")
     mvax.axvline(fwguess, c="red")
     mvax.axvline(fwfactguess, c="grey", ls="--")
-    mvax.plot(pd["mean_dat"],  np.sqrt(pd["mean_dat"]) / K.nominal_value , "--")
+    mvy = np.sqrt(pd["mean_dat"]) / K.nominal_value
+    shotprop = mvax.plot(pd["mean_dat"],  np.sqrt(pd["mean_dat"]) / K.nominal_value , "--", label="PTC shot noise fit", **classprop)
     print(f"n : {n}")
     yy = np.sqrt(astier_approx_eval_std(pd["mean_dat"], Ka.nominal_value, a00.nominal_value, 0.0))
-    mvax.plot(pd["mean_dat"], yy, "--")
+    astrprop = mvax.plot(pd["mean_dat"], yy, "--", label="Astier approx 1-param fit", **astprop)
+
+    linfit, linerrs = linearity_fit(pd["etime_dat"], pd["mean_dat"], satpnt)
+    print(f"linearity fit: {linfit}")
+    liny = pd["etime_dat"] * linfit[1] + linfit[0]
+
+    linfitprop = {"c" : "red", "linestyle" : "--"}
+    linax.plot(pd["etime_dat"], liny, label="linear fit", **linfitprop)
 
     mvax.loglog()
+
+    linresid =   pd["mean_dat"] / liny - 1
+    linresidax.plot(pd["etime_dat"], linresid, **linfitprop)
+    linresidax.set_ylim(-0.02, 0.02)
+
+    linax.legend()
+    mvax.legend()
+
+
+    mvresid1 = sddat / mvy - 1
+    mvresid2 = sddat / yy - 1
+
+    mvresidax.plot(pd["mean_dat"], mvresid1,  **classprop)
+    mvresidax.plot(pd["mean_dat"], mvresid2,  **astprop)
+    mvresidax.axvline(fwguess, c="red")
+    mvresidax.axvline(fwfactguess, c="grey", ls="--")
+
+    mvresidax.set_ylim(-0.1,0.05)
