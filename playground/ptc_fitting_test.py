@@ -7,7 +7,7 @@ sys.path.append("/home/danw/Software/eregion/eregion")
 
 
 import eregion
-from eregion.tasks.ptc_fitting import CCDPTCFit, PTCResult, BrighterFatterFitTypes
+from eregion.tasks.ptc_fitting import CCDPTCFit, PTCResult, BrighterFatterFitTypes, CCDPTCFitTabular
 import os
 import logging
 
@@ -23,8 +23,9 @@ for root, dirs, files in TL_DATA_DIR.walk():
             print(f"fitting PTCs in directory {root}")
             ptc_results = PTCResult.load(root)
             task = CCDPTCFit(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
+#            task = CCDPTCFitTabular(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
             task.logger.setLevel(logging.DEBUG)
             result = task.run(ptc_results)
 
             outdir = OUT_DATA_DIR / root.name
-            result.save(outdir)
+            #result.save(outdir)

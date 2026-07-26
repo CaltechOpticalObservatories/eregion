@@ -3,6 +3,7 @@
 from datamodels import TaskResult
 from ..tasks.task import Task
 from ..tasks.ptc import PTCResult
+from ..utils.pydantic import generate_iterable_model
 from ..core.ptc_fit_math  import (find_adc_sat_index, find_rough_full_well,
                                   trad_ptc_shot_noise_fit, astier_approx_one_param_fit,
                                   linearity_fit)
@@ -76,6 +77,13 @@ class CCDPTCFitResultCollection(TaskResult):
             f.write(jsondat)
 
         super().save(filepath)
+
+
+_idxfld = Field(description="detector output ID")
+_idxtp = list[str]
+TabularCCDPTCFitResultCollection = generate_iterable_model(CCDPTCFitResult, "TabularCCDPTCFitResultCollection",
+                                                           "output_id", _idxtp, _idxfld, arbitrary_types_allowed=True)
+
 
 
 class BrighterFatterFitTypes(Enum):
@@ -245,3 +253,20 @@ class CCDPTCFit(Task):
                                                          nest.nominal_value, fwloc)
 
         return Kest, nest, a00est, Kast, a00ast, nast
+
+
+
+class CCDPTCFitTabular(CCDPTCFit):
+    task_result = TabularCCDPTCFitResultCollection
+    def run(self, inp: PTCResult) -> TabularCCDPTCFitResultCollection:
+        self.logger.debug("running base class task")
+        base_results = super().run(inp)
+
+        #make an empty tabular result
+        tabular_results = self.task_result.model_construct()
+
+        tabular_results.output_ids = list(base_results.fits.keys())
+        for result in list(base_results.fits.values()):
+            tabular_results.add_result_item(result)
+
+        return tabular_results
