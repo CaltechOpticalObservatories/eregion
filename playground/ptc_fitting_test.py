@@ -1,17 +1,23 @@
+import sys
+
+
+#I know I know, no idea why this happens, can't import eregion if I don't do this
+sys.path.append("/home/danw/Software/eregion")
+sys.path.append("/home/danw/Software/eregion/eregion")
+
+
 import eregion
-from eregion.tasks.ptc_fitting import CCDPTCFit, PTCResult
+from eregion.tasks.ptc_fitting import CCDPTCFit, PTCResult, BrighterFatterFitTypes
 import os
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+
+DATA_DIR = "/scratch/DEIMOS/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/20260720-101920"
 
 
-DATA_DIR="/scratch/DEIMOS/DTU_detreduce/PTC/SCI/20260721-095716/"
+ptc_results = PTCResult.load(DATA_DIR)
 
+task = CCDPTCFit(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
+task.logger.setLevel(logging.DEBUG)
 
-res = PTCResult.load(DATA_DIR)
-
-task = CCDPTCFit(selection_columns=["det_id", "output"])
-
-
-it = task.iter_ptc_curves(res.ptc_table)
+res = task.run(ptc_results)
