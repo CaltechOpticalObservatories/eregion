@@ -226,7 +226,7 @@ class CCDPTCFit(Task):
 
 
             self.logger.info("doing linearity fit...")
-            linfit, linerr = linearity_fit(dat["mean"].array, dat["std_diff"].array, satidx)
+            linfit, linerr = linearity_fit(dat["exptime"].array, dat["mean"].array, satidx)
             resultdct["flux_rate"]  = _Q(unc.ufloat(linfit[1], linerr[1]) * _ureg.DN / _ureg.s)
             resultdct["linearity_offset"] = _Q(unc.ufloat(linfit[0], linerr[0]) * _ureg.DN)
 
