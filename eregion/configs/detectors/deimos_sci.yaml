@@ -10,6 +10,7 @@ objects:
   - name: 'det_1'
     class: DetImage
     filename_format: '*SCI_1_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -52,6 +53,7 @@ objects:
   - name: 'det_2'
     class: DetImage
     filename_format: '*SCI_2_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -94,6 +96,7 @@ objects:
   - name: 'det_3'
     class: DetImage
     filename_format: '*SCI_3_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -136,6 +139,7 @@ objects:
   - name: 'det_4'
     class: DetImage
     filename_format: '*SCI_4_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -178,6 +182,7 @@ objects:
   - name: 'det_5'
     class: DetImage
     filename_format: '*SCI_5_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -187,39 +192,40 @@ objects:
       - id: 'E'
         ext_id: 1
         ext_slice: [!slice [0, 4124], !slice [0, 1094]]  # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [0, 50]
-        serial_overscan: !slice [1074, 1094]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4104, 4124]
+        data_slice: [!slice [0, 4124], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [2187, 2137]
+        serial_overscan: !slice [1113, 1093]
+        parallel_prescan: !slice [4123, 4123]
+        parallel_overscan: !slice [19, -1]
         parallel_axis: 'y'
-        readout_pixel: [0, 0]
+        readout_pixel: [4123, 2187]
         gain: 1.0  # electrons/ADU
         read_noise:   # electrons
         bias_level:   # ADU
       - id: 'F'
         ext_id: 4 # FITS extension ID
         ext_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4124], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [2187, 2137]
-        serial_overscan: !slice [1113, 1093]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4104, 4124]
+        data_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 50]
+        serial_overscan: !slice [1074, 1094]
+        parallel_prescan: !slice [4123, 4123]
+        parallel_overscan: !slice [19, -1]
         parallel_axis: 'y'
-        readout_pixel: [0, 2187]
+        readout_pixel: [4123, 0]
         gain: 1.0  # electrons/ADU
         read_noise:  # electrons
         bias_level:  # ADU
     focal_plane_position:
       x_cen: -49.275  # mm
       y_cen: -30.945  # mm
-      angle: 0.0  # degrees (assuming origin is bottom left and angle is CCW positive)
+      angle: 180.0  # degrees (assuming origin is bottom left and angle is CCW positive)
       flip_x: false
       flip_y: false
 
   - name: 'det_6'
     class: DetImage
     filename_format: '*SCI_6_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -229,39 +235,40 @@ objects:
       - id: 'E'
         ext_id: 1
         ext_slice: [!slice [0, 4124], !slice [0, 1094]]  # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [0, 50]
-        serial_overscan: !slice [1074, 1094]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4104, 4124]
+        data_slice: [!slice [0, 4124], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [2187, 2137]
+        serial_overscan: !slice [1113, 1093]
+        parallel_prescan: !slice [4123, 4123]
+        parallel_overscan: !slice [19, -1]
         parallel_axis: 'y'
-        readout_pixel: [0, 0]
+        readout_pixel: [4123, 2187]
         gain: 1.0  # electrons/ADU
         read_noise:   # electrons
         bias_level:   # ADU
       - id: 'F'
         ext_id: 4 # FITS extension ID
         ext_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4124], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [2187, 2137]
-        serial_overscan: !slice [1113, 1093]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4104, 4124]
+        data_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 50]
+        serial_overscan: !slice [1074, 1094]
+        parallel_prescan: !slice [4123, 4123]
+        parallel_overscan: !slice [19, -1]
         parallel_axis: 'y'
-        readout_pixel: [0, 2187]
+        readout_pixel: [4123, 0]
         gain: 1.0  # electrons/ADU
         read_noise:  # electrons
         bias_level:  # ADU
     focal_plane_position:
       x_cen: -16.425  # mm
       y_cen: -30.945  # mm
-      angle: 0.0  # degrees
+      angle: 180.0  # degrees
       flip_x: false
       flip_y: false
 
   - name: 'det_7'
     class: DetImage
     filename_format: '*SCI_7_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -271,39 +278,40 @@ objects:
       - id: 'E'
         ext_id: 1
         ext_slice: [!slice [0, 4124], !slice [0, 1094]]  # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [0, 50]
-        serial_overscan: !slice [1074, 1094]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4104, 4124]
+        data_slice: [!slice [0, 4124], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [2187, 2137]
+        serial_overscan: !slice [1113, 1093]
+        parallel_prescan: !slice [4123, 4123]
+        parallel_overscan: !slice [19, -1]
         parallel_axis: 'y'
-        readout_pixel: [0, 0]
+        readout_pixel: [4123, 2187]
         gain: 1.0  # electrons/ADU
         read_noise:   # electrons
         bias_level:   # ADU
       - id: 'F'
         ext_id: 4 # FITS extension ID
         ext_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4124], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [2187, 2137]
-        serial_overscan: !slice [1113, 1093]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4104, 4124]
+        data_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 50]
+        serial_overscan: !slice [1074, 1094]
+        parallel_prescan: !slice [4123, 4123]
+        parallel_overscan: !slice [19, -1]
         parallel_axis: 'y'
-        readout_pixel: [0, 2187]
+        readout_pixel: [4123, 0]
         gain: 1.0  # electrons/ADU
         read_noise:  # electrons
         bias_level:  # ADU
     focal_plane_position:
       x_cen: 16.425  # mm
       y_cen: -30.945  # mm
-      angle: 0.0  # degrees
+      angle: 180.0  # degrees
       flip_x: false
       flip_y: false
 
   - name: 'det_8'
     class: DetImage
     filename_format: '*SCI_8_*'  # Use wildcard to indicate the filename
+    header_index: 0  # HDU in the FITS file or index of header array that corresponds to the primary hdu header
     properties:
       x_size: 2188
       y_size: 4124
@@ -313,33 +321,33 @@ objects:
       - id: 'E'
         ext_id: 1
         ext_slice: [!slice [0, 4124], !slice [0, 1094]]  # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [0, 50]
-        serial_overscan: !slice [1074, 1094]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4104, 4124]
+        data_slice: [!slice [0, 4124], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [2187, 2137]
+        serial_overscan: !slice [1113, 1093]
+        parallel_prescan: !slice [4123, 4123]
+        parallel_overscan: !slice [19, -1]
         parallel_axis: 'y'
-        readout_pixel: [0, 0]
+        readout_pixel: [4123, 2187]
         gain: 1.0  # electrons/ADU
         read_noise:   # electrons
         bias_level:   # ADU
       - id: 'F'
         ext_id: 4 # FITS extension ID
         ext_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the ext_id that has the data for this output
-        data_slice: [!slice [0, 4124], !slice [1094, 2188]] # Slice of the full DetImage data array where this output's data will go
-        serial_prescan: !slice [2187, 2137]
-        serial_overscan: !slice [1113, 1093]
-        parallel_prescan: !slice [0, 0]
-        parallel_overscan: !slice [4104, 4124]
+        data_slice: [!slice [0, 4124], !slice [0, 1094]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 50]
+        serial_overscan: !slice [1074, 1094]
+        parallel_prescan: !slice [4123, 4123]
+        parallel_overscan: !slice [19, -1]
         parallel_axis: 'y'
-        readout_pixel: [0, 2187]
+        readout_pixel: [4123, 0]
         gain: 1.0  # electrons/ADU
         read_noise:  # electrons
         bias_level:  # ADU
     focal_plane_position:
       x_cen: 49.275  # mm
       y_cen: -30.945  # mm
-      angle: 0.0  # degrees
+      angle: 180.0  # degrees
       flip_x: false
       flip_y: false
 

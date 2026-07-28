@@ -8,8 +8,9 @@ name = "eregion"
 version = "0.1.0"
 description = "Detector characterization framework"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
-authors = [{ name = "Yashvi-Sharma" }]
+requires-python = ">=3.12,<3.14"
+authors = [{ name = "Yashvi-Sharma" },
+	   {name = "Dan Weatherill"}]
 license = { text = "MIT" }
 
 dependencies = [
@@ -17,11 +18,16 @@ dependencies = [
     "pandas>=2.3.3",
     "xarray>=2026.1.0",
     "astropy>=7.0",
+    "matplotlib>=3.9",
     "glob2>=0.7",
     "prefect>=2.15.0",
     "pyyaml>=6.0.3",
     "pydantic>=2.12.4",
     "joblib>=1.5.3",
+    "scipy>=1.14",
+    "uncertainties>=3.2.3",
+    "pint >= 0.25.3",
+    "pydantic-pint >=0.4"
 ]
 
 [project.optional-dependencies]
@@ -40,3 +46,6 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["eregion"]
 include = ["eregion*"]
+
+[tools.hatch.envs.default]
+python = "3.12"

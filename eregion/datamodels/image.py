@@ -1,16 +1,18 @@
 from __future__ import annotations
-
 from typing import Optional, Any, Literal, Callable
-from pydantic import Field, ConfigDict
+from pydantic import Field, ConfigDict, model_serializer, model_validator, SerializationInfo
 import numpy as np
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 from astropy.io import fits
+import os
+import glob2
+import json
+from copy import deepcopy
 
-from datamodels.mappable import Mappable
-from utils import ensure_dataarray, slice_data, ensure_numpy, configure_logger
-from core.image_operations import flip_and_rotate
+from .mappable import Mappable
+from utils import ensure_dataarray, slice_data, ensure_numpy, configure_logger, decrease_slicer_stop_index
 
 logger = configure_logger(__name__)
 
@@ -67,16 +69,57 @@ class Output(Mappable):
                                             description="List of Slice objects defining the portion of the full detector data array "
                                                         "that this Detector Output maps to.")
     header: Optional[fits.Header | dict] = Field(default_factory=fits.Header,
-                                                 description="FITS header or dict for this output if available.")
-    parent: Optional["DetImage"] = Field(default=None, description="Parent detector image.")
-    masks: Optional[dict[str, xr.DataArray]] = Field({},
-                                                description="Optional dictionary of masks for this output, e.g., {'bad_pixels': mask_array}.")
+                                                 description="FITS header in dict form for this output if available.")
+    parent: Optional["DetImage"] = Field(default=None, description="Parent detector image.", exclude=True)
+    masks: Optional[xr.Dataset] = Field(default=None,
+                                        description="Optional xr.Dataset containing masks for this output.", exclude=True)
 
-    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True,
-                              populate_by_name=True)
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True, populate_by_name=True)
+
+    @model_serializer(when_used='json', mode='plain')
+    def serializer(self, info: SerializationInfo):
+        """
+        Custom serializer for slice objects to convert them to a list of [start, stop, step] for JSON serialization.
+
+        Also convert fits.Header to dict
+        """
+        def _to_dict(value):
+            if isinstance(value, slice):
+                return {"start": value.start, "stop": value.stop, "step": value.step}
+            if isinstance(value, dict):
+                return {k: _to_dict(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_to_dict(v) for v in value]
+            if isinstance(value, tuple):
+                return tuple([_to_dict(v) for v in value])
+            if isinstance(value, fits.Header):
+                return dict(value)
+            return value
+
+        data = self.model_dump(mode="python", include=info.include, exclude=info.exclude, by_alias=info.by_alias,
+                               exclude_unset=info.exclude_unset, exclude_defaults=info.exclude_defaults,
+                               exclude_none=info.exclude_none, round_trip=info.round_trip)
+        return _to_dict(data)
+
+    @model_validator(mode='before')
+    @classmethod
+    def parse(cls, kwargs):
+        """
+        Custom validator to convert dict representations of slices back to slice objects when loading from JSON.
+        Check for the keys start, stop and step to identify if something is a slice. If so, convert to slice object.
+        """
+        for key, value in kwargs.items():
+            if isinstance(value, tuple) or isinstance(value, list):
+                for i,item in enumerate(value):
+                    if isinstance(item, dict) and {"start", "stop", "step"}.issubset(item):
+                        value[i] = slice(item["start"], item["stop"], item["step"])
+                kwargs[key] = value
+            elif isinstance(value, dict) and {"start", "stop", "step"}.issubset(value):
+                kwargs[key] = slice(value["start"], value["stop"], value["step"])
+        return kwargs
 
     @property
-    def data(self) -> xr.DataArray:
+    def data(self):
         # Full data from parent DetImage corresponding to this output, including any prescan/overscan.
         if self.parent is None or getattr(self.parent, "data", None) is None:
             raise ValueError("Attach this Output to a DetImage with valid data.")
@@ -131,8 +174,10 @@ class CCDOutput(Output):
 
     @property
     def image_region(self) -> dict[Literal['x', 'y'], slice]:
-        im_slc_parallel = slice(self.parallel_prescan.stop, self.parallel_overscan.start)
-        im_slc_serial = slice(self.serial_prescan.stop, self.serial_overscan.start)
+        parallel_step = -1 if self.parallel_prescan.stop > self.parallel_overscan.start else 1
+        im_slc_parallel = slice(self.parallel_prescan.stop, self.parallel_overscan.start, parallel_step)
+        serial_step = -1 if self.serial_prescan.stop > self.serial_overscan.start else 1
+        im_slc_serial = slice(self.serial_prescan.stop, self.serial_overscan.start, serial_step)
         return {self.parallel_axis: im_slc_parallel, self.serial_axis: im_slc_serial}
 
     def get_prescan(self, kind: Literal['serial', 'parallel']) -> xr.DataArray:
@@ -193,7 +238,7 @@ class DetImage:
     Base detector image holding 2D (only spatial) pixel data and outputs.
 
     Args:
-        data: 2D image array or Callable
+        data: 2D image array (np.ndarray or xr.DataArray) or Callable
         output_objects: Prebuilt Output regions.
         meta: Dict or DetImageMeta; validated if provided.
         kwargs: Backward-compatible meta fields (merged if meta is a dict).
@@ -204,7 +249,6 @@ class DetImage:
         meta: DetImageMeta or dict - Metadata for the detector image.
         id: str | int - Identifier for the corresponding detector taken from 'name' key in detector config.
         image_type: dict[str, Any] - Mapping of any image identifying keys to their values like 'type', 'exptime', 'mode', etc.
-        focal_plane: FocalPlaneImage - Pointer to the focal plane image object this DetImage is placed on, if any.
         _data: Internal attribute for storing image data when loaded.
         _dataloader: Internal variable for storing data loader Callable for on-demand loading.
 
@@ -220,8 +264,8 @@ class DetImage:
         self.ndim: int = 2
         self.outputs: dict[str, Output] = {}
         self.meta: DetImageMeta | dict[str, Any] = {}
-        self._data = None
-        self._dataloader = None
+        self._data: xr.DataArray | None = None
+        self._dataloader: Callable | None = None
 
         if data is not None:
             self.set_data(data)
@@ -253,10 +297,10 @@ class DetImage:
                                        parent=self)
         else:
             self.outputs.update(output_objects) if output_objects else {}
-            for outid, out in zip(self.outputs):
+            for out_id, out in self.outputs.items():
                 out.parent = self
 
-        self.focal_plane: Optional["FocalPlaneImage"] = None
+        self.masks: xr.Dataset = None
 
     def output_by_id(self, output_id: str) -> Output:
         try:
@@ -267,7 +311,7 @@ class DetImage:
     def add_output(self, output: Output, overwrite: bool = True):
         output.parent = self
         if output.id in self.outputs:
-            logger.warning(f"Output with id {output.id} already exists, overwrite is set to {overwrite}.")
+            logger.debug(f"Output with id {output.id} already exists, overwrite is set to {overwrite}.")
             if overwrite:
                 self.outputs[output.id] = output
         else:
@@ -282,10 +326,14 @@ class DetImage:
             raise TypeError(
                 "If provided, data must be an xr.DataArray or np.ndarray or Callable for loading on demand.")
 
-    def set_data_slice(self, slicedata, slice):
-        self._data[slice] = slicedata
+    def set_data_slice(self, slicedata, slicer):
+        temp = self._data.copy(deep=True)
+        slicer = decrease_slicer_stop_index(slicer)
+        temp.loc[slicer] = slicedata
+        self._data = temp
+        del temp
 
-    def load_from_disk(self):
+    def _load_from_disk(self):
         """
         Load data from disk into _data attribute. self.data returns xarray _data when called.
         """
@@ -310,7 +358,7 @@ class DetImage:
     @property
     def data(self) -> xr.DataArray:
         if self._data is None:
-            self.load_from_disk()
+            self._load_from_disk()
         return self._data
 
     @property
@@ -334,35 +382,113 @@ class DetImage:
             return tuple(imsize)
         raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")
 
-    def show(self, ax=None, save=None, **imshow_kwargs):
+    def build_full_mask(self):
+        self.masks = xr.Dataset(coords=self.data.coords)
+        for out_id, output in self.outputs.items():
+            if output.masks is not None:
+                # combine output mask dataset with maskset, output mask coords are a subset of maskset
+                self.masks = self.masks.merge(output.masks, join='outer', fill_value=np.nan, compat='no_conflicts')
+            else:
+                self.masks = None
+                return False
+        return True
+
+    def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', **imshow_kwargs):
         if self.data is None:
             raise ValueError("DetImage has no data to show.")
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
-        im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
+
+        if with_mask:
+            mask_built = False
+            if self.masks is None:
+                mask_built = self.build_full_mask()
+            if mask_built and mask_key in self.masks.data_vars:
+                mdata = np.ma.MaskedArray(self.data.values, mask=self.masks[mask_key].values)
+                im = ax.imshow(mdata, **imshow_kwargs)
+                plt.colorbar(im, ax=ax)
+            else:
+                logger.warning(f"Mask key '{mask_key}' not found in DetImage masks. Showing unmasked data.")
+                im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
+        else:
+            im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
+
         if save is not None:
             ax.figure.savefig(save)
         return ax
+
+    def to_netcdf(self, filepath, **kwargs):
+        """
+        Save the object to disk in netcdf format. Use xr.Dataset to hold everything. The .data and .masks are in data_vars,
+        the .meta and .outputs in attrs.
+        :param filepath: str
+        """
+        ds_to_save = self.data.to_dataset(name='data')
+        # add masks if they exist
+        ds_to_save = ds_to_save.update(self.masks) if self.masks is not None else ds_to_save
+        # convert meta to dict to store in attrs
+        ds_to_save.attrs['meta'] = self.meta.model_dump_json()
+        ds_to_save.attrs['image_type'] = json.dumps(self.image_type)
+        # convert outputs to dict of dicts
+        out_dict = {}
+        for out_id, output in self.outputs.items():
+            op = output.model_dump_json(exclude={'masks', 'parent'})
+            out_dict[out_id] = op
+            outclass = output.__class__.__name__
+        ds_to_save.attrs['outputs'] = json.dumps(out_dict)
+        ds_to_save.attrs['output_class'] = outclass
+
+        if not os.path.isdir(os.path.dirname(filepath)):
+            os.makedirs(os.path.dirname(filepath))
+        if not filepath.endswith('.nc'):
+            filepath = filepath + '.nc'
+        ds_to_save.to_netcdf(filepath, mode='w', **kwargs)
+
+    @classmethod
+    def from_netcdf(cls, filepath):
+        loaded_ds = xr.load_dataset(filepath)
+        data = loaded_ds['data']
+        masks = loaded_ds.drop_vars('data')
+        meta = DetImageMeta.model_validate_json(loaded_ds.attrs['meta'])
+
+        outputs = {}
+        outclass = globals()[loaded_ds.attrs['output_class']]
+        outputs_attr = json.loads(loaded_ds.attrs['outputs'])
+        for out_id, output_dict in outputs_attr.items():
+            output = outclass.model_validate_json(output_dict)
+            # extract subdataset for output masks
+            output.masks = slice_data(masks, output.output_slice)
+            outputs[out_id] = output
+
+        detimg = cls(data=data, output_objects=outputs, meta=meta)
+        detimg.masks = masks
+        detimg.image_type = json.loads(loaded_ds.attrs['image_type'])
+        return detimg
 
 
 class ImageBundle:
     """
     Class to hold a list of images. Contains methods to tabulate metadata of the images for easy filtering.
     """
+    image_class = DetImage
 
-    def __init__(self, images: list[DetImage] | None = None):
+    def __init__(self, images: image_class | list[image_class] | None = None):
         """
         :param images: List of input images.
-
+        :type images: image_class | list[image_class] | None
+        :return: ImageBundle instance.
+        :rtype: ImageBundle
         Attributes
         ----------
-        images: list[DetImage]
+        images: list[image_class]
             List of input images.
         list: pd.DataFrame
-            DataFrame containing image identifying metadata from DetImage.image_type.
+            DataFrame containing image identifying metadata from image_class.image_type.
         """
-        self.images: list = images if images is not None else []
-        self.list: pd.DataFrame = self.tabulate()
+        images = images if isinstance(images, list) else [images] if images is not None else []
+        assert all([isinstance(image, self.image_class) for image in images])
+        self.images = images
+        self.tabulate()
 
     def tabulate(self) -> pd.DataFrame:
         """
@@ -373,29 +499,70 @@ class ImageBundle:
         """
         tab = []
         for i, image in enumerate(self.images):
-            imtype = image.image_type
+            imtype = deepcopy(image.image_type)
             imtype['det_id'] = image.id
             imtype['filename'] = image.meta['filename']
             imtype['object'] = image
             tab.append(imtype)
-        return pd.DataFrame(tab)
+        self.list = pd.DataFrame(tab)
 
-    def filter(self, **criteria) -> list[DetImage]:
+    def filter(self, pd_query: str='') -> list[image_class]:
         """
         Filters images based on column values supplied as criteria.
-        :param criteria: column_name=value entries to filter on.
+        :param pd_query: str
+            Query string to filter the dataframe. Should be a valid pandas query string.
         :return: List of filtered DetImages.
         """
-        sel = ' & '.join([f'({k} == {repr(v)})' for k, v in criteria.items()])
-        df = self.list.query(sel) if sel != '' else self.list
+        df = self.list.query(pd_query) if pd_query != '' else self.list
         return df['object'].to_list()
 
-    def __call__(self, **criteria) -> "ImageBundle":
-        return ImageBundle(self.filter(**criteria))
+    def append(self, image):
+        if isinstance(image, self.image_class):
+            self.images.append(image)
+            self.tabulate()
+        else:
+            raise TypeError(f"Not a {self.image_class.__name__}: {type(image)}")
+
+    def save(self, filepath: str, **kwargs):
+        """
+        Call to_netcdf() for each detimage, and save them in one folder path
+        """
+        # check if image_class has to_netcdf method
+        if not hasattr(self.image_class, 'to_netcdf'):
+            raise AttributeError(f"{self.image_class.__name__} does not have a to_netcdf() method.")
+
+        if not os.path.exists(filepath):
+            os.makedirs(filepath)
+
+        for i,image in enumerate(self.images):
+            image.to_netcdf(os.path.join(filepath, f'image_{i}.nc'), **kwargs)
+
+    @classmethod
+    def load(cls, filepath: str):
+        """
+        Load all netcdf files in a folder and create an ImageBundle from them.
+        :param filepath:
+        :return:
+        """
+        # check if image_class has from_netcdf method
+        if not hasattr(cls.image_class, 'from_netcdf'):
+            raise AttributeError(f"{cls.image_class.__name__} does not have a from_netcdf() method.")
+
+        files = sorted(glob2.glob(os.path.join(filepath, '*.nc')))
+        images = []
+        for file in files:
+            im = cls.image_class.from_netcdf(file)
+            images.append(im)
+        return cls(images=images)
+
+    def __call__(self, pd_query: str='') -> "ImageBundle":
+        return ImageBundle(self.filter(pd_query))
 
     def __repr__(self):
-        print(f"ImageBundle with {len(self.images)} images:")
-        return self.list.__repr__()
+        return f"ImageBundle with {len(self)} images, {repr(self.list)}"
+
+    def _repr_html_(self):
+        return self.list._repr_html_()
 
     def __len__(self):
         return len(self.images)
@@ -403,157 +570,13 @@ class ImageBundle:
     def __iter__(self):
         return iter(self.images)
 
+    def __getitem__(self, i):
+        return self.images[i]
 
-class FocalPlaneImage:
-    """
-    Composite focal-plane image made by placing multiple DetImage tiles.
-    :param num_detectors: int
-        Number of detector tiles expected.
-    :param dim: tuple[int, int]
-        Dimensions of the focal plane image (height, width) in mm.
-    :param det_images: Optional[List[DetImage]]
-        List of DetImage objects to place on the focal plane.
-    """
+    def __setitem__(self, key, value):
+        self.images[key] = value
+        self.tabulate()
 
-    def __init__(
-        self,
-        num_detectors: int,
-        dim: Optional[tuple[int, int]] = None,
-        det_images: Optional[list[DetImage]] = None,
-        **kwargs,
-    ):
-        self.meta: dict = {}
-        if kwargs:
-            self.meta.update(kwargs)
-
-        self.num_detectors = int(num_detectors)
-        self.dim_mm = tuple(dim) if dim is not None else None
-        self.pixel_size = None
-        self.data: xr.DataArray | None = None   # To hold det image data in one array
-        self.table: pd.DataFrame | None = None  # To keep track of det_image data position within focal-plane data array
-
-        self.det_images: dict[str, DetImage] = {}
-        if det_images is not None:
-            self.update(det_images)
-
-    def update(self, det_images: list[DetImage]) -> None:
-        self.add_det_images(det_images)
-        self.construct_focal_plane_image()
-
-    def add_det_images(self, det_images):
-        det_images = det_images if len(det_images) > 0 else [det_images]
-        for det_image in det_images:
-            if len(self.det_images) == self.num_detectors:
-                logger.error(
-                    f"Number of DetImages added have reached number of detectors present in this focal-plane.")
-                break
-            self.validate_det_image(det_image)
-            det_image.focal_plane = self
-            self.det_images[det_image.id] = det_image
-
-    def validate_det_image(self, det_image: DetImage) -> None:
-        """
-        Accepts either validated DetImageMeta or legacy dict with required keys.
-        """
-        if not (isinstance(det_image.meta, DetImageMeta) or isinstance(det_image.meta, dict)):
-            raise ValueError("DetImage.meta must be DetImageMeta or dict.")
-        required = {"properties", "focal_plane_position"}
-        if not required.issubset(det_image.meta.keys()):
-            raise ValueError("DetImage.meta missing required keys for focal-plane placement.")
-        # attempt to coerce for consistent downstream access
-        det_image.meta = DetImageMeta.model_validate(det_image.meta)
-
-        # check pixel size is same for all det images
-        pixsize = det_image.meta.properties.pixel_size
-        if self.pixel_size is None:
-            self.pixel_size = pixsize
-        elif pixsize != self.pixel_size:
-            raise ValueError("All DetImage objects must have the same pixel_size for focal-plane assembly.")
-
-    def construct_focal_plane_image(self):
-        if len(self.det_images) == 0:
-            raise ValueError("No DetImage objects to assemble.")
-
-        frames = []
-        for det_id, det_image in self.det_images.items():
-            props = det_image.meta.properties  # type: ignore[union-attr]
-            pos = det_image.meta.focal_plane_position  # type: ignore[union-attr]
-            xhalf, yhalf = props.x_size / 2, props.y_size / 2
-            frames.append(
-                {
-                    "det_id": det_id,  # type: ignore[arg-type]
-                    "x_min": int(pos.x_cen / self.pixel_size - xhalf),
-                    "x_max": int(pos.x_cen / self.pixel_size - xhalf) + props.x_size,
-                    "y_min": int(pos.y_cen / self.pixel_size - yhalf),
-                    "y_max": int(pos.y_cen / self.pixel_size - yhalf) + props.y_size,
-                    "angle": pos.angle if hasattr(pos, "angle") else None,
-                    "flip_x": pos.flip_x if hasattr(pos, "flip_x") else None,
-                    "flip_y": pos.flip_y if hasattr(pos, "flip_y") else None,
-                }
-            )
-        frames_df = pd.DataFrame(frames)
-
-        # Verify that there are no overlapping detectors, i.e. area covered inside corners should not overlap
-        for i in range(len(frames_df)):
-            for j in range(i + 1, len(frames_df)):
-                a = frames_df.iloc[i]
-                b = frames_df.iloc[j]
-                separated = (a["x_max"] <= b["x_min"]) or (a["x_min"] >= b["x_max"]) or \
-                            (a["y_max"] <= b["y_min"]) or (a["y_min"] >= b["y_max"])
-                if not separated:
-                    raise ValueError(f"Detectors {a['det_id']} and {b['det_id']} overlap in focal plane.")
-
-        # Verify the size of the focal plane image
-        calc_dim = np.array([frames_df["y_max"].max() - frames_df["y_min"].min(),
-                            frames_df["x_max"].max() - frames_df["x_min"].min()])
-        if self.dim_mm is not None:
-            dim_pix = (np.array(self.dim_mm) / self.pixel_size).astype(int)
-            if any(calc_dim > dim_pix):
-                logger.warning("Provided dim %s < computed dim %s.", dim_pix, calc_dim)
-        else:
-            dim_pix = calc_dim.astype(int)
-
-        # Initialize DataArray
-        self.data = xr.DataArray(
-            np.zeros(dim_pix, dtype=float),
-            dims=("y", "x"),
-            coords={"y": np.arange(frames_df["y_min"].min(), frames_df["y_max"].max(), 1),
-                    "x": np.arange(frames_df["x_min"].min(), frames_df["x_max"].max(), 1)}
-        )
-
-        # Place tiles
-        for i in range(len(frames_df)):
-            row = frames_df.iloc[i]
-            di = self.det_images[row["det_id"]]
-            if di.data is None:
-                raise ValueError(f"DetImage at index {i} has no data.")
-            else:
-                imdata = flip_and_rotate(di.data.values, angle=row['angle'], flip_x=row['flip_x'],
-                                         flip_y=row['flip_y'])
-
-            slc = {'y':slice(row['y_min'], row['y_max']-1), 'x':slice(row['x_min'], row['x_max']-1)}
-            self.data.loc[slc] = imdata
-
-        self.table = frames_df
-
-    def show(self, ax=None, save=None, show_det_id=False, **imshow_kwargs):
-        if ax is None:
-            _, ax = plt.subplots(1,1, figsize=(8, 8), tight_layout=True)
-        im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
-        # Draw detector boundaries
-        if hasattr(self, "table"):
-            for _, row in self.table.iterrows():
-                rect = plt.Rectangle(
-                    (row["x_min"], row["y_min"]),
-                    row["x_max"] - row["x_min"],
-                    row["y_max"] - row["y_min"],
-                    linewidth=1,
-                    edgecolor="r",
-                    facecolor="none",
-                )
-                ax.add_patch(rect)
-                if show_det_id:
-                    ax.text(row["x_min"] + 150, row["y_min"] + 150, str(row["det_id"]), color="white", fontsize=8)
-        if save is not None:
-            ax.figure.savefig(save)
-        return ax
+    def __add__(self, other: ImageBundle):
+        self.images.extend(other.images)
+        self.tabulate()

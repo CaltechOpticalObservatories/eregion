@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 
-from eregion.datamodels import (
+from eregion.datamodels.image import (
     DetectorProperties,
     FocalPlanePosition,
     DetImageMeta,
