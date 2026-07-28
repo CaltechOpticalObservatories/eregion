@@ -5,7 +5,7 @@ from astropy.io import fits
 import shutil
 import numpy as np
 import pandas as pd
-
+import uncertainties as unc
 import pint
 
 from .misc_utils import configure_logger
@@ -139,16 +139,22 @@ def load_ptc_table_fits(filepath: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _quantity_column_to_fits_column(name: str, series: pd.Series) -> fits.Column:
+def _quantity_column_to_fits_column(name: str, series: pd.Series) -> list[fits.Column]:
     #already assume len >0, else how did anything else work??
     unit_the_first = series[0].units
 
     outcol = [_.to(unit_the_first).magnitude for _ in series]
     #TODO: proper translation between pint strings and FITS strings...ARGH!
+
+
+    #if it's an uncertainties ufloat, split into two columns
+    if isinstance(series[0], unc.UFloat):
+
+
+
+    fmt = _fits_format_code(type(outcol[0]))
+
     #HACK: for now, just use the pint string
-
-    #TODO: damn, still need format string
-
     return fits.Column(name=name, array=outcol, unit=str(unit_the_first))
 
 

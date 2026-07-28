@@ -95,7 +95,7 @@ def trad_ptc_shot_noise_fit(mndat: np.ndarray, sddat: np.ndarray, limitidx: int,
     cov = polynomial_fit_covariance_matrix(poly, xdat, ydat, deg)
     errs = np.sqrt(np.diag(cov))
 
-    Kest = 1 / umath.sqrt(unc.ufloat(ft[1], errs[1]))
+    Kest = 1 / unc.ufloat(ft[1], errs[1])
     noiseest = np.sign(ft[0]) * umath.sqrt(unc.ufloat(abs(ft[0]), errs[0]))
 
     if brighterfatter:
@@ -111,13 +111,13 @@ def astier_approx_fun(mu, g, a00, n):
 
 def astier_approx_eval_std(mu, K, a00, noise):
     """evaluate Astier's function but with gain and noise in Janesick scaling
-       In Astier, gain g is the gain between mean and variance. In Janesick, K is gain between mean and std deviation
+       In Astier, gain g is the gain between mean and variance. This is the same as Janesick's K constant
        Likewise in Astier the noise term is given in electrons**2, in Janesick it's in electrons
        Our PTC classes return Janesick's quantities, even when fitting with Astier method, to avoid confusion
        since Janesick's definitions are much more common in the community
     """
-    g =  K **2
-    n = noise**2 * K**2
+    g =  K
+    n = (noise*K)**2
     return astier_approx_fun(mu, g, a00, n)
 
 
@@ -153,15 +153,18 @@ def astier_approx_one_param_fit(mndat: np.ndarray, sddat: np.ndarray, Kguess: fl
         xdat = mndat
         ydat = sddat**2
 
-    p0 = [1./Kguess**2, aguess, (noiseguess*Kguess)**2]
+    p0 = [Kguess, aguess, (noiseguess/Kguess)**2]
     bounds = ([-np.inf, -np.inf, 0], [np.inf, 0, np.inf])
 
     popt, pcov = curve_fit(astier_approx_fun, xdat, ydat,  p0=p0, bounds=bounds)
     errs = np.sqrt(np.diag(pcov))
 
-    K = umath.sqrt(unc.ufloat(popt[0], errs[0]))
+    print(f"astier popt: {popt}, pcov: {pcov}")
+    K = unc.ufloat(popt[0], errs[0])
     a00 = unc.ufloat(popt[1], errs[1])
     n = umath.sqrt(unc.ufloat(abs(popt[2]), errs[2]))
+    print(f"Astier popt noise number: {popt[2]}, errn: {errs[2]}")
+    print(f"Astier noise term: {n}")
     return K, a00, n
 
 
