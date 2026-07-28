@@ -12,12 +12,23 @@ import json
 import warnings
 warnings.filterwarnings("ignore")
 
-from utils import slice_data, save_ptc_table_fits, load_ptc_table_fits
+from utils import slice_data, save_ptc_table_fits, load_ptc_table_fits, decrease_slicer_stop_index
 from datamodels import DetImage, CCDOutput, ImageBundle, TaskResult
 from tasks import LazyTask
 from core.image_stats import *
 from core.image_operations import sigma_clip_image
 from core.welch2d import welch2d
+
+# TODO (Big): Should PTC be a task or a pipeline?
+"""
+It is possible to make it more granular. 
+- Statistics can be a separate task, which is subclassed to run custom stats calculations (likely desired).
+- The do_stats_per_output below is too specific for CCDs, which is a real problem and needs to be fixed anyway.
+- Differencing pairs of same type of images can also be a separate task.
+
+PTC as sub-pipeline could look like this:
+preprocessed_flats_from_prior_subpipeline -> DifferencePairs -> CustomStatistics (input from prior two nodes) -> Save
+"""
 
 ##################### PTC task ############################
 class PTCResult(TaskResult):
@@ -123,7 +134,7 @@ class PTC(LazyTask):
             self.logger.info(f"Doing per output stats on #{i} image of {len(flats)}")
             for out_id, output in img.outputs.items():
                 outstat = self.do_stats_per_output(output, mask_key=mask_key)
-                outstat.update({"det_id": det_id, "output": out_id, "exptime": exptime, "diff": False, "seqnum":str(i)})
+                outstat.update({"det_id": det_id, "exptime": exptime, "diff": False, "seqnum":str(i)})
                 stats.append(outstat)
 
         #do differential processing on all diffs
@@ -150,20 +161,20 @@ class PTC(LazyTask):
                     sigma_clip_args.update(self.meta.get("sigma_clip_args", {}))
                     imslc = output.image_region
                     ma_diffdat = sigma_clip_image(slice_data(diffdat, imslc).values, **sigma_clip_args)
-                    diffdat.loc[imslc] = ma_diffdat.filled(np.nan)
-                    diffmask.loc[imslc] |= ma_diffdat.mask
+                    _imslc = decrease_slicer_stop_index(imslc)
+                    diffdat.loc[_imslc] = ma_diffdat.filled(np.nan)
+                    diffmask.loc[_imslc] |= ma_diffdat.mask
                 output.set_data_in_parent(diffdat)
                 output.masks['sigma_clip_mask'] = diffmask
                 diffstat = self.do_stats_per_output(output, mask_key=mask_key)
-                diffstat.update({"det_id": det_id, "output": out_id, "exptime": exptime, "diff": True,
-                                 "seqnum":'_'.join([str(i) for i in diffpairidx])})
+                diffstat.update({"det_id": det_id, "exptime": exptime, "diff": True, "seqnum":'_'.join([str(i) for i in diffpairidx])})
                 stats.append(diffstat)
             diff_images.append(diff_img)
 
         return stats, diff_images
 
     def do_stats_per_output(self, output: CCDOutput, mask_key: str = 'sigma_clip_mask'):
-        stats = {}
+        stats = {"output": output.id}
 
         imslc = output.image_region
         imarr = output.get_image_region()
@@ -176,12 +187,12 @@ class PTC(LazyTask):
             stats["n_masked"] = 0
         ma_imarr = np.ma.masked_array(imarr.values, mask=mask)
 
-        stats |= self.basic_stats(ma_imarr, "")
-        stats |= self.stats_tests(ma_imarr, "")
+        stats |= basic_stats(ma_imarr, "")
+        stats |= stats_tests(ma_imarr, "")
 
         # parallel EPER slice, do not mask overscan
         llel_oscan = output.get_overscan(kind='parallel')
-        stats |= self.calc_eper_trail(llel_oscan.values, axis=int(not output.parallel_axint), prepend_kw="llel_")
+        stats |= calc_eper_trail(llel_oscan.values, axis=int(not output.parallel_axint), prepend_kw="llel_")
 
         # NOTE last row and col often masked by sigma clipping, so do these with normal (unmasked) stats.
         ## last => last one to readout => check against readout pixel
@@ -191,20 +202,20 @@ class PTC(LazyTask):
         last_llel_slice = {output.parallel_axis: slice(last_inds[output.parallel_axint], last_inds[output.parallel_axint] + 1),
                           output.serial_axis: slice(None, None)}
         last_llel = slice_data(imarr, last_llel_slice)
-        stats |= self.basic_stats(last_llel.values, "lastllel_")
+        stats |= basic_stats(last_llel.values, "lastllel_")
 
         last_ser_slice = {output.parallel_axis: slice(None, None),
                           output.serial_axis: slice(last_inds[output.serial_axint], last_inds[output.serial_axint] + 1)}
         last_ser = slice_data(imarr, last_ser_slice)
-        stats |= self.basic_stats(last_ser.values, "lastser_")
+        stats |= basic_stats(last_ser.values, "lastser_")
 
         # serial EPER slice and last column
         ser_oscan = output.get_overscan(kind='serial')
-        stats |= self.calc_eper_trail(ser_oscan.values, axis=int(output.parallel_axint), prepend_kw="ser_")
+        stats |= calc_eper_trail(ser_oscan.values, axis=int(output.parallel_axint), prepend_kw="ser_")
 
         # overscan stats
-        stats |= self.basic_stats(ser_oscan.values, "oscan_")
-        stats |= self.stats_tests(ser_oscan.values, "oscan_")
+        stats |= basic_stats(ser_oscan.values, "oscan_")
+        stats |= stats_tests(ser_oscan.values, "oscan_")
 
         if self.PSD_size is not None:
             self.logger.info("Calculating correlation coefficients")
@@ -213,57 +224,6 @@ class PTC(LazyTask):
             stats |= {"PSD": PSD, "dPSD": dPSD}
 
         return stats
-
-    @staticmethod
-    def basic_stats(data: np.ndarray | np.ma.MaskedArray, prepend_kw: str = "") -> dict[str, Any]:
-        """
-        Calculate basic statistics for the given data.
-        :param data: np.ndarray or np.ma.MaskedArray
-            Input data array.
-        :param prepend_kw: str
-            Prefix to prepend to the keys in the output dictionary.
-        :return: dict[str, Any]
-            Dictionary containing calculated statistics.
-        """
-        _operations: dict[str, Callable] = {"med": np.ma.median,
-                                            "mean": np.ma.mean,
-                                            "std": np.ma.std,
-                                            "mad": partial(ma_mad, scale="normal")}
-
-        out = {f"{prepend_kw}{kw}": float(op(data)) for kw, op in _operations.items()}
-        return out
-
-    @staticmethod
-    def stats_tests(data: np.ndarray | np.ma.MaskedArray, prepend_kw: str = "") -> dict[str, Any]:
-        """
-        Calculate skewness and kurtosis for the given data.
-        :param data: np.ndarray or np.ma.MaskedArray
-            Input data array.
-        :param prepend_kw: str
-            Prefix to prepend to the keys in the output dictionary.
-        :return: dict[str, Any]
-        """
-
-        _operations: dict[str, Callable] = {"skew" : ma_skew,
-                                           "kurt" : ma_kurt}
-        out = {f"{prepend_kw}{kw}" : float(op(data)) for kw, op in _operations.items()}
-
-        tests: dict[str,Callable] = {"skewtest" : ma_skewtest,
-                                     "kurttest": ma_kurttest}
-
-        for teststr, testop in tests.items():
-            stat, pval = testop(data)
-            k = f"{prepend_kw}{teststr}"
-            out[k] = float(stat)
-            out[f"{k}p"] = float(pval)
-        return out
-
-    @staticmethod
-    def calc_eper_trail(data: np.ndarray | np.ma.MaskedArray, axis: int, prepend_kw: str = "") -> dict[str, Any]:
-        eper_med = np.median(data, axis=axis)
-        eper_mean = np.mean(data, axis=axis)
-        return {f"{prepend_kw}eper_med" : eper_med,
-                f"{prepend_kw}eper_mean" : eper_mean}
 
     def calculate_PSD(self, imarr: np.ndarray):
         kwargs = self.meta.get('welch2d_kwargs', {})

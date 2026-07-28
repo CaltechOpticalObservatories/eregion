@@ -36,6 +36,7 @@ class FocalPlaneImage:
         self.dim_mm = tuple(dim) if dim is not None else None
         self.pixel_size = None
         self.data: xr.DataArray | None = None   # To hold det image data in one array
+        self.masks: xr.Dataset | None = None  # To hold det image masks in one dataset
         self.table: pd.DataFrame | None = None  # To keep track of det_image data position within focal-plane data array
         self.det_images = ImageBundle()
 
@@ -74,6 +75,10 @@ class FocalPlaneImage:
             self.pixel_size = pixsize
         elif pixsize != self.pixel_size:
             raise ValueError("All DetImage objects must have the same pixel_size for focal-plane assembly.")
+
+        # check that masks have been built
+        if det_image.masks is None:
+            maskbuilt = det_image.build_full_mask()
 
     def construct_focal_plane_image(self):
         if len(self.det_images) == 0:
@@ -125,26 +130,40 @@ class FocalPlaneImage:
             coords={"y": np.arange(frames_df["y_min"].min(), frames_df["y_max"].max(), 1),
                     "x": np.arange(frames_df["x_min"].min(), frames_df["x_max"].max(), 1)}
         )
+        self.masks = xr.Dataset(coords=self.data.coords)
+        if self.det_images[0].masks is not None:
+            for m in self.det_images[0].masks.data_vars.keys():
+                self.masks[m] = xr.zeros_like(self.data).astype(bool)
 
         # Place tiles
         for i in range(len(frames_df)):
             row = frames_df.iloc[i]
+            slc = {'y': slice(row['y_min'], row['y_max'] - 1), 'x': slice(row['x_min'], row['x_max'] - 1)}
             di = self.det_images[i]
             if di.data is None:
                 raise ValueError(f"DetImage at index {i} has no data.")
             else:
-                imdata = flip_and_rotate(di.data.values, angle=row['angle'], flip_x=row['flip_x'],
+                self.data.loc[slc] = flip_and_rotate(di.data.values, angle=row['angle'], flip_x=row['flip_x'],
                                          flip_y=row['flip_y'])
-
-            slc = {'y':slice(row['y_min'], row['y_max']-1), 'x':slice(row['x_min'], row['x_max']-1)}
-            self.data.loc[slc] = imdata
+                for m in self.masks.data_vars.keys():
+                    self.masks[m].loc[slc] = flip_and_rotate(di.masks[m].values, angle=row['angle'], flip_x=row['flip_x'],
+                                           flip_y=row['flip_y'])
 
         self.table = frames_df
 
-    def show(self, ax=None, save=None, show_det_id=False, **imshow_kwargs):
+    def show(self, ax=None, save=None, show_det_id=False, with_mask=False, mask_key='sigma_clip_mask',
+             textcolor="yellow", **imshow_kwargs):
         if ax is None:
             _, ax = plt.subplots(1,1, figsize=(8, 8), tight_layout=True)
-        im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
+        if with_mask:
+            if self.masks is not None and mask_key in self.masks:
+                mdata = np.ma.MaskedArray(data=self.data.values, mask=self.masks[mask_key].values)
+                im = ax.imshow(mdata, **imshow_kwargs)
+                plt.colorbar(im, ax=ax)
+            else:
+                logger.warning("Mask key '%s' not found in masks. Showing unmasked data.", mask_key)
+        else:
+            im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
         # Draw detector boundaries
         if hasattr(self, "table"):
             for _, row in self.table.iterrows():
@@ -158,7 +177,7 @@ class FocalPlaneImage:
                 )
                 ax.add_patch(rect)
                 if show_det_id:
-                    ax.text(row["x_min"] + 150, row["y_min"] + 150, str(row["det_id"]), color="white", fontsize=8)
+                    ax.text(row["x_min"] + 150, row["y_min"] + 150, str(row["det_id"]), color=textcolor, fontsize=10)
         if save is not None:
             ax.figure.savefig(save)
         return ax
