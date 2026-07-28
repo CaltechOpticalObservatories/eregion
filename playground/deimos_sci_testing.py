@@ -94,24 +94,29 @@ def main():
         os.makedirs(outpath)
 
     # check if there is master bias already in outpath
-    if len(glob2.glob(os.path.join(outpath, 'master_bias/*'))) != 0:
+    if len(glob2.glob(os.path.join(outpath, 'master_bias/*'))) != 0 and (not args.overwrite):
         mb_res = CalibrationResult.load(outpath)
     else:
+        # load bias images
         bias_creator = ImageCreator(detector_config=args.detector_config)
         bias_res = bias_creator.run(input_source=os.path.join(rawpath, "*bias*.fits"),
                                     identifier_func=guess_image_type_from_filename_DEIMOS,
                                     fileloader_func=load_image_fits_DEIMOS,
                                     data_on_demand=True)
+        # subtract overscan
+        oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis")
+        bias_res = oscan_sub.run(images=bias_res.data('type == "bias"'))
+        # combine into masterbias
         mb_task = MasterBias(method='median')
-        mb_res = mb_task.run(bias_images=bias_res.data('type == "bias"'))
+        mb_res = mb_task.run(images=bias_res.data)
         mb_res.save(outpath)
         del bias_res
 
     # init tasks for ptc
     creator = ImageCreator(detector_config=args.detector_config, max_batch_size=args.max_batch_size)
-    bias_sub = BiasSubtraction()
     oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis")
     cr_mask = SigmaClipMasking(sigma_clip_args={"sigma_lower": args.sigma_lower, "sigma_upper": args.sigma_upper})
+    bias_sub = BiasSubtraction(only_image_area=True)
     psd_size = None if args.skip_correlations else 9
     ptc_task = ptc.PTC(psd_size=psd_size)
 
@@ -122,9 +127,9 @@ def main():
         fileloader_func=load_image_fits_DEIMOS,
         data_on_demand=True,
     ):
-        flpair = bias_sub.run(images=flpair.data, master_bias=mb_res.master_bias)
         flpair = oscan_sub.run(images=flpair.data)
         flpair = cr_mask.run(images=flpair.data)
+        flpair = bias_sub.run(images=flpair.data, master_bias=mb_res.master_bias)
         ptcres = ptc_task.run(images=flpair.data)
 
         del flpair
@@ -166,6 +171,7 @@ def parse_args():
     parser.add_argument("--plot-x", nargs="+", default=["mean"], help="Columns to plot on x-axis")
     parser.add_argument("--yscale", type=str, default='log', help="Scale for y-axis")
     parser.add_argument("--xscale", type=str, default='log', help="Scale for x-axis")
+    parser.add_argument("--overwrite", action="store_true", default=False, help="Overwrite existing files")
 
     args = parser.parse_args()
     if len(args.plot_x) == 1:
