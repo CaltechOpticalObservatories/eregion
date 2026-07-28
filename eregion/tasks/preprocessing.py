@@ -91,7 +91,7 @@ class BiasSubtraction(BasePreprocessingTask):
             # overwrite img
             for output in img.outputs.values():
                 mb_output = master_bias.outputs[output.id]
-                if self.meta.get("only_image_area", False):
+                if self.meta.get("only_image_area", True):
                     if 'image_region' in dir(output):
                         imslc = output.image_region
                         sub_output = self._subtract(slice_data(output.data, imslc),
@@ -202,7 +202,7 @@ class ScanSubtraction(BasePreprocessingTask):
 
         for output, (subtracted_scan, subtract_value) in zip(img.outputs.values(), results):
             output.set_data_in_parent(subtracted_scan)
-            setattr(output, f"{self.which_scan}_median", subtract_value)
+            setattr(output, f"{self.which_scan}_median", subtract_value.tolist() if isinstance(subtract_value, np.ndarray) else subtract_value)
 
         img.image_type.update({f"{self.which_scan}_subtracted": True})
         return img

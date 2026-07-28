@@ -16,14 +16,23 @@ def guess_image_type_from_filename_DEIMOS(filename: str) -> dict[str, Any]:
         Dictionary containing guessed image type metadata.
     """
     imtype = {'type':'unknown', 'exptime':0.}
-    try:
-        f = os.path.basename(filename).split('DTU_DT-')[1].replace('bias_','bias_0.000_').split('_')
-        imtype['type'] = f[2]
-        imtype['exptime'] = float(f[3])
-        imtype['seqnum'] = int(f[4])
-        imtype['obstime'] = f[5].replace('.fits','')
-    except:
-        logger.warning("Could not guess image type for DEIMOS file %s", filename)
+
+    fstr = os.path.basename(filename).split('DTU_DT-')[1].replace('.fits','')
+    f = fstr.split('_')
+    imtype['type'] = f[2]
+    imtype['obstime'] = f[-1]
+    imtype['seqnum'] = int(f[-2])
+    newstr = '_'.join(f[3:-2]) if 'bias' not in fstr else '_'.join(f[3:-2]+['0.000'])
+    if newstr != '':
+        newf = newstr.split('_')
+        imtype['exptime'] = float(newf[-1])
+        if len(newf) > 1:
+            for i,item in enumerate(newf[:-1]):
+                imtype[f'extra_{i}'] = item
+
+    phdr = fits.getheader(filename, ext=0)
+    imtype['led'] = phdr.get('LED',None)
+    imtype['backbias'] = phdr.get('HIERARCH backbias_volts',None)
     return imtype
 
 def process_raw_numbers(data: np.ndarray, offs) -> np.ndarray:

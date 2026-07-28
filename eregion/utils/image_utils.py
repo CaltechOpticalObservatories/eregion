@@ -1,6 +1,7 @@
 import numpy as np
 import xarray as xr
 from typing import Literal
+from copy import deepcopy
 
 def ensure_dataarray(data: xr.DataArray | np.ndarray) -> xr.DataArray:
     """
@@ -74,8 +75,8 @@ def slice_data(data: xr.DataArray | xr.Dataset, slicer: tuple[slice, ...] | dict
     """
     Slice a 2D or 3D DataArray using ('y','x','t) positional slices.
     """
-    slicer = decrease_slicer_stop_index(slicer)
-    return data.sel(**slicer)
+    slcr = decrease_slicer_stop_index(deepcopy(slicer))
+    return data.sel(**slcr)
 
 def decrease_slicer_stop_index(slicer: tuple[slice, ...] | dict[Literal, slice]) -> dict[Literal, slice]:
     if isinstance(slicer, tuple):
