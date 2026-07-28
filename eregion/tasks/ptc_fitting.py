@@ -209,20 +209,23 @@ class CCDPTCFit(Task):
             resultdct["sat_val"] = satval
 
             #NOTE: dat["std_diff"] is already divided by sqrt(2)
-            fwfactloc, fwloc = find_rough_full_well(dat["mean"].array, dat["std_diff"].array, self.fwfact)
-            resultdct["full_well"]  = _Q(float(dat["mean"].iloc[fwloc]) *_ureg.DN)
+            sddat = dat["std_diff"].array
+            mndat = dat["mean"].array
+
+            
+            fwfactloc, fwloc = find_rough_full_well(mndat, sddat, self.fwfact)
+            resultdct["full_well"]  = _Q(float(mndat[fwloc]) *_ureg.DN)
 
             self.logger.info("doing PTC fits...")
             match self.brighter_fatter:
                 case BrighterFatterFitTypes.NO_FIT:
                     self.logger.debug("doing PTC shot noise fit with no brighter-fatter correction")
-                    Kest, nest = trad_ptc_shot_noise_fit(dat["mean"].array, dat["std_diff"].array, fwfactloc, False)
+                    Kest, nest = trad_ptc_shot_noise_fit(mndat, sddat, fwfactloc, False)
 
                     resultdct["camera_gain_classic"]  = _Q(Kest * _ureg.elec / _ureg.DN)
                     resultdct["ptc_noise_classic"]  = _Q(nest * _ureg.elec)
                 case BrighterFatterFitTypes.ASTIER_ONE_PARAM:
-                    Kest, nest, a00est, Kast, a00ast, nast = self.astier_fit_bootstrap(dat["mean"].array, dat["std_diff"].array,
-                                                                                       fwfactloc, fwloc)
+                    Kest, nest, a00est, Kast, a00ast, nast = self.astier_fit_bootstrap(mndat, sddat, fwfactloc, fwloc)
                     resultdct["camera_gain_classic"] = _Q(Kest * _ureg.elec / _ureg.DN)
                     resultdct["ptc_noise_classic"] = _Q(nest * _ureg.elec)
                     resultdct["ptc_a00_classic"] = a00est
@@ -234,7 +237,7 @@ class CCDPTCFit(Task):
 
 
             self.logger.info("doing linearity fit...")
-            linfit, linerr = linearity_fit(dat["exptime"].array, dat["mean"].array, satidx)
+            linfit, linerr = linearity_fit(dat["exptime"].array, mndat, satidx)
             resultdct["flux_rate"]  = _Q(unc.ufloat(linfit[1], linerr[1]) * _ureg.DN / _ureg.s)
             resultdct["linearity_offset"] = _Q(unc.ufloat(linfit[0], linerr[0]) * _ureg.DN)
 

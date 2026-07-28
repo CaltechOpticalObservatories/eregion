@@ -122,7 +122,12 @@ def linearity_fit(etimedat: np.ndarray, mndat: np.ndarray, fitlim: Optional[int]
 
 
 if __name__ == "__main__":
-    DATA_DIR="/scratch/DEIMOS/DTU_detreduce_old/PTC/SCI/20260721-095716/"
+#    DATA_DIR="/dettest_data/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/20260721-095716/" # blue no back bias
+#    DATA_DIR="/dettest_data/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/20260721-174626/" # blue -50.0 VBB
+#    DATA_DIR="/dettest_data/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/20260721-135158//" # blue -30.0 VBB
+    DATA_DIR="/dettest_data/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/20260718-001407/" # green -50.0 VBB
+#    DATA_DIR="/dettest_data/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/20260717-161253//" # green no back bias
+
     from astropy.io import fits
     import os
     import matplotlib.pyplot as plt
@@ -133,24 +138,21 @@ if __name__ == "__main__":
     dets = set(hdul[1].data["det_id"])
     outputs = set(hdul[1].data["output"])
 
-    def select_data(dat, det, op, diff: bool) -> np.ndarray:
+    def select_data(dat, det, op) -> np.ndarray:
         selarr = np.logical_and(dat["det_id"] == det, dat["output"] == op)
-        selarr = np.logical_and(dat["diff"] == diff, selarr)
+        #selarr = np.logical_and(dat["diff"] == diff, selarr)
         return dat[selarr]
 
     def preproc_data(dat, det, op):
-        diffdat  = select_data(dat, det, op, True)
-        nondiffdat  = select_data(dat, det, op, False)
+        seldat  = select_data(dat, det, op)
 
-
-        avproc = lambda s : (nondiffdat[s][::2] + nondiffdat[s][1::2])/2.
-
-        etime = diffdat["exptime"]
-        med = avproc("med")
-        mean = avproc("mean")
-        sd = avproc("std")
-        diffsd = diffdat["std"] / np.sqrt(2)
-        mad = avproc("mad")
+        etime = seldat["exptime"]
+        med = seldat["med"]
+                     
+        mean = seldat["mean"]
+        sd = (seldat["std_0"] + seldat["std_1"])/2.
+        diffsd = seldat["std_diff"]
+        mad = (seldat["mad_0"] + seldat["mad_1"]) / 2.
 
         return {"etime_dat" : etime, "mean_dat" : mean,
                 "std_dat" : sd, "diff_std_dat" : diffsd,
@@ -158,34 +160,34 @@ if __name__ == "__main__":
 
 
 
-    DET = "det_5"
+    DET = "det_2"
     OP = "E"
     FWFACT: float = 0.8
 
-    for det in dets:
-        for op in outputs:
-            dstr: str = f"{det}[{op}]"
-            print(f"------------processing: {dstr}----------")
-            ppdat = preproc_data(hdul[1].data, det, op)
-            satpnt = find_adc_sat_index(ppdat["etime_dat"], ppdat["mean_dat"])
-            sddat = ppdat["diff_std_dat"] / np.sqrt(2)
+    # for det in dets:
+    #     for op in outputs:
+    #         dstr: str = f"{det}[{op}]"
+    #         print(f"------------processing: {dstr}----------")
+    #         ppdat = preproc_data(hdul[1].data, det, op)
+    #         satpnt = find_adc_sat_index(ppdat["etime_dat"], ppdat["mean_dat"])
+    #         sddat = ppdat["diff_std_dat"] / np.sqrt(2)
 
-            fwfactloc, fwloc = find_rough_full_well(ppdat["mean_dat"], sddat)
-            Kguess, nguess, a00guess = trad_ptc_shot_noise_fit(ppdat["mean_dat"], sddat, fwfactloc)
+    #         fwfactloc, fwloc = find_rough_full_well(ppdat["mean_dat"], sddat)
+    #         Kguess, nguess, a00guess = trad_ptc_shot_noise_fit(ppdat["mean_dat"], sddat, fwfactloc)
 
-            print(f" rough estimate camera gain: {Kguess} (e-/DN), noise upper bound: {nguess}  (e-)")
-            print(f" rough a00 estimate: {a00guess}")
+    #         print(f" rough estimate camera gain: {Kguess} (e-/DN), noise upper bound: {nguess}  (e-)")
+    #         print(f" rough a00 estimate: {a00guess}")
 
-            Kast, a00ast, nast = astier_approx_one_param_fit(ppdat["mean_dat"], sddat, fwloc, Kguess.nominal_value, a00guess.nominal_value, nguess.nominal_value)
-            print(f" Astier one-param fit, gain: {Kast}, a00: {a00ast}, noise: {nast}")
+    #         Kast, a00ast, nast = astier_approx_one_param_fit(ppdat["mean_dat"], sddat, fwloc, Kguess.nominal_value, a00guess.nominal_value, nguess.nominal_value)
+    #         print(f" Astier one-param fit, gain: {Kast}, a00: {a00ast}, noise: {nast}")
 
-            if satpnt is not None:
-                satmn = ppdat["mean_dat"][satpnt]
-                print(f"ADC saturation index: {satpnt}, value: {satmn} fpDN, {satmn*Kguess.nominal_value} e-")
-            else:
-                print("no ADC saturation point found")
-            fwguess = ppdat["mean_dat"][fwloc]
-            print(f"rough full well: {fwguess } fpDN, {fwguess * Kguess.nominal_value } e-")
+    #         if satpnt is not None:
+    #             satmn = ppdat["mean_dat"][satpnt]
+    #             print(f"ADC saturation index: {satpnt}, value: {satmn} fpDN, {satmn*Kguess.nominal_value} e-")
+    #         else:
+    #             print("no ADC saturation point found")
+    #         fwguess = ppdat["mean_dat"][fwloc]
+    #         print(f"rough full well: {fwguess } fpDN, {fwguess * Kguess.nominal_value } e-")
 
 
 
@@ -209,13 +211,13 @@ if __name__ == "__main__":
 
 
 
-    sddat = pd["diff_std_dat"] /np.sqrt(2)
+    sddat = pd["diff_std_dat"] 
 
     satpnt = find_adc_sat_index(pd["etime_dat"], pd["mean_dat"])
     fwfactloc, fwloc = find_rough_full_well(pd["mean_dat"], sddat, FWFACT)
 
     K, n,  a00 = trad_ptc_shot_noise_fit(pd["mean_dat"], sddat, fwfactloc)
-    Ka, aa, na = astier_approx_one_param_fit(pd["mean_dat"], sddat, fwloc, K.nominal_value, a00.nominal_value, n.nominal_value)
+    Ka, aa, na = astier_approx_one_param_fit(pd["mean_dat"], sddat, fwloc, K.nominal_value, a00.nominal_value, abs(n.nominal_value))
     linax.plot(pd["etime_dat"], pd["mean_dat"], "x", label="data")
     if satpnt is not None:
         linax.axvline(pd["etime_dat"][satpnt], c="red")
@@ -232,8 +234,8 @@ if __name__ == "__main__":
     mvax.plot(pd["mean_dat"],  sddat, ".", label="data (diff pair)")
     mvax.axvline(fwguess, c="red")
     mvax.axvline(fwfactguess, c="grey", ls="--")
-    mvy = np.sqrt(pd["mean_dat"]) / K.nominal_value
-    shotprop = mvax.plot(pd["mean_dat"],  np.sqrt(pd["mean_dat"]) / K.nominal_value , "--", label="PTC shot noise fit", **classprop)
+    mvy = np.sqrt(pd["mean_dat"]) / K.nominal_value #+ abs(n.nominal_value) / K.nominal_value
+    shotprop = mvax.plot(pd["mean_dat"],  mvy , "--", label="PTC shot noise fit", **classprop)
     print(f"n : {n}")
     yy = np.sqrt(astier_approx_eval_std(pd["mean_dat"], Ka.nominal_value, a00.nominal_value, 0.0))
     astrprop = mvax.plot(pd["mean_dat"], yy, "--", label="Astier approx 1-param fit", **astprop)

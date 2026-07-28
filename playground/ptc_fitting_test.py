@@ -12,7 +12,7 @@ import os
 import logging
 
 
-TL_DATA_DIR = pathlib.Path("/scratch/DEIMOS/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/")
+TL_DATA_DIR = pathlib.Path("/dettest_data/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/")
 OUT_DATA_DIR = pathlib.Path("./ptc_fits/")
 OUT_DATA_DIR.mkdir(exist_ok=True, parents=True)
 
@@ -22,10 +22,10 @@ for root, dirs, files in TL_DATA_DIR.walk():
         if "ptc_table.fits" in files:
             print(f"fitting PTCs in directory {root}")
             ptc_results = PTCResult.load(root)
-#            task = CCDPTCFit(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
-            task = CCDPTCFitTabular(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
+            task = CCDPTCFit(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM, fwfact=0.9)
+#            task = CCDPTCFitTabular(selection_columns=["det_id", "output"], brighter_fatter=BrighterFatterFitTypes.ASTIER_ONE_PARAM)
             task.logger.setLevel(logging.DEBUG)
             result = task.run(ptc_results)
 
             outdir = OUT_DATA_DIR / root.name
-            #result.save(outdir)
+            result.save(outdir)
