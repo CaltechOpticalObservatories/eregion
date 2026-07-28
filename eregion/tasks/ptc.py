@@ -256,6 +256,6 @@ class PTC(LazyTask):
 
         ptc_df = pd.DataFrame(ptc_tab)
         ptc_df['mean'] = ptc_df[[f'mean_{sfx}' for sfx in file_sfx]].mean(axis=1)
-        ptc_df['med'] = ptc_df[[f'med_{sfx}' for sfx in file_sfx]].median(axis=1)
+        ptc_df['med'] = ptc_df[[f'med_{sfx}' for sfx in file_sfx]].mean(axis=1)
         ptc_df['std_diff'] = ptc_df[[f'std_{sfx}' for sfx in diff_sfx]].mean(axis=1)/np.sqrt(2)
         return ptc_df
