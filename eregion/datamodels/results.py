@@ -151,7 +151,7 @@ class TaskResult(Mappable):
             accumulation). This is intentional for lazy accumulation, so the combined
             instance is constructed without re-validating the merged payload.
         """
-        if self.__class__ is not other.__class__:
+        if self.__class__.__name__ is not other.__class__.__name__:
             raise ValueError(
                 "Can only combine TaskResult instances of the same concrete class. "
                 f"Got {self.__class__.__name__} and {other.__class__.__name__}."

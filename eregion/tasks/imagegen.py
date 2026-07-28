@@ -6,7 +6,7 @@ import glob2
 import time
 import numpy as np
 from typing import Iterator, Generator, Callable, Iterable, Optional, Any
-from pydantic import field_validator, ConfigDict
+from pydantic import model_validator, ConfigDict
 from joblib import Parallel, delayed
 from itertools import batched
 
@@ -20,33 +20,38 @@ class ImageResult(TaskResult):
     data: ImageBundle | FPImageBundle
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    @field_validator("data", mode="before")
+    @model_validator(mode='before')
     @classmethod
-    def parse_images(cls, inp):
-        if isinstance(inp, (ImageBundle, FPImageBundle)):
-            return inp
-        elif isinstance(inp, list):
-            if all(isinstance(x, DetImage) for x in inp):
-                return ImageBundle(images=inp)
-            elif all(isinstance(x, FocalPlaneImage) for x in inp):
-                return FPImageBundle(images=inp)
-            else:
-                raise ValueError("Invalid input for ImageResult data. Must be a list of DetImage or FocalPlaneImage objects.")
-        else:
-            raise ValueError("Invalid input for ImageResult data. Must be ImageBundle, FPImageBundle, list of DetImage, or path to saved ImageBundle.")
+    def parse_result(cls, kwargs):
+        payload_fields = cls.payload_field_names()
+        for key, val in kwargs.items():
+            if key not in payload_fields:
+                continue
+            if not isinstance(val, (ImageBundle, FPImageBundle)):
+                if isinstance(val, list):
+                    if all(isinstance(x, DetImage) for x in val):
+                        kwargs[key] = ImageBundle(val)
+                    elif all(isinstance(x, FocalPlaneImage) for x in val):
+                        kwargs[key] = FPImageBundle(val)
+                    else:
+                        raise ValueError(f"Invalid input. Value of {key} must be an ImageBundle, FPImageBundle, or a list of DetImage or FocalPlaneImage objects.")
+        return kwargs
 
-    def save(self, filepath: str, prefix: str='', **kwargs) -> None:
-        if not os.path.exists(filepath):
-            os.makedirs(filepath)
-        self.data.save(os.path.join(filepath, prefix+"_data"), **kwargs)
+    def save(self, filepath: str, **kwargs) -> None:
+        for attr, value in self.payload_dict().items():
+            if isinstance(value, ImageBundle):
+                value.save(os.path.join(filepath, f"{attr}"), **kwargs)
         super().save(filepath)
 
     @classmethod
-    def load(cls, filepath: str, prefix: str=''):
-        data = ImageBundle.load(os.path.join(filepath, prefix+"_data"))
+    def load(cls, filepath: str):
+        attrs = {}
+        for attr in cls.payload_field_names():
+            if isinstance(cls.model_fields[attr].annotation, type(ImageBundle | FPImageBundle)):
+                attrs[attr] = ImageBundle.load(os.path.join(filepath, f"{attr}"))
         with open(os.path.join(filepath, f"{cls.__name__}_metadata.json"), "r") as f:
-            metadata = json.loads(f.read())
-        return cls(**metadata, data=data)
+            metadata = json.load(f)
+        return cls(**attrs, **metadata)
 
 class ImageCreator(LazyTask):
     """
