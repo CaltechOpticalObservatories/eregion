@@ -1,10 +1,10 @@
 
 
-from datamodels import TaskResult
-from ..tasks.task import Task
-from ..tasks.ptc import PTCResult
-from ..utils.pydantic import generate_iterable_model
-from ..core.ptc_fit_math  import (find_adc_sat_index, find_rough_full_well,
+from eregion.datamodels import TaskResult
+from eregion.tasks.task import Task
+from eregion.tasks.ptc import PTCResult
+from eregion.utils.pydantic import generate_iterable_model
+from eregion.core.ptc_fit_math  import (find_adc_sat_index, find_rough_full_well,
                                   trad_ptc_shot_noise_fit, astier_approx_one_param_fit,
                                   linearity_fit)
 from typing import Optional, Annotated, Iterable, TypeVar, Generator, Any

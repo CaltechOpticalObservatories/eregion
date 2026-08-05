@@ -12,12 +12,12 @@ import json
 import warnings
 warnings.filterwarnings("ignore")
 
-from utils import slice_data, save_ptc_table_fits, load_ptc_table_fits, decrease_slicer_stop_index
-from datamodels import DetImage, CCDOutput, ImageBundle, TaskResult
-from tasks import LazyTask
-from core.image_stats import *
-from core.image_operations import sigma_clip_image
-from core.welch2d import welch2d
+from eregion.utils import slice_data, save_ptc_table_fits, load_ptc_table_fits, decrease_slicer_stop_index
+from eregion.datamodels import DetImage, CCDOutput, ImageBundle, TaskResult
+from eregion.tasks import LazyTask
+from eregion.core.image_stats import *
+from eregion.core.image_operations import sigma_clip_image
+from eregion.core.welch2d import welch2d
 
 # TODO (Big): Should PTC be a task or a pipeline?
 """

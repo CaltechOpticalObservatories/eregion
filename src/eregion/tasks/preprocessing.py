@@ -7,10 +7,10 @@ from joblib import Parallel, delayed
 from itertools import batched
 from functools import wraps
 
-from utils import ensure_numpy, slice_data, decrease_slicer_stop_index
-from datamodels import DetImage, Output, CCDOutput, ImageBundle
-from core.image_operations import sigma_clip_image
-from tasks import LazyTask, ImageResult
+from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
+from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
+from eregion.core.image_operations import sigma_clip_image
+from eregion.tasks import LazyTask, ImageResult
 
 ########### BasePreprocessingTask ###########
 class BasePreprocessingTask(LazyTask):

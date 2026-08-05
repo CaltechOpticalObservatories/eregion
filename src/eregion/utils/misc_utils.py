@@ -19,12 +19,17 @@ def load_class(path: str):
     """
     Dynamically load a class from a given path. Has to be in eregion package, or importable from the current environment.
     :param path: str
-        The full path to the class, e.g. "module.submodule.ClassName".
+        The full path to the class, e.g. "module.submodule.ClassName". Paths to eregion's own subpackages
+        (e.g. "tasks.imagegen.ImageCreator", "datamodels.CCDOutput") may be given without the "eregion." prefix,
+        for backwards compatibility with pipeline/detector config files that predate eregion's package structure.
     :return: class
         The loaded class call.
     """
     module, cls = path.rsplit(".", 1)
-    return getattr(importlib.import_module(module), cls)
+    try:
+        return getattr(importlib.import_module(module), cls)
+    except ModuleNotFoundError:
+        return getattr(importlib.import_module(f"eregion.{module}"), cls)
 
 # A yaml constructor for slice objects
 def slice_constructor(loader, node):

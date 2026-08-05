@@ -4,9 +4,9 @@ import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
 
-from utils import configure_logger
-from datamodels import DetImage, DetImageMeta, ImageBundle
-from core.image_operations import flip_and_rotate
+from eregion.utils import configure_logger
+from eregion.datamodels import DetImage, DetImageMeta, ImageBundle
+from eregion.core.image_operations import flip_and_rotate
 
 logger = configure_logger(__name__)
 

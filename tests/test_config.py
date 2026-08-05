@@ -5,7 +5,7 @@ import yaml
 import pytest
 import re
 
-from configs import DetectorConfig, PipelineConfig
+from eregion.configs import DetectorConfig, PipelineConfig
 
 
 def valid_detconfig_dict():

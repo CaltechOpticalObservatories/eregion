@@ -4,8 +4,8 @@ import os
 import multiprocessing
 import inspect
 
-from utils import configure_logger, load_class
-from datamodels import TaskResult
+from eregion.utils import configure_logger, load_class
+from eregion.datamodels import TaskResult
 
 # Base abstract class for tasks, should have a call method for direct execution and a run method for pipeline workflows
 class Task(ABC):

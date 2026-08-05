@@ -12,7 +12,7 @@ import json
 from copy import deepcopy
 
 from .mappable import Mappable
-from utils import ensure_dataarray, slice_data, ensure_numpy, configure_logger, decrease_slicer_stop_index
+from eregion.utils import ensure_dataarray, slice_data, ensure_numpy, configure_logger, decrease_slicer_stop_index
 
 logger = configure_logger(__name__)
 
