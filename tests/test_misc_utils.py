@@ -30,4 +30,4 @@ def test_load_class_raises_for_missing_attribute():
 def test_load_class_imports_datamodels_class_like_detector_config_usage():
     cls = load_class("datamodels.CCDOutput")
     assert cls.__name__ == "CCDOutput"
-    assert cls.__module__.startswith("datamodels")
+    assert cls.__module__.startswith("eregion.datamodels")

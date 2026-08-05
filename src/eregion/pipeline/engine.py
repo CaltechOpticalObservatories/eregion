@@ -2,9 +2,9 @@ from typing import Iterator
 from copy import deepcopy
 import graphlib
 
-from tasks import TaskResult
-from configs import PipelineConfig
-from utils import configure_logger, load_class
+from eregion.tasks import TaskResult
+from eregion.configs import PipelineConfig
+from eregion.utils import configure_logger, load_class
 
 from prefect import task, flow
 from prefect.futures import wait

@@ -4,11 +4,11 @@ import numpy as np
 import os
 from pydantic import Field, ConfigDict
 
-from tasks import Task
-from datamodels import DetImage, ImageBundle, FPImageBundle
-from tasks.imagegen import ImageResult
-from core.image_stats import basic_stats, stats_tests
-from utils import slice_data
+from eregion.tasks import Task
+from eregion.datamodels import DetImage, ImageBundle, FPImageBundle
+from eregion.tasks.imagegen import ImageResult
+from eregion.core.image_stats import basic_stats, stats_tests
+from eregion.utils import slice_data
 
 # Dataclass to hold master bias results
 class CalibrationResult(ImageResult):

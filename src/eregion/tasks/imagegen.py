@@ -10,10 +10,10 @@ from pydantic import model_validator, ConfigDict
 from joblib import Parallel, delayed
 from itertools import batched
 
-from utils import load_image_fits, parse_list_of_files, guess_image_type_from_header, load_class
-from configs import DetectorConfig
-from datamodels import TaskResult, ImageBundle, DetImage, FocalPlaneImage, FPImageBundle
-from tasks import LazyTask, Task
+from eregion.utils import load_image_fits, parse_list_of_files, guess_image_type_from_header, load_class
+from eregion.configs import DetectorConfig
+from eregion.datamodels import TaskResult, ImageBundle, DetImage, FocalPlaneImage, FPImageBundle
+from eregion.tasks import LazyTask, Task
 
 ##################### Class to handle image generation from configuration files ####################################
 class ImageResult(TaskResult):

@@ -1,10 +1,10 @@
 from typing import Any, Type, Optional, TypeVar
 from pydantic import BaseModel, create_model, Field
 from copy import deepcopy
-from datamodels import TaskResult
+from eregion.datamodels import TaskResult
 import pandas as pd
 import os
-from utils import save_ptc_table_fits
+from eregion.utils import save_ptc_table_fits
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 

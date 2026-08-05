@@ -9,8 +9,9 @@ version = "0.1.0"
 description = "Detector characterization framework"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
-authors = [{ name = "Yashvi-Sharma" },
-	   {name = "Dan Weatherill"}]
+authors = [{ name = "Yashvi-Sharma", email = "yssharma@caltech.edu" },
+	   { name = "Dan Weatherill", email = "dweather@caltech.edu" },
+	   { name = "Prakriti Gupta", email = "pgupta@caltech.edu" }]
 license = { text = "MIT" }
 
 dependencies = [
@@ -44,8 +45,8 @@ test = [
 include-package-data = true
 
 [tool.setuptools.packages.find]
-where = ["eregion"]
+where = ["src"]
 include = ["eregion*"]
 
-[tools.hatch.envs.default]
+[tool.hatch.envs.default]
 python = "3.12"

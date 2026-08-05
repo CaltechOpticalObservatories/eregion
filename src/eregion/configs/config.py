@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 import os
 import yaml
-from utils import configure_logger, slice_constructor
+from eregion.utils import configure_logger, slice_constructor
 
 yaml.add_constructor('!slice', slice_constructor)
 

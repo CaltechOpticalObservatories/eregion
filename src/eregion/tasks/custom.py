@@ -4,7 +4,7 @@ import numpy as np
 from typing import Any
 from astropy.io import fits
 
-from utils import load_image_fits, configure_logger
+from eregion.utils import load_image_fits, configure_logger
 logger = configure_logger(__name__)
 
 def guess_image_type_from_filename_DEIMOS(filename: str) -> dict[str, Any]:

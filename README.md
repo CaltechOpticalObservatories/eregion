@@ -18,7 +18,7 @@ Supports direct task usage in scripts and orchestration in config‑driven DAG w
 ## Project Layout
 
 ```text
-eregion/
+src/eregion/
 ├── configs/                  # YAML configuration files and code
 │   ├── detectors/            # YAML configs for different detectors (e.g., DEIMOS, LRIS)
 │   ├── pipeline_flows/       # YAML configs defining flows for different processing pipelines
@@ -39,11 +39,13 @@ eregion/
 │   ├── image_utils.py        # array manipulation, etc.
 │   ├── io_utils.py           # file I/O utilities (e.g., FITS read/write)
 │   └── misc_utils.py         # miscellaneous utilities (e.g., logging setup)
-├── README.md
-├── data/                     # example data (e.g., raw images)
-├── playground/               # example notebooks for testing
-└── tests/                    # unit tests
+README.md
+data/                          # example data (e.g., raw images)
+playground/                    # example notebooks for testing
+tests/                         # unit tests
 ```
+
+All internal code imports the package as `eregion.<subpackage>` (e.g. `from eregion.utils import configure_logger`), and installed usage is `import eregion`, `from eregion.tasks import ...`, etc.
 
 ### Usage
 Scripted: import task classes from tasks/* and call run(...) or __call__(...).

@@ -149,8 +149,7 @@ def _quantity_column_to_fits_column(name: str, series: pd.Series) -> list[fits.C
 
     #if it's an uncertainties ufloat, split into two columns
     if isinstance(series[0], unc.UFloat):
-
-
+        raise NotImplementedError("Splitting uncertainties.UFloat columns into FITS columns is not yet implemented.")
 
     fmt = _fits_format_code(type(outcol[0]))
 
