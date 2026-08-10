@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional, Any, Literal, Callable
-from pydantic import Field, ConfigDict, model_serializer, model_validator, SerializationInfo
+from pydantic import Field, ConfigDict
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -75,48 +75,6 @@ class Output(Mappable):
                                         description="Optional xr.Dataset containing masks for this output.", exclude=True)
 
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True, populate_by_name=True)
-
-    @model_serializer(when_used='json', mode='plain')
-    def serializer(self, info: SerializationInfo):
-        """
-        Custom serializer for slice objects to convert them to a list of [start, stop, step] for JSON serialization.
-
-        Also convert fits.Header to dict
-        """
-        def _to_dict(value):
-            if isinstance(value, slice):
-                return {"start": value.start, "stop": value.stop, "step": value.step}
-            if isinstance(value, dict):
-                return {k: _to_dict(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [_to_dict(v) for v in value]
-            if isinstance(value, tuple):
-                return tuple([_to_dict(v) for v in value])
-            if isinstance(value, fits.Header):
-                return dict(value)
-            return value
-
-        data = self.model_dump(mode="python", include=info.include, exclude=info.exclude, by_alias=info.by_alias,
-                               exclude_unset=info.exclude_unset, exclude_defaults=info.exclude_defaults,
-                               exclude_none=info.exclude_none, round_trip=info.round_trip)
-        return _to_dict(data)
-
-    @model_validator(mode='before')
-    @classmethod
-    def parse(cls, kwargs):
-        """
-        Custom validator to convert dict representations of slices back to slice objects when loading from JSON.
-        Check for the keys start, stop and step to identify if something is a slice. If so, convert to slice object.
-        """
-        for key, value in kwargs.items():
-            if isinstance(value, tuple) or isinstance(value, list):
-                for i,item in enumerate(value):
-                    if isinstance(item, dict) and {"start", "stop", "step"}.issubset(item):
-                        value[i] = slice(item["start"], item["stop"], item["step"])
-                kwargs[key] = value
-            elif isinstance(value, dict) and {"start", "stop", "step"}.issubset(value):
-                kwargs[key] = slice(value["start"], value["stop"], value["step"])
-        return kwargs
 
     @property
     def data(self):
@@ -302,12 +260,6 @@ class DetImage:
 
         self.masks: xr.Dataset = None
 
-    def output_by_id(self, output_id: str) -> Output:
-        try:
-            return self.outputs[output_id]
-        except:
-            raise ValueError(f"Output with id {output_id} not found.")
-
     def add_output(self, output: Output, overwrite: bool = True):
         output.parent = self
         if output.id in self.outputs:
@@ -328,8 +280,8 @@ class DetImage:
 
     def set_data_slice(self, slicedata, slicer):
         temp = self._data.copy(deep=True)
-        slicer = decrease_slicer_stop_index(slicer)
-        temp.loc[slicer] = slicedata
+        slcr = decrease_slicer_stop_index(deepcopy(slicer))
+        temp.loc[slcr] = slicedata
         self._data = temp
         del temp
 
@@ -383,14 +335,16 @@ class DetImage:
         raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")
 
     def build_full_mask(self):
+        if self.masks is not None:
+            return True
+
         self.masks = xr.Dataset(coords=self.data.coords)
         for out_id, output in self.outputs.items():
             if output.masks is not None:
                 # combine output mask dataset with maskset, output mask coords are a subset of maskset
                 self.masks = self.masks.merge(output.masks, join='outer', fill_value=np.nan, compat='no_conflicts')
-            else:
-                self.masks = None
-                return False
+        if len(self.masks.data_vars) == 0:
+            return False
         return True
 
     def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', **imshow_kwargs):
@@ -400,10 +354,7 @@ class DetImage:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
 
         if with_mask:
-            mask_built = False
-            if self.masks is None:
-                mask_built = self.build_full_mask()
-            if mask_built and mask_key in self.masks.data_vars:
+            if self.build_full_mask() and mask_key in self.masks.data_vars:
                 mdata = np.ma.MaskedArray(self.data.values, mask=self.masks[mask_key].values)
                 im = ax.imshow(mdata, **imshow_kwargs)
                 plt.colorbar(im, ax=ax)
@@ -476,6 +427,7 @@ class ImageBundle:
         """
         :param images: List of input images.
         :type images: image_class | list[image_class] | None
+            Could be DetImage, FocalPlaneImage, etc.
         :return: ImageBundle instance.
         :rtype: ImageBundle
         Attributes
@@ -494,8 +446,8 @@ class ImageBundle:
         """
         Loops through list of images and creates a dataframe from their image_type dict.
 
-        Default columns are `det_id`, `filename`, `object`, containing DetImage.id, DetImage.meta['filename']
-        and the DetImage object itself. Rest of the columns/values are keys/values in the DetImage.image_type.
+        Default columns are `det_id`, `filename`, `object`, containing image_class.id, image_class.meta['filename']
+        and the image_class object itself. Rest of the columns/values are keys/values in the image_class.image_type.
         """
         tab = []
         for i, image in enumerate(self.images):
@@ -525,7 +477,11 @@ class ImageBundle:
 
     def save(self, filepath: str, **kwargs):
         """
-        Call to_netcdf() for each detimage, and save them in one folder path
+        Call to_netcdf() for each image object, and save them in one folder path
+        :param filepath: str
+            Path to folder where images will be saved. The images are saved with image_{i}.nc filenames where
+            "i" is their index in the ImageBundle list.
+        :param **kwargs: Additional keyword arguments to pass to the to_netcdf() method of the image_class.
         """
         # check if image_class has to_netcdf method
         if not hasattr(self.image_class, 'to_netcdf'):
@@ -540,9 +496,10 @@ class ImageBundle:
     @classmethod
     def load(cls, filepath: str):
         """
-        Load all netcdf files in a folder and create an ImageBundle from them.
-        :param filepath:
-        :return:
+        Load all the netcdf files from {filepath} folder and create an ImageBundle from them.
+        :param filepath: str
+            Path to folder where images are saved. Looks for filenames of format image_{i}.nc
+        :return: ImageBundle instance
         """
         # check if image_class has from_netcdf method
         if not hasattr(cls.image_class, 'from_netcdf'):
