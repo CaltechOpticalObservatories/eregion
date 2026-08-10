@@ -17,7 +17,6 @@ from pydantic import field_serializer
 import os
 
 
-
 #unit stuff setup
 _ureg = pint.get_application_registry()
 _Q = _ureg.Quantity
