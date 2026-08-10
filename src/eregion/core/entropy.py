@@ -7,7 +7,7 @@ https://arxiv.org/pdf/2210.02848
 """
 import warnings
 import numpy as np
-from typing import Optional
+from typing import Any, Optional
 
 
 def _as_float_array(data) -> np.ndarray:
@@ -35,7 +35,8 @@ def shannon_entropy_histogram(counts: np.ndarray, base: float = 2) -> float:
     :return: float
         H = -sum(p_i * log(p_i)), where p_i = n_i / N
     """
-    counts = _as_float_array(counts)
+    # Bin counts are naturally integers
+    counts = np.asarray(counts)
     n = counts.sum()
     if n <= 0:
         raise ValueError("Histogram must contain at least one entry.")
@@ -160,7 +161,7 @@ def optimal_bin_width(data: np.ndarray, M: float = 2.5, **knn_kwargs) -> float:
     return float(2 ** h * n ** (-1 / M))
 
 
-def entropy_optimal_histogram(data: np.ndarray, M: float = 2.5, **knn_kwargs) -> dict:
+def entropy_optimal_histogram(data: np.ndarray, M: float = 2.5, **knn_kwargs) -> dict[str, Any]:
     """
     Build a histogram of 1-D data using the entropy-based optimal bin width
     (Watts & Crow), and report the diagnostics.
