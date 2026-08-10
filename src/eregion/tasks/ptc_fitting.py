@@ -7,13 +7,11 @@ from eregion.utils.pydantic import generate_iterable_model
 from eregion.core.ptc_fit_math  import (find_adc_sat_index, find_rough_full_well,
                                   trad_ptc_shot_noise_fit, astier_approx_one_param_fit,
                                   linearity_fit)
-from typing import Optional, Annotated, Iterable, TypeVar, Generator, Any
+from typing import Optional, Annotated, TypeVar, Generator, Any
 from pydantic import Field
 import numpy as np
 import pandas as pd
-from astropy import units as un
 import uncertainties as unc
-from uncertainties import umath
 from uncertainties.core import Variable as uVar
 import pint
 from pydantic_pint import PydanticPintQuantity, set_registry
@@ -21,8 +19,6 @@ from itertools import product
 from enum import Enum
 from pydantic import field_serializer
 import os
-
-
 
 
 _Table = TypeVar("Table")

@@ -1,10 +1,9 @@
 from copy import deepcopy
 import pandas as pd
-from typing import Optional, Any, Callable, Generator
+from typing import Generator
 import numpy as np
 import xarray as xr
 from joblib import Parallel, delayed
-from functools import partial, wraps
 from itertools import combinations
 from pydantic import field_validator
 import os
@@ -18,17 +17,6 @@ from eregion.tasks import LazyTask
 from eregion.core.image_stats import *
 from eregion.core.image_operations import sigma_clip_image
 from eregion.core.welch2d import welch2d
-
-# TODO (Big): Should PTC be a task or a pipeline?
-"""
-It is possible to make it more granular. 
-- Statistics can be a separate task, which is subclassed to run custom stats calculations (likely desired).
-- The do_stats_per_output below is too specific for CCDs, which is a real problem and needs to be fixed anyway.
-- Differencing pairs of same type of images can also be a separate task.
-
-PTC as sub-pipeline could look like this:
-preprocessed_flats_from_prior_subpipeline -> DifferencePairs -> CustomStatistics (input from prior two nodes) -> Save
-"""
 
 ##################### PTC task ############################
 class PTCResult(TaskResult):
