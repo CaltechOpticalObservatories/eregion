@@ -19,6 +19,9 @@ Supports direct task usage in scripts and orchestration in config‑driven DAG w
 
 ```text
 src/eregion/
+├── cli/                       # `eregion` command-line interface
+│   ├── commands/              # one module per subcommand (run, validate, ...)
+│   └── main.py                # Typer app / entry point
 ├── configs/                  # YAML configuration files and code
 │   ├── detectors/            # YAML configs for different detectors (e.g., DEIMOS, LRIS)
 │   ├── pipeline_flows/       # YAML configs defining flows for different processing pipelines
@@ -50,7 +53,29 @@ All internal code imports the package as `eregion.<subpackage>` (e.g. `from ereg
 ### Usage
 Scripted: import task classes from tasks/* and call run(...) or __call__(...).
 
-Orchestrated: define Prefect flows in pipeline/ that load a YAML from playground/ and execute steps using a generic runner.
+Orchestrated: define a pipeline flow YAML (see `configs/pipeline_flows/example.yaml`) describing a
+DAG of tasks, then run it either from Python:
+
+```python
+from eregion.pipeline import PipelineEngine
+
+engine = PipelineEngine("path/to/pipeline.yaml")
+engine.run()
+```
+
+or from the command line, without writing a notebook/script for each run:
+
+```bash
+  eregion validate path/to/pipeline.yaml   # build the DAG and print the execution plan, no tasks run
+  eregion run path/to/pipeline.yaml        # build the DAG and execute it end-to-end
+
+  # Override ${...} placeholders in the config, and allow ${VAR} to fall back to env vars
+  eregion run path/to/pipeline.yaml --var data_dir=/data/raw --env
+```
+
+Run `eregion --help` for the full list of commands and options. The CLI is intentionally minimal
+for now (`run`/`validate`); new subcommands live as one module per command under
+`src/eregion/cli/commands/` so the surface can grow without touching existing commands.
 
 ### Status
 Early development. More tasks and flows to be added.
