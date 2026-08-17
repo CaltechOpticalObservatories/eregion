@@ -28,8 +28,12 @@ dependencies = [
     "scipy>=1.14",
     "uncertainties>=3.2.3",
     "pint >= 0.25.3",
-    "pydantic-pint >=0.4"
+    "pydantic-pint >=0.4",
+    "typer>=0.12"
 ]
+
+[project.scripts]
+eregion = "eregion.cli.main:main"
 
 [project.optional-dependencies]
 dev = [
