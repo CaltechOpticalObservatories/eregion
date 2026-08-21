@@ -151,6 +151,11 @@ def load_dataframe_from_fits(filepath: str) -> pd.DataFrame:
 
 def _quantity_column_to_fits_column(name: str, series: list[pint.Quantity | None]) -> fits.Column:
     quantities = [value for value in series if value is not None]
+
+    #if it's an uncertainties ufloat, split into two columns
+    if isinstance(quantities[0].magnitude, unc.UFloat):
+        raise NotImplementedError("Splitting uncertainties.UFloat columns into FITS columns is not yet implemented.")
+
     unit_the_first = quantities[0].units
     has_null = len(quantities) != len(series)
     outcol = np.asarray(
@@ -160,10 +165,6 @@ def _quantity_column_to_fits_column(name: str, series: list[pint.Quantity | None
         ],
         dtype=float if has_null else None,
     )
-
-    #if it's an uncertainties ufloat, split into two columns
-    if isinstance(quantities[0].magnitude, unc.UFloat):
-        raise NotImplementedError("Splitting uncertainties.UFloat columns into FITS columns is not yet implemented.")
 
     fmt = _fits_format_code(outcol.dtype)
     return fits.Column(name=name, array=outcol, format=fmt, unit=_pint_unit_to_fits_unit(unit_the_first))

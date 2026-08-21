@@ -75,5 +75,5 @@ def do_statistics(data: np.ndarray | np.ma.MaskedArray,
             stats[f"{prepend_kw}{kw}"] = float(stat)
             stats[f"{prepend_kw}{kw}p"] = float(pval)
         else:
-            stats[f"{prepend_kw}{kw}"] = float(operation(data, axis=axis))
+            stats[f"{prepend_kw}{kw}"] = operation(data, axis=axis)
     return stats
