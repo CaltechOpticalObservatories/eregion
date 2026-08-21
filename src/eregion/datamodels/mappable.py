@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
-from pydantic import BaseModel, ConfigDict, model_serializer, model_validator, SerializationInfo
+from collections.abc import Mapping, MutableMapping
+from typing import Any, ClassVar
+from pydantic import BaseModel, ConfigDict
+import json
 import numpy as np
 
 
@@ -47,73 +48,72 @@ class Mappable(BaseModel, Mapping):
         """Return a plain dict snapshot of the current model state."""
         return self.model_dump()
 
-    # --- JSON serialization / deserialization ----------------------------
-
-    @model_serializer(when_used='json', mode='plain')
-    def _serialize_for_json(self, info: SerializationInfo):
+    def update(self, other: Mapping[str, Any]) -> None:
         """
-        Recursively convert non-JSON-native types before serialization:
-          - slice          → {"start": ..., "stop": ..., "step": ...}
-          - np.ndarray     → nested list
-          - np.integer     → int
-          - np.floating    → float
-          - fits.Header    → dict  (when astropy is available)
-        Traverses tuples, lists, and dicts to handle nested structures.
+        Recursively merge a mapping into this model in place.
+
+        :param other: Values to merge into this model.
+        :return: None.
         """
-        try:
-            from astropy.io import fits as _fits
-            _fits_header = _fits.Header
-        except ImportError:
-            _fits_header = None
+        if not isinstance(other, Mapping):
+            raise TypeError("Mappable.update() requires a Mapping.")
 
-        def _convert(value):
-            if isinstance(value, slice):
-                return {"start": value.start, "stop": value.stop, "step": value.step}
-            if isinstance(value, np.ndarray):
-                return value.tolist()
-            if isinstance(value, np.integer):
-                return int(value)
-            if isinstance(value, np.floating):
-                return float(value)
-            if _fits_header is not None and isinstance(value, _fits_header):
-                return dict(value)
-            if isinstance(value, dict):
-                return {k: _convert(v) for k, v in value.items()}
-            if isinstance(value, (list, tuple)):
-                converted = [_convert(v) for v in value]
-                return type(value)(converted)
-            return value
+        for key, value in other.items():
+            current_value = getattr(self, key, None)
+            if isinstance(current_value, Mappable) and isinstance(value, Mapping):
+                current_value.update(value)
+            elif isinstance(current_value, MutableMapping) and isinstance(value, Mapping):
+                current_value.update(value)
+            else:
+                self[key] = value
 
-        data = self.model_dump(
-            mode="python",
-            include=info.include,
-            exclude=info.exclude,
-            by_alias=info.by_alias,
-            exclude_unset=info.exclude_unset,
-            exclude_defaults=info.exclude_defaults,
-            exclude_none=info.exclude_none,
-            round_trip=info.round_trip,
-        )
-        return _convert(data)
+    # --- JSON persistence --------------------------------------------------
 
-    @model_validator(mode='before')
+    _JSON_TYPE_KEY: ClassVar[str] = "__eregion_json_type__"
+    _JSON_SLICE: ClassVar[str] = "slice"
+    _JSON_ARRAY: ClassVar[str] = "ndarray"
+
     @classmethod
-    def _parse_from_json(cls, kwargs):
-        """
-        Recursively revive JSON representations of slices back to slice objects.
-        A dict with exactly the keys {"start", "stop", "step"} is treated as a
-        serialized slice. Traverses dicts and lists to handle nested structures.
-        """
+    def _json_fallback(cls, value: Any) -> Any:
+        if isinstance(value, slice):
+            return {
+                cls._JSON_TYPE_KEY: cls._JSON_SLICE,
+                "start": value.start,
+                "stop": value.stop,
+                "step": value.step,
+            }
+        if isinstance(value, np.ndarray):
+            return {
+                cls._JSON_TYPE_KEY: cls._JSON_ARRAY,
+                "dtype": value.dtype.str,
+                "shape": value.shape,
+                "data": value.tolist(),
+            }
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            return float(value)
+        raise TypeError(f"{cls.__name__} cannot serialize {type(value).__name__} to JSON.")
 
-        def _revive(value):
-            if isinstance(value, dict) and {"start", "stop", "step"}.issubset(value):
-                return slice(value["start"], value["stop"], value["step"])
-            if isinstance(value, dict):
-                return {k: _revive(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [_revive(v) for v in value]
+    @classmethod
+    def _decode_json_value(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return [cls._decode_json_value(item) for item in value]
+        if not isinstance(value, dict):
             return value
+        value = {key: cls._decode_json_value(item) for key, item in value.items()}
+        if value.get(cls._JSON_TYPE_KEY) == cls._JSON_SLICE:
+            return slice(value["start"], value["stop"], value["step"])
+        if value.get(cls._JSON_TYPE_KEY) == cls._JSON_ARRAY:
+            return np.asarray(value["data"], dtype=np.dtype(value["dtype"])).reshape(value["shape"])
+        return value
 
-        if isinstance(kwargs, dict):
-            return {k: _revive(v) for k, v in kwargs.items()}
-        return kwargs
+    def to_json(self, *, indent: int | None = None, **kwargs) -> str:
+        """Serialize this model with standard Pydantic and child serializers."""
+        data = self.model_dump(mode="json", fallback=self._json_fallback, **kwargs)
+        return json.dumps(data, indent=indent)
+
+    @classmethod
+    def from_json(cls, json_data: str | bytes | bytearray) -> "Mappable":
+        """Decode tagged values and validate the result as this concrete model."""
+        return cls.model_validate(cls._decode_json_value(json.loads(json_data)))

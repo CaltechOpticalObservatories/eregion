@@ -10,47 +10,36 @@ pipelines:
         task: tasks.imagegen.ImageCreator
         init:
           params:
-            detector_config: "/Users/yashvi/Desktop/Detector Characterization Tools/eregion/eregion/configs/detectors/deimos_singledet.yaml"
+            detector_config: ${DETECTOR_CONFIG}
         run:
           params:
-            input_source: "/Users/yashvi/Desktop/Detector Characterization Tools/DTU_dettest/DTU_singledet_acceptance/PTC/SCI/20250812-101350/*_bias_*.fits"
-            identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
-            fitsloader_func: tasks.custom.load_image_fits_DEIMOS
-
-      - name: master_bias
+            input_source: r"\${INPUT_SOURCE}/*.fits"
+            identifier_func: tasks.custom.guess_image_type_from_filename
+            fitsloader_func: tasks.custom.load_image_fits
+      - name: make_master_bias
         task: tasks.calibration.MasterBias
         init:
           params:
             method: "median"
         run:
           inputs:
-            bias_images: calib_flow.image_creator.data.bias
+            images: calib_flow.image_creator.data('type == "bias"')
         depends_on: [calib_flow.image_creator]
 
   - name: preproc_flow
     description: Example pre-processing pipeline flow
     lazy: false
     nodes:
-      - name: image_creator
-        task: tasks.imagegen.ImageCreator
-        init:
-          params:
-            detector_config: "/Users/yashvi/Desktop/Detector Characterization Tools/eregion/eregion/configs/detectors/deimos_singledet.yaml"
-        run:
-          params:
-            input_source: "/Users/yashvi/Desktop/Detector Characterization Tools/DTU_dettest/DTU_singledet_acceptance/PTC/SCI/20250812-101350/*flat_0.000*.fits"
-            identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
-            fitsloader_func: tasks.custom.load_image_fits_DEIMOS
-
       - name: bias_subtraction
         task: tasks.preprocessing.BiasSubtraction
         init:
-          inputs:
-            master_biases: calib_flow.master_bias.data.master_biases
+          params:
+            only_image_areas: true
         run:
           inputs:
-            images: preproc_flow.image_creator.data.flat
-        depends_on: [preproc_flow.image_creator, calib_flow.master_bias]
+            images: calib_flow.image_creator.data('type == "flat"')
+            master_bias: calib_flow.make_master_bias.master_bias
+        depends_on: [calib_flow.image_creator, calib_flow.make_master_bias]
 
       - name: overscan_subtraction
         task: tasks.preprocessing.ScanSubtraction

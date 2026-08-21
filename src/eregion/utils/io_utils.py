@@ -1,7 +1,9 @@
 import os
 import glob2
+import re
 from typing import Any
 from astropy.io import fits
+from astropy import units as astropy_units
 import shutil
 import numpy as np
 import pandas as pd
@@ -10,6 +12,12 @@ import pint
 
 from .misc_utils import configure_logger
 logger = configure_logger(__name__)
+
+_PINT_TO_FITS_UNITS = {
+    "DN": "adu",
+    "elec": "count",
+    "elementary_charge": "count",
+}
 
 def search_directory_for_fits_files(directory: str) -> list[str]:
     fits_files = sorted(glob2.glob(os.path.join(directory, '**/*.fits*'), recursive=True))
@@ -105,68 +113,91 @@ def guess_image_type_from_header(headers: list[fits.Header | dict], keywords=Non
                     break
     return imtype
 
-######################### Saving and loading PTC table with FITS ######################################
+######################### Saving and loading pandas dataframe table to/from FITS ######################################
 
-def save_ptc_table_fits(table: pd.DataFrame, filepath: str) -> None:
+def save_dataframe_to_fits(table: pd.DataFrame, filepath: str) -> None:
     """
-    Save the PTC stats table to a FITS binary table.
+    Save a pandas DataFrame table to a FITS binary table.
 
     Array-valued cells are stored as fixed-shape vector columns so they round-trip
     as homogeneous NumPy arrays per cell.
     """
-    columns = []
-    for name in table.columns:
-        columns.append(_dataframe_column_to_fits_column(name, table[name]))
+    columns = [
+        _dataframe_column_to_fits_column(str(name), series)
+        for name, series in table.items()
+    ]
 
     hdul = fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)])
     hdul.writeto(filepath, overwrite=True)
 
-def load_ptc_table_fits(filepath: str) -> pd.DataFrame:
+def load_dataframe_from_fits(filepath: str) -> pd.DataFrame:
     """
-    Load a PTC stats table previously written by ``save_ptc_table_fits``.
+    Load a pandas DataFrame table previously written by ``save_dataframe_to_fits``.
     """
     with fits.open(filepath, memmap=False) as hdul:
         data = hdul[1].data
-        rows = {}
+        columns = {}
         for name in data.names:
-            column = data[name]
-            if column.ndim == 1:
-                values = column.tolist()
-                rows[name] = [value.decode("utf-8").rstrip() if isinstance(value, (bytes, np.bytes_)) else value
-                             for value in values]
+            fits_col = data[name]
+            if fits_col.ndim == 1:
+                columns[name] = pd.Series(fits_col).map(
+                    lambda value: value.decode("utf-8").rstrip()
+                    if isinstance(value, (bytes, np.bytes_))
+                    else value)
             else:
-                rows[name] = [np.array(value) for value in column]
-    return pd.DataFrame(rows)
+                columns[name] = pd.Series(list(fits_col), dtype=object).map(np.asarray)
+    return pd.DataFrame(columns)
 
 
-def _quantity_column_to_fits_column(name: str, series: pd.Series) -> list[fits.Column]:
-    #already assume len >0, else how did anything else work??
-    unit_the_first = series[0].units
-
-    outcol = [_.to(unit_the_first).magnitude for _ in series]
-    #TODO: proper translation between pint strings and FITS strings...ARGH!
-
+def _quantity_column_to_fits_column(name: str, series: list[pint.Quantity | None]) -> fits.Column:
+    quantities = [value for value in series if value is not None]
+    unit_the_first = quantities[0].units
+    has_null = len(quantities) != len(series)
+    outcol = np.asarray(
+        [
+            np.nan if value is None else value.to(unit_the_first).magnitude
+            for value in series
+        ],
+        dtype=float if has_null else None,
+    )
 
     #if it's an uncertainties ufloat, split into two columns
-    if isinstance(series[0], unc.UFloat):
+    if isinstance(quantities[0].magnitude, unc.UFloat):
         raise NotImplementedError("Splitting uncertainties.UFloat columns into FITS columns is not yet implemented.")
 
-    fmt = _fits_format_code(type(outcol[0]))
+    fmt = _fits_format_code(outcol.dtype)
+    return fits.Column(name=name, array=outcol, format=fmt, unit=_pint_unit_to_fits_unit(unit_the_first))
 
-    #HACK: for now, just use the pint string
-    return fits.Column(name=name, array=outcol, unit=str(unit_the_first))
+def _pint_unit_to_fits_unit(unit: object) -> str:
+    """Convert a Pint unit to the FITS-standard unit representation."""
+    unit_string = str(unit)
+    for pint_name, fits_name in _PINT_TO_FITS_UNITS.items():
+        unit_string = re.sub(rf"\b{re.escape(pint_name)}\b", fits_name, unit_string)
 
-
+    try:
+        return astropy_units.Unit(unit_string).to_string("fits")
+    except ValueError as exc:
+        raise ValueError(f"Pint unit '{unit}' cannot be represented as a FITS unit.") from exc
 
 def _dataframe_column_to_fits_column(name: str, series: pd.Series) -> fits.Column:
-    values = list(series)
+    values = series.to_list()
     non_null = [value for value in values if value is not None]
     if not non_null:
         return fits.Column(name=name, array=np.array(values, dtype="U1"), format="1A")
 
-    if all(_is_array_cell(value) for value in non_null):
+    if all(isinstance(value, (np.ndarray, list, tuple)) for value in non_null):
         arrays = [np.asarray(value) for value in values]
-        _validate_homogeneous_array_column(name, arrays)
+        first_shape = arrays[0].shape
+        first_dtype = arrays[0].dtype
+        for array in arrays[1:]:
+            if array.shape != first_shape:
+                raise ValueError(
+                    f"Column '{name}' contains arrays with different shapes: {first_shape} vs {array.shape}."
+                )
+            if array.dtype != first_dtype:
+                raise ValueError(
+                    f"Column '{name}' contains arrays with different dtypes: {first_dtype} vs {array.dtype}."
+                )
         stacked = np.stack(arrays)
         code = _fits_format_code(stacked.dtype)
         flat_size = int(np.prod(stacked.shape[1:])) if stacked.ndim > 1 else 1
@@ -190,25 +221,9 @@ def _dataframe_column_to_fits_column(name: str, series: pd.Series) -> fits.Colum
         return fits.Column(name=name, array=np.asarray(values, dtype=np.float64), format="D")
 
     if all(isinstance(value, (pint.Quantity)) for value in non_null):
-        return _quantity_column_to_fits_column(name, non_null)
+        return _quantity_column_to_fits_column(name, values)
 
-    raise TypeError(f"Unsupported PTC table column '{name}' with values of type {type(non_null[0]).__name__}.")
-
-def _is_array_cell(value: Any) -> bool:
-    return isinstance(value, (np.ndarray, list, tuple))
-
-def _validate_homogeneous_array_column(name: str, arrays: list[np.ndarray]) -> None:
-    first_shape = arrays[0].shape
-    first_dtype = arrays[0].dtype
-    for array in arrays[1:]:
-        if array.shape != first_shape:
-            raise ValueError(
-                f"Column '{name}' contains arrays with different shapes: {first_shape} vs {array.shape}."
-            )
-        if array.dtype != first_dtype:
-            raise ValueError(
-                f"Column '{name}' contains arrays with different dtypes: {first_dtype} vs {array.dtype}."
-            )
+    raise TypeError(f"Unsupported dataframe column '{name}' with values of type {type(non_null[0]).__name__}.")
 
 def _fits_format_code(dtype: np.dtype) -> str:
     dtype = np.dtype(dtype)

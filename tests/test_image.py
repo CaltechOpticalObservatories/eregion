@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 
-from eregion.datamodels.image import (
+from eregion.datamodels import (
     DetectorProperties,
     FocalPlanePosition,
     DetImageMeta,
@@ -9,7 +9,8 @@ from eregion.datamodels.image import (
     CCDOutput,
     DetImage,
     FocalPlaneImage,
-    ImageBundle
+    ImageBundle,
+    FPImageBundle,
 )
 
 
@@ -36,6 +37,27 @@ def test_detimage_meta_validation_dict_to_model():
     meta = DetImageMeta.model_validate(meta_dict)
     assert (meta.name == "D1" and isinstance(meta.properties, DetectorProperties)
             and isinstance(meta.focal_plane_position, FocalPlanePosition))
+
+
+def test_mappable_update_recursively_merges_models_and_dicts():
+    meta = DetImageMeta(
+        name="D1",
+        properties=DetectorProperties(pixel_size=0.01, x_size=10, y_size=12),
+        focal_plane_position=FocalPlanePosition(x_cen=0.0, y_cen=0.0),
+        image_type={"type": "flat", "exptime": 10},
+    )
+
+    meta.update(
+        {
+            "properties": {"pixel_size": 0.02},
+            "image_type": {"filter": "r"},
+            "name": "D1-updated",
+        }
+    )
+
+    assert meta.name == "D1-updated"
+    assert meta.properties == DetectorProperties(pixel_size=0.02, x_size=10, y_size=12)
+    assert meta.image_type == {"type": "flat", "exptime": 10, "filter": "r"}
 
 
 def test_output_data_slices_parent_data():
@@ -82,7 +104,7 @@ def test_detimage_default_output_creation_and_lookup():
     det = DetImage(data=data)
     # default output exists
     assert det.num_outputs == 1
-    out = det.output_by_id("0")
+    out = det.outputs["0"]
     assert out.parent is det
     # add another output
     new_out = Output(
@@ -133,12 +155,57 @@ def test_imagebundle_construct_and_access():
             imgs.append(img)
 
     bundle = ImageBundle(images=imgs)
-    assert len(bundle.images) == 12
-    assert len(bundle.list) == 12
+    assert len(bundle) == 12
     # Test filtering by type
-    assert len(bundle(det_id="D0")) == 3
-    assert len(bundle(type="bias")) == 4
-    assert len(bundle(exptime=10)) == 8
-    assert len(bundle(exptime=10, type="flat")) == 4
-    assert len(bundle(exptime=10, type="dark", det_id="D1")) == 1
+    assert len(bundle('det_id == "D0"')) == 3
+    assert len(bundle('type == "bias"')) == 4
+    assert len(bundle('exptime == 10')) == 8
+    assert len(bundle('exptime == 10 & type == "flat"')) == 4
+    assert len(bundle('exptime == 10 & type == "dark" & det_id == "D1"')) == 1
     assert [isinstance(im, DetImage) for im in bundle()]
+
+
+def test_imagebundle_combination_is_pure_and_type_checked():
+    props = DetectorProperties(pixel_size=1.0, x_size=4, y_size=4)
+    first_image = DetImage(
+        data=make_dataarray((4, 4)),
+        properties=props,
+        focal_plane_position=FocalPlanePosition(x_cen=0.0, y_cen=0.0),
+        image_type={"type": "bias"},
+        name="D1",
+    )
+    second_image = DetImage(
+        data=make_dataarray((4, 4)),
+        properties=props,
+        focal_plane_position=FocalPlanePosition(x_cen=0.0, y_cen=0.0),
+        image_type={"type": "bias"},
+        name="D2",
+    )
+    first = ImageBundle(first_image)
+    second = ImageBundle(second_image)
+
+    combined = first + second
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert len(combined) == 2
+
+    with np.testing.assert_raises(TypeError):
+        first[0] = FocalPlaneImage(num_detectors=1)
+    first.extend(second)
+    assert len(first) == 2
+
+
+def test_fpimagebundle_filter_preserves_subtype():
+    det_image = DetImage(data=make_dataarray((4, 4)),
+                         meta=DetImageMeta(properties={'x_size': 4, 'y_size': 4, 'pixel_size': 1.0},
+                                           focal_plane_position={'x_cen': 0.0, 'y_cen': 0.0}))
+    focal_plane = FocalPlaneImage(num_detectors=1, det_images=[det_image])
+    bundle = FPImageBundle(images=focal_plane)
+
+    filtered = bundle()
+
+    assert isinstance(filtered, FPImageBundle)
+    assert filtered[0] is focal_plane
+    with np.testing.assert_raises(TypeError):
+        _ = bundle + ImageBundle()

@@ -185,22 +185,16 @@ class FocalPlaneImage:
     # TODO: Add to_netcdf() and from_netcdf() methods
 
 
-class FPImageBundle(ImageBundle):
+class FPImageBundle(ImageBundle[FocalPlaneImage]):
     """
     To store list of FocalPlaneImage objects.
     """
     image_class = FocalPlaneImage
 
-    def __init__(self, images: image_class | list[image_class] | None = None):
-        super().__init__(images)
-
-    def tabulate(self) -> pd.DataFrame:
+    def _tabulate(self) -> pd.DataFrame:
         tab = []
         for fpimage in self.images:
-            imtypedf = fpimage.det_images.list
-            imtype = {'object': fpimage}
-            for col in imtypedf.columns:
-                if imtypedf[col].nunique() == 1:
-                    imtype[col] = imtypedf[col].iloc[0]
+            imtype = {'object': fpimage, 'filename': fpimage.meta.get('filename', None)}
+            imtype |= fpimage.det_images[0].image_type
             tab.append(imtype)
         self.list = pd.DataFrame(tab)
