@@ -6,36 +6,6 @@ import uncertainties as unc
 from uncertainties import umath
 from numpy.polynomial import Polynomial, polynomial
 
-
-def find_adc_sat_index(etime_dat: np.ndarray, mndat: np.ndarray, sigma: float = 5.0, return_spline: bool = False) -> Optional[int]:
-    """find the location of an ADC saturation point in a flux vs mean graph.
-    The method is to fit an interpolating spline, get the analytic 2nd derivative of that,
-    then find the most negative point of the 2nd derivative. """
-    spl = make_interp_spline(etime_dat, mndat)
-    derv = spl.derivative(2)
-    dervyy = derv(etime_dat)
-    satidx = np.argmin(dervyy)
-
-    dervsigniff = (dervyy[satidx] - np.mean(dervyy)) / np.std(dervyy)
-    fwvalid: bool = abs(dervsigniff) > sigma
-    out = satidx if fwvalid else None
-
-    if return_spline:
-        return out, spl
-    return out
-
-def find_rough_full_well(mndat: np.ndarray, stddat: np.ndarray, fwfact: float = 0.9) -> tuple[int, int]:
-    """find index and mean value of full well point, by simple location of the maximum in the mean vs variance graph"""
-
-    #TODO: check that there's an actual maximum here
-    am = np.argmax(stddat)
-    fwloc = fwfact * mndat[am]
-
-    #find nearest index to full well fact times that
-    fwfactloc = np.argmin(np.abs(fwloc - mndat))
-    return fwfactloc, am
-
-
 def polynomial_fit_covariance_matrix(poly, xdat: np.ndarray, ydat: np.ndarray, deg: int) -> np.ndarray:
     """calculate the covariance matrix of a polynomial fit by computing the design matrix"""
     coefs = poly.convert().coef
@@ -47,25 +17,80 @@ def polynomial_fit_covariance_matrix(poly, xdat: np.ndarray, ydat: np.ndarray, d
     cov = inv_v * (chi2 / dof)
     return cov
 
+def do_polynomial_fit(xdat: np.ndarray, ydat: np.ndarray, deg: int) -> tuple[np.ndarray, np.ndarray]:
+    """fit a polynomial to the data and return the coefficients and covariance matrix"""
+    poly = Polynomial.fit(xdat, ydat, deg)
+    ft = poly.convert().coef
+    cov = polynomial_fit_covariance_matrix(poly, xdat, ydat, deg)
+    errs = np.sqrt(np.diag(cov))
+    return ft, errs
+
+def find_adc_sat_index(flux: np.ndarray, mean: np.ndarray, sigma: float = 5.0, return_spline: bool = False) -> Optional[int]:
+    """Find the location of an ADC saturation point in a flux vs mean graph.
+    The method is to fit an interpolating spline, get the analytic 2nd derivative of that,
+    then find the most negative point of the 2nd derivative.
+    :param flux: np.ndarray
+        array of flux values (or exposure times)
+    :param mean: np.ndarray
+        array of mean counts from the flat images
+    :param sigma: float
+        significance threshold for the 2nd derivative to be considered a valid saturation point. Default is 5.0
+    :param return_spline: bool
+        if True, return the spline object along with the index of the saturation point. Default is False
+    :return: Optional[int]
+        index of the saturation point if found, otherwise None. If return_spline is True, returns a tuple of (index, spline object)
+    """
+    spl = make_interp_spline(flux, mean)
+    derv = spl.derivative(2)
+    derv_yy = derv(flux)
+    satidx = np.argmin(derv_yy)
+
+    derv_significance = (derv_yy[satidx] - np.mean(derv_yy)) / np.std(derv_yy)
+    fwvalid: bool = abs(derv_significance) > sigma
+    out = satidx if fwvalid else None
+
+    if return_spline:
+        return out, spl
+    return out
+
+def find_rough_full_well(mean: np.ndarray, noise: np.ndarray, fwfact: float = 0.9) -> tuple[int, int]:
+    """
+    Find index and mean value of full well point, by simple location of the maximum in the mean vs variance graph
+    :param mean: np.ndarray
+        array of mean counts in the flat images
+    :param noise: np.ndarray
+        array of standard deviation values of the differenced images
+    :param fwfact: float
+        factor to multiply the full well value by. Default is 0.9
+    :return: tuple[int, int]
+        index of the full well point and the full well value
+    """
+
+    #TODO: check that there's an actual maximum here
+    am = np.argmax(noise)
+    fwloc = fwfact * mean[am]
+
+    #find nearest index to full well fact times that
+    fwfactloc = np.argmin(np.abs(fwloc - mean))
+    return fwfactloc, am
 
 
-def trad_ptc_shot_noise_fit(mndat: np.ndarray, sddat: np.ndarray, limitidx: int, brighterfatter: bool=True
+def trad_ptc_shot_noise_fit(mean: np.ndarray, noise: np.ndarray, limitidx: int, brighterfatter: bool=True
                             ) -> tuple[unc.ufloat, unc.ufloat] | tuple[unc.ufloat, unc.ufloat, unc.ufloat]:
     """fit a PTC by the traditional (Janesick) method, with optional brighter-fatter modifications
 
     Parameters
     ----------
-    :param mndat : np.ndarray
-       array representing mean values
-    :param sddat : np.ndarray
+
+    :param mean : np.ndarray
+       array representing mean counts in the flat images
+    :param noise : np.ndarray
        array representing standard deviation values of differenced images
     :param limitidx : int
        integer index up to which to do the fit (should be below full well, and in the case
        of detectors with significant brighter-fatter effect, should be substantially below (e.g. 80% of full well)
-
     :param brighterfatter : bool
        if True, fit a quadratic to somewhat compensate for brighter-fatter effect. If False, do a traditional, linear fit
-
 
     Returns
     -------
@@ -77,23 +102,15 @@ def trad_ptc_shot_noise_fit(mndat: np.ndarray, sddat: np.ndarray, limitidx: int,
        if brighterfatter is True, return estimates of camera gain K with error, noise n with error, and
        brighter fatter total curvature coefficient (roughly a00) wth error
 
-
     all errors are estimated from fit covariance matrix
 
     """
 
     deg: int = 2 if brighterfatter else 1
-    xdat = mndat[:limitidx]
-    ydat = sddat[:limitidx]**2
+    xdat = mean[:limitidx]
+    ydat = noise[:limitidx]**2
 
-    poly = Polynomial.fit(xdat, ydat, deg)
-    ft = poly.convert().coef
-
-    #TODO: we will want this a lot, pull it into a convenience math function
-    #compute covariance matrix
-
-    cov = polynomial_fit_covariance_matrix(poly, xdat, ydat, deg)
-    errs = np.sqrt(np.diag(cov))
+    ft, errs = do_polynomial_fit(xdat, ydat, deg)
 
     Kest = 1 / unc.ufloat(ft[1], errs[1])
     noiseest = np.sign(ft[0]) * umath.sqrt(unc.ufloat(abs(ft[0]), errs[0]))
@@ -103,7 +120,6 @@ def trad_ptc_shot_noise_fit(mndat: np.ndarray, sddat: np.ndarray, limitidx: int,
         return Kest, noiseest, a00est
 
     return Kest, noiseest
-
 
 def astier_approx_fun(mu, g, a00, n):
     """Astier's approximate PTC shape function. Equation (15) in Astier et al (2019)"""
@@ -120,21 +136,18 @@ def astier_approx_eval_std(mu, K, a00, noise):
     n = (noise*K)**2
     return astier_approx_fun(mu, g, a00, n)
 
-
-def astier_approx_one_param_fit(mndat: np.ndarray, sddat: np.ndarray, Kguess: float, aguess: float, noiseguess: float,
+def astier_approx_one_param_fit(mean: np.ndarray, noise: np.ndarray, Kguess: float, aguess: float, noiseguess: float,
                                 fitlim: Optional[int] = None) -> tuple[unc.ufloat, unc.ufloat, unc.ufloat]:
     """Fit photon transfer curve data with Astier's approximate one parameter function
 
     Parameters
     ----------
 
-    mndat: np.ndarray
-        data containing mean values
-
-    sddat: np.ndarray
+    mean: np.ndarray
+        array of mean counts in the flat images
+    noise: np.ndarray
         data containing standard deviation values. NOTE Astier's fit uses variance, but this function takes std deviation
         to keep all our fitting functions consistent
-
     fitlim: Optional[int]
         convenience function to trim off some data below full well, if provided data is only fitted up to this index
 
@@ -147,11 +160,11 @@ def astier_approx_one_param_fit(mndat: np.ndarray, sddat: np.ndarray, Kguess: fl
     """
 
     if fitlim is not None:
-        xdat = mndat[:fitlim]
-        ydat = sddat[:fitlim]**2
+        xdat = mean[:fitlim]
+        ydat = noise[:fitlim]**2
     else:
-        xdat = mndat
-        ydat = sddat**2
+        xdat = mean
+        ydat = noise**2
 
     p0 = [Kguess, aguess, (noiseguess/Kguess)**2]
     bounds = ([-np.inf, -np.inf, 0], [np.inf, 0, np.inf])
@@ -167,17 +180,16 @@ def astier_approx_one_param_fit(mndat: np.ndarray, sddat: np.ndarray, Kguess: fl
     print(f"Astier noise term: {n}")
     return K, a00, n
 
-
-def linearity_fit(etimedat: np.ndarray, mndat: np.ndarray, fitlim: Optional[int]):
+def linearity_fit(flux: np.ndarray, mean: np.ndarray, fitlim: Optional[int]):
     """Fit the linearity curve (mean vs exposure time) with a linear curve
 
     Parameters
     ----------
 
-    etimedat: np.ndarray
-        array of exposure times (or flux)
+    flux: np.ndarray
+        array of flux values (or exposure times)
 
-    mndat: np.ndarray
+    mean: np.ndarray
         array of mean values
 
     fitlim: Optional[int]
@@ -193,14 +205,11 @@ def linearity_fit(etimedat: np.ndarray, mndat: np.ndarray, fitlim: Optional[int]
 
 
     if fitlim is not None:
-        xdat = etimedat[:fitlim]
-        ydat = mndat[:fitlim]
+        xdat = flux[:fitlim]
+        ydat = mean[:fitlim]
     else:
-        xdat = etimedat
-        ydat = mndat
+        xdat = flux
+        ydat = mean
 
-    poly = Polynomial.fit(xdat, ydat, 1)
-    ft = poly.convert().coef
-    cov = polynomial_fit_covariance_matrix(poly, xdat, ydat, 1)
-    errs = np.sqrt(np.diag(cov))
+    ft, errs = do_polynomial_fit(xdat, ydat, 1)
     return ft, errs
