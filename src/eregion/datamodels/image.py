@@ -304,7 +304,7 @@ class DetImage:
             idata, iheaders = self._dataloader(self.meta['filename'])
             self._data = np.zeros(self.shape)
             for out_id, output in self.outputs.items():
-                output.fits_header = iheaders[output.input_array_axis]
+                output.header = iheaders[output.input_array_axis]
                 self._data[*output.output_slice] = idata[output.input_array_axis][*output.input_slice]
             self._data = ensure_dataarray(self._data)
             del idata, iheaders

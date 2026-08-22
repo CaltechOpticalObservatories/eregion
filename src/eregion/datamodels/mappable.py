@@ -109,9 +109,12 @@ class Mappable(BaseModel, Mapping):
         return value
 
     def to_json(self, *, indent: int | None = None, **kwargs) -> str:
-        """Serialize this model with standard Pydantic and child serializers."""
-        data = self.model_dump(mode="json", fallback=self._json_fallback, **kwargs)
-        return json.dumps(data, indent=indent)
+        """Serialize this model using Pydantic field serializers."""
+        return self.model_dump_json(
+            indent=indent,
+            fallback=self._json_fallback,
+            **kwargs,
+        )
 
     @classmethod
     def from_json(cls, json_data: str | bytes | bytearray) -> "Mappable":

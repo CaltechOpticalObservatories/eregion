@@ -1,5 +1,8 @@
+import json
+
 import numpy as np
 import xarray as xr
+from astropy.io import fits
 
 from eregion.datamodels import (
     DetectorProperties,
@@ -75,6 +78,51 @@ def test_output_data_slices_parent_data():
     sub = out.data
     assert sub.shape == (5, 6)
     assert np.all(sub.values == data.values[2:7, 3:9])
+
+
+def test_output_json_combines_base_and_field_serializers():
+    output = Output(
+        id="A",
+        ext_id=0,
+        ext_slice=(slice(0, 2), slice(0, 2)),
+        data_slice=(slice(0, 2), slice(0, 2)),
+        header=fits.Header({"TEST": 1}),
+    )
+
+    serialized = json.loads(output.to_json(exclude={"masks", "parent"}))
+
+    assert serialized["header"] == {"TEST": 1}
+    assert serialized["input_slice"][0]["__eregion_json_type__"] == "slice"
+
+
+def test_lazy_detimage_netcdf_serializes_output_header(tmp_path):
+    def load_data(_: str):
+        return [np.ones((2, 2))], [fits.Header({"TEST": 1})]
+
+    output = Output(
+        id="A",
+        ext_id=0,
+        ext_slice=(slice(0, 2), slice(0, 2)),
+        data_slice=(slice(0, 2), slice(0, 2)),
+    )
+    image = DetImage(
+        data=load_data,
+        output_objects={"A": output},
+        meta=DetImageMeta(
+            name="D1",
+            filename="synthetic.fits",
+            properties=DetectorProperties(pixel_size=0.01, x_size=2, y_size=2),
+            focal_plane_position=None,
+        ),
+    )
+
+    path = tmp_path / "lazy-image.nc"
+    image.to_netcdf(str(path))
+
+    assert image.outputs["A"].header["TEST"] == 1
+    assert not hasattr(image.outputs["A"], "fits_header")
+    saved_outputs = json.loads(xr.load_dataset(path).attrs["outputs"])
+    assert json.loads(saved_outputs["A"])["header"] == {"TEST": 1}
 
 
 def test_ccdoutput_serial_axis_and_regions():

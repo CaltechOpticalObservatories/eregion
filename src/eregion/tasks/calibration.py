@@ -2,11 +2,13 @@ import pandas as pd
 from copy import deepcopy
 import numpy as np
 from pydantic import Field, ConfigDict
+import os
 
 from eregion.tasks import Task
 from eregion.datamodels import DetImage, ImageBundle, FPImageBundle
 from eregion.tasks.imagegen import ImageResult
 from eregion.core.image_stats import do_statistics, STATFUNCS
+from eregion.utils.io_utils import save_dataframe_to_fits, load_dataframe_from_fits
 
 # Dataclass to hold master bias results
 class CalibrationResult(ImageResult):
@@ -34,6 +36,21 @@ class CalibrationResult(ImageResult):
     stats: pd.DataFrame = Field(default=pd.DataFrame(),
                                 description="DataFrame containing statistics of the calibration frames.")
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    def save(self, filepath: str, **kwargs) -> None:
+        # Add functionality to save stats dataframe and then call super().save() to save the rest of the data
+        if not self.stats.empty:
+            save_dataframe_to_fits(self.stats, os.path.join(filepath, 'stats.fits'))
+        super().save(filepath, **kwargs)
+
+    @classmethod
+    def load(cls, filepath: str):
+        # Add functionality to load stats dataframe and then call super().load() to load the rest of the data
+        instance = super().load(filepath)
+        stats_path = os.path.join(filepath, 'stats.fits')
+        if os.path.exists(stats_path):
+            instance.stats = load_dataframe_from_fits(stats_path)
+        return instance
 
 ######## Master combine task -- methodology is same for bias, dark, flat so should be one task ###############
 class MasterCombine(Task):

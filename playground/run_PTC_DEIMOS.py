@@ -1,16 +1,11 @@
 import argparse
 import os
 import glob2
-import sys
-from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-from datamodels import ImageBundle
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from eregion.datamodels import ImageBundle
 from eregion.tasks import ImageCreator
 from eregion.tasks.calibration import CalibrationResult, MasterBias
 from eregion.tasks.custom import guess_image_type_from_filename_DEIMOS, load_image_fits_DEIMOS

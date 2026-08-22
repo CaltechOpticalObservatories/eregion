@@ -57,8 +57,6 @@ class ImageResult(TaskResult):
         for attr in cls.payload_field_names():
             if isinstance(cls.model_fields[attr].annotation, type(ImageBundle | FPImageBundle)):
                 attrs[attr] = ImageBundle.load(os.path.join(filepath, f"{attr}"))
-            else:
-                warnings.warn(f"Attribute {attr} of ImageResult is not of type ImageBundle or FPImageBundle.")
         metadata = cls.load_metadata(filepath)
         return cls(**attrs, **metadata)
 
@@ -415,26 +413,10 @@ class AssembleFocalPlane(Task):
         self.num_detectors = num_detectors
         self.FPClass = partial(FocalPlaneImage, num_detectors=num_detectors, dim=dim)
 
-    def group_by(self, columns: list[str]) -> Generator:
-        """
-        Group the images in the bundle by the specified columns.
-        :param columns: A list of column names to group by.
-        :return: Grouped images as list of ImageBundle objects.
-        """
-        groups = self.bundle.list.groupby(by=columns)
-        for group in groups:
-            # verify that each group has len <= num_detectors
-            if not (len(group[1]) <= self.num_detectors and group[1]['det_id'].is_unique):
-                self.logger.warning(f"Group with column values {group[0]} has incorrect number of detectors."
-                                    f"Check that the grouping columns are correct to uniquely identify the images."
-                                    f"Skipping this group.")
-                continue
-            yield ImageBundle(group[1]['object'].to_list())
-
     def run(self,
             from_path: str = None,
             from_images: ImageBundle | list[DetImage] = None,
-            grouping_columns: list[str] = None,
+            groupby_keys: list[str] = None,
             **kwargs)-> ImageResult:
 
         if from_path is not None:
@@ -445,6 +427,12 @@ class AssembleFocalPlane(Task):
             raise ValueError("Must provide either from_path or from_images to assemble focal plane images.")
 
         fp_images = []
-        for imbundle in self.group_by(columns=grouping_columns):
+        for unique_keys, group in self.bundle.groupby(by=groupby_keys):
+            if not (len(group) <= self.num_detectors and group['det_id'].is_unique):
+                self.logger.warning(f"Group with groupby column values {unique_keys} has incorrect number of detectors."
+                                    f"Check that the grouping columns are correct to uniquely identify the images."
+                                    f"Skipping this group.")
+                continue
+            imbundle = ImageBundle.from_dataframe(group)
             fp_images.append(self.FPClass(det_images=imbundle))
         return self.task_result(data=FPImageBundle(images=fp_images))

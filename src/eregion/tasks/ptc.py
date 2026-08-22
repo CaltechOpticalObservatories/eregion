@@ -147,20 +147,22 @@ class PTC(LazyTask):
             # create a new DetImage for the diff pair
             diff_img = deepcopy(dp1)
             diff_img.meta["diff_pair"] = f'{dp1.meta.get("filename", "unknown")},{dp2.meta.get("filename", "unknown")}'
+
             # Loop over each output, diff, and set in diff_img
             for out_id, output in diff_img.outputs.items():
-                diffdat = output.data - dp2.outputs[out_id].data
-                diffmask = xr.zeros_like(diffdat, dtype=bool)
+                diffdat = output.data - dp2.outputs[out_id].data # diff of two outputs
+                output.set_data_in_parent(diffdat) # set in parent
+
+                diffmask = xr.zeros_like(diffdat, dtype=bool) # initialize diff mask
                 if self.meta.get("do_sigma_clip", True):
                     sigma_clip_args = {'sigma': 5.0, 'grow': 10, 'stdfunc': 'mad_std'}
                     sigma_clip_args.update(self.meta.get("sigma_clip_args", {}))
+                    # sigma clip only image region
                     imslc = output.image_region
                     ma_diffdat = sigma_clip_image(slice_data(diffdat, imslc).values, **sigma_clip_args)
-                    _imslc = decrease_slicer_stop_index(imslc)
-                    diffdat.loc[_imslc] = ma_diffdat.filled(np.nan)
-                    diffmask.loc[_imslc] |= ma_diffdat.mask
-                output.set_data_in_parent(diffdat)
-                output.masks = diffmask.to_dataset(name='sigma_clip_mask')
+                    output.set_data_in_parent(ma_diffdat.filled(np.nan), imslc) # set nan filled data in parent
+                    diffmask.loc[decrease_slicer_stop_index(imslc)] |= ma_diffdat.mask # set in diff mask
+                output.masks = diffmask.to_dataset(name='sigma_clip_mask')  # set in output attr
 
                 diffstat = (unique_info | # Add unique keys identifying flat group
                            {"output": out_id, "diff": True, "seqnum":'-'.join([str(i) for i in diffpairidx])} |
@@ -210,17 +212,11 @@ class PTC(LazyTask):
             # NOTE last row and col often masked by sigma clipping, so do these with normal (unmasked) stats.
             ## last => last one to readout => check against readout pixel
             ## renaming row/col to llel/ser
-            last_inds = tuple(x-y-1 for x,y in zip(imarr.shape, output.readout_pixel))
-            # Calculate the slice for the last row/column
-            last_llel_slice = {output.parallel_axis: slice(last_inds[output.parallel_axint], last_inds[output.parallel_axint] + 1),
-                              output.serial_axis: slice(None, None)}
-            stats |= do_statistics(data=slice_data(imarr, last_llel_slice).values,
-                                   which=BASICSTATS, axis=None, prepend_kw="lastllel_")
+            last_llel_arr = imarr.sel({output.parallel_axis: output.parallel_overscan.start - output.parallel_overscan.step})
+            stats |= do_statistics(data=last_llel_arr.values, which=BASICSTATS, axis=None, prepend_kw="lastllel_")
 
-            last_ser_slice = {output.parallel_axis: slice(None, None),
-                              output.serial_axis: slice(last_inds[output.serial_axint], last_inds[output.serial_axint] + 1)}
-            stats |= do_statistics(data=slice_data(imarr, last_ser_slice).values,
-                                   which=BASICSTATS, axis=None, prepend_kw="lastser_")
+            last_ser_arr = imarr.sel({output.serial_axis: output.serial_overscan.start - output.serial_overscan.step})
+            stats |= do_statistics(data=last_ser_arr.values, which=BASICSTATS, axis=None, prepend_kw="lastser_")
 
         return stats
 
@@ -252,8 +248,8 @@ class PTC(LazyTask):
             ptc_tab.append(row)
         ptc_df = pd.DataFrame(ptc_tab)
 
-        file_sfx = df[~df['diff']]['suffix'].unique()
-        diff_sfx = df[df['diff']]['suffix'].unique()
+        file_sfx = df[~df['diff']]['seqnum'].unique()
+        diff_sfx = df[df['diff']]['seqnum'].unique()
         ptc_df['mean'] = ptc_df[[f'mean_{sfx}' for sfx in file_sfx]].mean(axis=1)
         ptc_df['median'] = ptc_df[[f'median_{sfx}' for sfx in file_sfx]].mean(axis=1)
         ptc_df['std'] = ptc_df[[f'std_{sfx}' for sfx in diff_sfx]].mean(axis=1)/np.sqrt(2) # divide by sqrt(2) because this noise is from difference of two images
