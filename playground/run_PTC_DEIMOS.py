@@ -164,8 +164,8 @@ def parse_args():
     parser.add_argument("--live_plot", action="store_true", default=False, help="Do live plotting")
     parser.add_argument("--plot_cols", nargs="+", default=["std"], help="Columns to plot")
     parser.add_argument("--plot-x", nargs="+", default=["mean"], help="Columns to plot on x-axis")
-    parser.add_argument("--yscale", type=str, default='log', help="Scale for y-axis")
-    parser.add_argument("--xscale", type=str, default='log', help="Scale for x-axis")
+    parser.add_argument("--yscale", type=str, default='symlog', help="Scale for y-axis")
+    parser.add_argument("--xscale", type=str, default='symlog', help="Scale for x-axis")
     parser.add_argument("--overwrite", action="store_true", default=False, help="Overwrite existing files")
 
     args = parser.parse_args()
