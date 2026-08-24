@@ -199,8 +199,9 @@ class PTC(LazyTask):
             llel_oscan = output.get_overscan(kind='parallel').values
             ser_oscan = output.get_overscan(kind='serial').values
 
-            # overscan stats, only serial
-            stats |= do_statistics(data=ser_oscan, which=STATFUNCS, axis=None, prepend_kw="oscan_")
+            # overscan stats,
+            stats |= do_statistics(data=ser_oscan, which=STATFUNCS, axis=None, prepend_kw="ser_oscan_")
+            stats |= do_statistics(data=llel_oscan, which=STATFUNCS, axis=None, prepend_kw="llel_oscan_")
 
             # parallel and serial EPER slice, do not mask overscan
             EPERSTATS = {'eper_median': STATFUNCS['median'], 'eper_mean': STATFUNCS['mean']}
