@@ -48,7 +48,10 @@ class ImageResult(TaskResult):
     def save(self, filepath: str, **kwargs) -> None:
         for attr, value in self.payload_dict().items():
             if isinstance(value, ImageBundle):
-                value.save(os.path.join(filepath, f"{attr}"), **kwargs)
+                if len(value)==0:
+                    warnings.warn(f"ImageBundle for attribute {attr} is empty. Not saving.")
+                else:
+                    value.save(os.path.join(filepath, f"{attr}"), **kwargs)
         super().save(filepath)
 
     @classmethod
