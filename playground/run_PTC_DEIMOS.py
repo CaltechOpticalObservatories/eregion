@@ -162,7 +162,7 @@ def parse_args():
     parser.add_argument("--skip-correlations", action="store_true", default=False, help="Skip correlation calculations")
     parser.add_argument("--break_after", type=int, default=0, help="Break after processing this many pairs, set to 0 to disable")
     parser.add_argument("--live_plot", action="store_true", default=False, help="Do live plotting")
-    parser.add_argument("--plot_cols", nargs="+", default=["std_diff"], help="Columns to plot")
+    parser.add_argument("--plot_cols", nargs="+", default=["std"], help="Columns to plot")
     parser.add_argument("--plot-x", nargs="+", default=["mean"], help="Columns to plot on x-axis")
     parser.add_argument("--yscale", type=str, default='log', help="Scale for y-axis")
     parser.add_argument("--xscale", type=str, default='log', help="Scale for x-axis")
