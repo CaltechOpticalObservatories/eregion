@@ -7,14 +7,20 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 #simple test data
-xs = np.linspace(0, 9.0, 100)
+xs = np.linspace(0, 22.0, 500)
 dU = np.diff(xs)[0]
-y1 = 12* np.exp(-0.3 * xs)
-#y2 = 3 * np.exp(-0.02 * xs)
 
-#yy = y1 + y2
 
-yy = y1
+a_in = [12]
+k_in = [0.3]
+
+yy = np.zeros_like(xs)
+
+for a, k in zip(a_in, k_in):
+    yy += a * np.exp(-k * xs)
+
+
+
 
 
 efitter = ExpSumFitter(yy, dU = dU)
@@ -29,7 +35,7 @@ for thet, a in gen:
     ki = -1.0* np.log(thet) / dU
 
     print(f"ks: {ki}")
-    
+
 
 xf = np.linspace(0, 1, 200)
 yrespoly =  [efitter.residpoly(_) for _ in xf]
@@ -37,7 +43,13 @@ yrespoly =  [efitter.residpoly(_) for _ in xf]
 
 yy2 = np.zeros_like(xs)
 for k,a in zip(ki, a):
-    yy2 += a * np.exp(-k * xs * dU)
+    yy2 += a * np.exp(-k * xs)
 
 
 
+plt.close("all")
+plt.plot(xs, yy, "--", label="input")
+plt.plot(xs, yy2, ".", label="fit")
+
+plt.figure()
+plt.plot(xf, yrespoly, ".")

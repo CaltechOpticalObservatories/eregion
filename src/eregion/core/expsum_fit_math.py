@@ -132,6 +132,22 @@ class ExpSumFitter:
         #theta must by construction be between 0 and 1
         res = minimize_scalar(self.residpoly, bounds=(0, 1.0))
 
+        #WARN: if you find it >0, check again, more carefully
+        if res.fun > 0.0:
+            _logger.debug("optimized point was >0, trying around maxima")
+            pivotpt = minimize_scalar(lambda s: -1.0*self.residpoly(s), bounds=(0,1.0))
+
+            above = minimize_scalar(self.residpoly, bounds=(pivotpt.x, 1.0))
+            below = minimize_scalar(self.residpoly, bounds=(0.0, pivotpt.x))
+
+            if above.fun < below.fun:
+                return float(above.x), float(above.fun)
+            return float(below.x), float(below.fun)
+            
+            
+            
+        
+
         if not res.success:
             warnings.warn("residual poly minimization did not succeed")
             #TODO: debug message here
@@ -171,7 +187,7 @@ class ExpSumFitter:
     def do_linear_fit(self) -> list[float]:
         powmat = np.tile(self.n, (len(self.thetas), 1))
         A = (np.asarray(self.thetas)[:, np.newaxis] ** powmat).T
-    
+
         x, resid, rank, s = lstsq(A, self.data)
         #TODO: check conditioning here!
         _logger.debug(f"x in do_linear_fit: {x}")
@@ -184,7 +200,7 @@ class ExpSumFitter:
 
         ndrops: int = 0
         if dropidx is None:
-            self.a = amptrim
+            self.a = amps
         while dropidx is not None:
             del self.thetas[dropidx]
             amps = self.do_linear_fit()
@@ -193,8 +209,8 @@ class ExpSumFitter:
             ndrops +=1
 
         _logger.debug(f"n drops: {ndrops}")
-        
-    
+
+
     def drop_zero_term(self, amps_old: list[float], amps_new: list[float]) -> tuple[Optional[int],Optional[list[float]]]:
         """ perform "zero-trimming" procedure on amplitude coefficients as described in section 2(g) of Wiscombe & Evans
 
