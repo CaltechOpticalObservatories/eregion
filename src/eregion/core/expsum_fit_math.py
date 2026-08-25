@@ -8,7 +8,7 @@ I was not able to find a maintained implementation that is shipped in a modern p
 
 import numpy as np
 from numpy.linalg import lstsq
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize_scalar, dual_annealing
 from typing import Sequence, TypeVar, Optional, Generator
 import warnings
 import logging
@@ -128,32 +128,17 @@ class ExpSumFitter:
         out = pn**2 * self.weights
         return np.sum(out)
 
+  
     def find_min_theta(self) -> float:
         #theta must by construction be between 0 and 1
-        res = minimize_scalar(self.residpoly, bounds=(0, 1.0))
-
-        #WARN: if you find it >0, check again, more carefully
-        if res.fun > 0.0:
-            _logger.debug("optimized point was >0, trying around maxima")
-            pivotpt = minimize_scalar(lambda s: -1.0*self.residpoly(s), bounds=(0,1.0))
-
-            above = minimize_scalar(self.residpoly, bounds=(pivotpt.x, 1.0))
-            below = minimize_scalar(self.residpoly, bounds=(0.0, pivotpt.x))
-
-            if above.fun < below.fun:
-                return float(above.x), float(above.fun)
-            return float(below.x), float(below.fun)
-            
-            
-            
-        
+        res = dual_annealing(self.residpoly, bounds=[(0, 1.0)])
 
         if not res.success:
             warnings.warn("residual poly minimization did not succeed")
             #TODO: debug message here
 
         _logger.debug(f"minimum theta value at: {res.x}, value {res.fun} ")
-        return float(res.x), float(res.fun)
+        return float(res.x[0]), float(res.fun)
 
     def check_convergence(self, M: Optional[int] = None) -> bool:
 
