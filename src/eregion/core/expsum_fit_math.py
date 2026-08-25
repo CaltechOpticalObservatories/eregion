@@ -247,10 +247,27 @@ class ExpSumFitter:
 
         return min_idx, amps_out
 
+    def run_fit(self, M: Optional[int] = None, max_iters: int = 200) -> int:
+        niter: int = 0
+        genfit = self.iterate_fit()
+        while not self.check_convergence(M) and niter < max_iters:
+            _logger.debug(f"niter: {niter}")
+            niter += 1
+            thetas, aas = next(genfit)
+
+        if niter >= max_iters:
+            _logger.info("maxc_iters reached, iterations halted!")
+
+        return niter
+
+    @property
+    def ks(self) -> list[float]:
+        kout = [-1.0 * log(float(_)) / float(self.dU) for _ in self.thetas]
+        return kout
+
     def iterate_fit(self, M: Optional[int] = None, max_iters: int = 200) -> Generator:
         """iterate the exponential sum fit until convergence is achieved, or maximum iteration count is reached"""
-        niter: int = 0
-        while not self.check_convergence(M) and niter < max_iters:
+        while True:
             new_theta, minPtheta = self.find_min_theta()
             self.minPtheta = minPtheta
             self.thetas.append(new_theta)
@@ -258,20 +275,36 @@ class ExpSumFitter:
 
             _logger.debug(f"thetas: {self.thetas}")
             _logger.debug(f"as: {self.a}")
-
             yield self.thetas.copy(), self.a.copy()
-            niter += 1
-            _logger.debug(f"niter: {niter}")
-
-        if niter >= max_iters:
-            _logger.debug("max_iters reached!")
 
     def _find_closest_k_pair(self):
         s = np.argsort(self.thetas)
         minidx = np.argmin(np.diff(np.array(self.thetas)[s]))
         return s[minidx], s[minidx + 1]
 
-    def simple_coalesce(self, tol: float = 0.25):
+    def coalesce_to_tol(self, tol: float = 0.25, maxiter: int = 200) -> int:
+        gencol = self.simple_coalesce_iter(tol)
+
+        niter: int = 0
+        for it in gencol:
+            niter += 1
+            if niter >= maxiter:
+                break
+
+        return niter
+
+    def coalesce_to_fixedM(self, M: int, maxiter: int = 200) -> int:
+        gencol = self.simple_coalesce_iter(float(np.inf))
+        niter: int = 0
+        for thet, aa in gencol:
+            niter += 1
+            if niter >= maxiter:
+                break
+            if len(thet) == M:
+                break
+        return niter
+
+    def simple_coalesce_iter(self, tol: float = 0.25) -> Generator:
         """implement trivial term coalescence (just using initial guesses combining nearby terms).
         The full term coalescence fit from the paper is a future implementation goal"""
 

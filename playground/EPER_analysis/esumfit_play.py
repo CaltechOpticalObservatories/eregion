@@ -28,16 +28,12 @@ for a, k in zip(a_in, k_in):
 
 efitter = ExpSumFitter(yy, dU = dU)
 
-gen = efitter.iterate_fit(None)
 
-i = 0
-for thet, a in gen:
-#    print(f"thetas: {thet}")
-#    print(f"as: {a}")
+efitter.run_fit()
 
-    ki = -1.0* np.log(thet) / dU
-
-#    print(f"ks: {ki}")
+thet = efitter.thetas
+a = efitter.a 
+ki = -1.0* np.log(thet) / dU
 
 
 print(f"thetas: {thet}")
