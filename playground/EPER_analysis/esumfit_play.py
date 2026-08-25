@@ -15,7 +15,7 @@ a_in = [12, 8.0, 3.0]
 k_in = [0.3, 0.02, 1.32]
 
 yy = np.zeros_like(xs)
-yy += np.random.normal(loc=0.0, scale=0.01, size=len(yy))
+yy += np.random.normal(loc=0.0, scale=0.04, size=len(yy))
                        
 
 
@@ -58,5 +58,20 @@ plt.close("all")
 plt.plot(xs, yy, "--", label="input")
 plt.plot(xs, yy2, ".", label="fit")
 
+
+
+for reft, refa in efitter.simple_coalesce():
+    print(f"reft: {reft}, refa: {refa}")
+    refk = -np.log(reft) / dU
+    print(f"refk: {refk}")
+
+yy3 = np.zeros_like(xs)
+for k,a in zip(refk, refa):
+    yy3 += a * np.exp(-k * xs)
+
+plt.plot(xs, yy3, "x", label="coalesced terms only")
+    
+
 plt.figure()
 plt.plot(xf, yrespoly, ".")
+

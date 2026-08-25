@@ -12,7 +12,7 @@ from scipy.optimize import minimize_scalar, dual_annealing
 from typing import Sequence, TypeVar, Optional, Generator
 import warnings
 import logging
-
+from math import log
 
 _logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ NDArrI = np.ndarray[np.integer]
 Int = int | np.integer
 
 
-def Expsumfun(n: NDArrI | Int , a: NDArrF, thetas: NDArrF) -> float | NDArrF:
+def Expsumfun(n: NDArrI | Int, a: NDArrF, thetas: NDArrF) -> float | NDArrF:
     """
     Evaluate an exponential sum function (equation 4a in Wisombe & Evans).
 
@@ -49,14 +49,14 @@ def Expsumfun(n: NDArrI | Int , a: NDArrF, thetas: NDArrF) -> float | NDArrF:
     assert len(a) == len(thetas), "theta must be same length as a"
 
     if isinstance(n, Int):
-        #single power, just evaluate one sum
+        # single power, just evaluate one sum
         outt = np.dot(a, thetas**n)
         return float(outt)
 
-    #construct an array of powers
+    # construct an array of powers
     assert len(n.shape) == 1, "n must be a 1D array"
-    powarr = n.reshape((-1,1)) * np.ones_like(n, shape=(1, len(thetas)))
-    #should be same shape as n
+    powarr = n.reshape((-1, 1)) * np.ones_like(n, shape=(1, len(thetas)))
+    # should be same shape as n
     out = np.sum(a * thetas**powarr, axis=1)
     assert len(out.shape) == 1, "logic error, out should be 1D"
     assert len(out) == len(n), "logic error, should be same length as power array"
@@ -64,8 +64,14 @@ def Expsumfun(n: NDArrI | Int , a: NDArrF, thetas: NDArrF) -> float | NDArrF:
 
 
 class ExpSumFitter:
-    def __init__(self, data: NDArrF, dU: float = 1.0,  weights: Optional[NDArrF] = None,
-                 R0_epsilon: float = 1E-20, P0_epsilon = 1E-20):
+    def __init__(
+        self,
+        data: NDArrF,
+        dU: float = 1.0,
+        weights: Optional[NDArrF] = None,
+        R0_epsilon: float = 1e-20,
+        P0_epsilon=1e-20,
+    ):
         """
 
         parameters
@@ -80,7 +86,7 @@ class ExpSumFitter:
             convergence criteria on the R0 least squares residual sum
         P0_epsilon: float
             convergence criteria on the P0 minimum function
-    
+
         """
         self.data = data
         if weights is None:
@@ -95,58 +101,57 @@ class ExpSumFitter:
 
         self.R0 = None
 
-        #TODO: add U, delta U
+        # TODO: add U, delta U
         self.n = np.arange(0, len(data))
-
+        self.dU = dU
         self.a: list[float] = list()
         self.thetas: list[float] = list()
         self.minPtheta = None
 
     def _calc_pn(self):
         """calculate the array p_n (defined in equation 7 of Wiscombe & Evans), without the weight prefactor"""
-        pn: np.ndarray = (Expsumfun(self.n, np.asarray(self.a), np.asarray(self.thetas)) - self.data)
+        pn: np.ndarray = (
+            Expsumfun(self.n, np.asarray(self.a), np.asarray(self.thetas)) - self.data
+        )
         return pn
 
-    
     def residpoly(self, theta: float | np.floating) -> float:
-        """    Calculate the "residual polynomial" (equation 6 in Wiscombe & Evans).
-        
-            parameters
-            ----------
-            theta: float | np.floating
-                value of theta for which to evaluate the residual polynomial
+        """Calculate the "residual polynomial" (equation 6 in Wiscombe & Evans).
+
+        parameters
+        ----------
+        theta: float | np.floating
+            value of theta for which to evaluate the residual polynomial
 
         """
         pn = self.weights * self._calc_pn()
-        return 2 * float(np.sum(pn * theta ** self.n))
+        return 2 * float(np.sum(pn * theta**self.n))
 
     def R0_resid(self):
-        """ calculate the R0 residual (equation 3 in Wiscombe & Evans)
-        """
+        """calculate the R0 residual (equation 3 in Wiscombe & Evans)"""
 
         pn = self._calc_pn()
         out = pn**2 * self.weights
         return np.sum(out)
 
-  
     def find_min_theta(self) -> float:
-        #theta must by construction be between 0 and 1
+        # theta must by construction be between 0 and 1
         res = dual_annealing(self.residpoly, bounds=[(0, 1.0)])
 
         if not res.success:
             warnings.warn("residual poly minimization did not succeed")
-            #TODO: debug message here
+            # TODO: debug message here
 
         _logger.debug(f"minimum theta value at: {res.x}, value {res.fun} ")
         return float(res.x[0]), float(res.fun)
 
     def check_convergence(self, M: Optional[int] = None) -> bool:
 
-        #first check numerical convergence
+        # first check numerical convergence
         R0 = self.R0_resid()
         _logger.debug(f"R0 residual: {R0}")
 
-        #check first convergence criterion (update of residual is tiny)
+        # check first convergence criterion (update of residual is tiny)
         if self.R0 is None:
             self.R0 = R0
         else:
@@ -157,12 +162,12 @@ class ExpSumFitter:
                 _logger.debug("convergence achieved via R0 value")
                 return True
 
-        #minimum of P(theta) is >= 0 (2nd convergence criteria)
+        # minimum of P(theta) is >= 0 (2nd convergence criteria)
         if self.minPtheta is not None and self.minPtheta >= self._P0_epsilon:
             _logger.debug("convergence achieved via P0 minimum value")
             return True
 
-        #we demanded a specific number of terms, carry on if that's not met
+        # we demanded a specific number of terms, carry on if that's not met
         if M is not None:
             if len(self.thetas) <= M:
                 return False
@@ -174,10 +179,9 @@ class ExpSumFitter:
         A = (np.asarray(self.thetas)[:, np.newaxis] ** powmat).T
 
         x, resid, rank, s = lstsq(A, self.data)
-        #TODO: check conditioning here!
+        # TODO: check conditioning here!
         _logger.debug(f"x in do_linear_fit: {x}")
         return list(float(_) for _ in x)
-
 
     def linear_fit_stage(self):
         amps = self.do_linear_fit()
@@ -191,13 +195,14 @@ class ExpSumFitter:
             amps = self.do_linear_fit()
             dropidx, amptrim = self.drop_zero_term(self.a, amps)
             self.a = amps
-            ndrops +=1
+            ndrops += 1
 
         _logger.debug(f"n drops: {ndrops}")
 
-
-    def drop_zero_term(self, amps_old: list[float], amps_new: list[float]) -> tuple[Optional[int],Optional[list[float]]]:
-        """ perform "zero-trimming" procedure on amplitude coefficients as described in section 2(g) of Wiscombe & Evans
+    def drop_zero_term(
+        self, amps_old: list[float], amps_new: list[float]
+    ) -> tuple[Optional[int], Optional[list[float]]]:
+        """perform "zero-trimming" procedure on amplitude coefficients as described in section 2(g) of Wiscombe & Evans
 
         parameters
         ----------
@@ -215,7 +220,7 @@ class ExpSumFitter:
 
         returns None if iterations have ended (indicated by all coeffs being higher than 0),
         otherwise list of new coefficients after shuffling and zero-dropping is complete, and the index of the zero term that was dropped.
-        
+
 
         """
         if all(_ > 0 for _ in amps_new):
@@ -224,24 +229,26 @@ class ExpSumFitter:
         min_idx = -1
         min_beta = float(np.inf)
 
-        #ensure last term of amps_old is 0 as required by algorithm
+        # ensure last term of amps_old is 0 as required by algorithm
         if len(amps_old) == 0 or amps_old[-1] != 0:
             amps_old.append(0)
-        
-        for idx, (ao, an) in  enumerate(zip(amps_old, amps_new)):
+
+        for idx, (ao, an) in enumerate(zip(amps_old, amps_new)):
             if an < 0:
                 beta: float = ao / (ao - an)
                 if beta < min_beta:
                     min_beta = beta
                     min_idx = idx
-        
-        amps_out = [(1 - min_beta) * ao + min_beta * an for (ao, an) in zip(amps_old, amps_new)]
-        del[amps_out[min_idx]]
+
+        amps_out = [
+            (1 - min_beta) * ao + min_beta * an for (ao, an) in zip(amps_old, amps_new)
+        ]
+        del [amps_out[min_idx]]
 
         return min_idx, amps_out
 
-
     def iterate_fit(self, M: Optional[int] = None, max_iters: int = 200) -> Generator:
+        """iterate the exponential sum fit until convergence is achieved, or maximum iteration count is reached"""
         niter: int = 0
         while not self.check_convergence(M) and niter < max_iters:
             new_theta, minPtheta = self.find_min_theta()
@@ -252,10 +259,56 @@ class ExpSumFitter:
             _logger.debug(f"thetas: {self.thetas}")
             _logger.debug(f"as: {self.a}")
 
-            yield self.thetas, self.a
-            niter +=1
+            yield self.thetas.copy(), self.a.copy()
+            niter += 1
             _logger.debug(f"niter: {niter}")
 
         if niter >= max_iters:
             _logger.debug("max_iters reached!")
 
+    def _find_closest_k_pair(self):
+        s = np.argsort(self.thetas)
+        minidx = np.argmin(np.diff(np.array(self.thetas)[s]))
+        return s[minidx], s[minidx + 1]
+
+    def simple_coalesce(self, tol: float = 0.25):
+        """implement trivial term coalescence (just using initial guesses combining nearby terms).
+        The full term coalescence fit from the paper is a future implementation goal"""
+
+        # remove any theta ==1.0 or 0.0
+        def remove_theta_val(val):
+            while val in self.thetas:
+                idx = self.thetas.index(val)
+                del self.thetas[idx]
+                del self.a[idx]
+
+        remove_theta_val(0.0)
+        remove_theta_val(1.0)
+
+        # k1 is the bigger of the two terms by construction
+        while True:
+            s1, s2 = self._find_closest_k_pair()
+            k1 = -1.0 * log(self.thetas[s1]) / self.dU
+            k2 = -1.0 * log(self.thetas[s2]) / self.dU
+
+            assert k1 > k2, "logic error, k2 should be bigger than k1"
+
+            if (k1 / k2) > (1.0 + tol):
+                _logger.debug("coalescent iteration finished")
+                break
+
+            thet1 = self.thetas[s1]
+            thet2 = self.thetas[s2]
+
+            self.thetas[s1] = 0.0
+            self.thetas[s2] = 0.0
+
+            a1 = self.a[s1]
+            a2 = self.a[s2]
+
+            remove_theta_val(0.0)
+
+            self.thetas.append(0.5 * (thet1 + thet2))
+            self.a.append(a1 + a2)
+
+            yield self.thetas.copy(), self.a.copy()
