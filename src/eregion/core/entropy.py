@@ -7,10 +7,11 @@ https://arxiv.org/pdf/2210.02848
 """
 import warnings
 import numpy as np
+import numpy.typing as npt
 from typing import Any, Optional
 
 
-def _as_float_array(data) -> np.ndarray:
+def _as_float_array(data: npt.ArrayLike) -> npt.NDArray[np.floating]:
     """
     Convert input to a numpy array, casting to float64 only when the input
     isn't already some floating-point dtype (float16/32/64/...). This avoids
@@ -63,7 +64,7 @@ def histogram_efficiency(entropy_bits: float, n_bins: int) -> float:
     return float(2 ** entropy_bits / n_bins)
 
 
-def differential_entropy_knn(data: np.ndarray, dither: bool = False,
+def differential_entropy_knn(data: npt.NDArray[np.floating], dither: bool = False,
                               rng: Optional[np.random.Generator] = None) -> float:
     """
     Nearest-neighbour (Kozachenko-Leonenko) estimator of the differential entropy
@@ -74,7 +75,7 @@ def differential_entropy_knn(data: np.ndarray, dither: bool = False,
     where l_i is the distance from point i to its nearest neighbour in the
     sample, and gamma is the Euler-Mascheroni constant
 
-    :param data: np.ndarray
+    :param data: np.ndarray[np.floating]
         1-D array of N samples
     :param dither: bool
         If True, add small uniform noise to break ties from quantized/discrete
@@ -131,20 +132,20 @@ def differential_entropy_knn(data: np.ndarray, dither: bool = False,
     return float(np.euler_gamma / np.log(2) + np.mean(np.log2(2 * n * nn_dist)))
 
 
-def optimal_bin_width(data: np.ndarray, M: float = 2.5, **knn_kwargs) -> float:
+def optimal_bin_width(data: npt.NDArray[np.floating], M: float = 2.5, **knn_kwargs) -> float:
     """
     Entropy-based optimal histogram bin width for 1-D continuous data
     (Watts & Crow, Eqs. 9-10):
 
         Delta = 2**h(data) * N**(-1/M)
 
-    where h is the nearest-neighbour differential entropy estimate of the data, 
-    and M is a free parameter controlling the number of histogram bins via 
-    H_M = (1/M) * log2(N). The paper finds 2 <= M <= 3 avoids both over-binning 
-    (Poisson noise dominates, M<2) and under-binning (loses distribution shape, M>3); 
+    where h is the nearest-neighbour differential entropy estimate of the data,
+    and M is a free parameter controlling the number of histogram bins via
+    H_M = (1/M) * log2(N). The paper finds 2 <= M <= 3 avoids both over-binning
+    (Poisson noise dominates, M<2) and under-binning (loses distribution shape, M>3);
     M=2.5 is a reasonable default within that range.
 
-    :param data: np.ndarray
+    :param data: np.ndarray[np.floating]
         1-D array of N samples
     :param M: float
         Entropy scaling parameter, expected in [2, 3]
@@ -161,12 +162,12 @@ def optimal_bin_width(data: np.ndarray, M: float = 2.5, **knn_kwargs) -> float:
     return float(2 ** h * n ** (-1 / M))
 
 
-def entropy_optimal_histogram(data: np.ndarray, M: float = 2.5, **knn_kwargs) -> dict[str, Any]:
+def entropy_optimal_histogram(data: npt.NDArray[np.floating], M: float = 2.5, **knn_kwargs) -> dict[str, Any]:
     """
     Build a histogram of 1-D data using the entropy-based optimal bin width
     (Watts & Crow), and report the diagnostics.
 
-    :param data: np.ndarray
+    :param data: np.ndarray[np.floating]
         1-D array of N samples
     :param M: float
         Entropy scaling parameter passed to optimal_bin_width; see its docstring
