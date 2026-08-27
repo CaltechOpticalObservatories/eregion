@@ -59,7 +59,9 @@ def test_noiseless_fit_fixedM():
 
     M = 3
 
-    efit = ExpSumFitter(data=yy, dU=dU)
+    #add seed just to check it works. Not verifying
+    #reproducibility of nonlinear fit at this point.
+    efit = ExpSumFitter(data=yy, dU=dU, seed=42)
     iters = efit.run_fit(M=M)
 
     print(f"iterations: {iters}")
@@ -89,7 +91,7 @@ def test_noiseless_fit_fixedM():
 def test_noiseless_fit_convergence():
     nn, xs, dU, yy, ks, aas = gen_data()
 
-    efit = ExpSumFitter(data=yy, dU=dU)
+    efit = ExpSumFitter(data=yy, dU=dU, seed=0xDEADBEEF)
     iters = efit.run_fit()
 
     print(f"iterations: {iters}")
@@ -99,14 +101,23 @@ def test_noiseless_fit_convergence():
 
     print(f"coalescing iterations: {citer}")
 
-    # sort amplitudes in descending order
+    
     rounda = np.round(efit.a, 2)
     sa = np.argsort(rounda)
     sa_in = np.argsort(aas)
 
-    diffa = rounda[sa[::-1]][: len(aas)] - np.array(aas)[sa_in[::-1]]
+    #choose the fitted coefficients up to the lenght of ground truth
+    proca = rounda[sa[::-1]][:len(aas)]
+    print(f"proca: {proca}")
+
+    # sort amplitudes in descending order
+    inpac = np.array(aas)[sa_in[::-1]]
+    print(f"compar_input a: {inpac}")
+    diffa = proca - inpac
     print(f"diffa: {diffa}")
     assert np.all(np.isclose(diffa, 0.0, rtol=0.05, atol=0.05))
 
     # no need to check ks, above constrained M proves appropriate scaling when
     # amplitudes are correct
+
+    

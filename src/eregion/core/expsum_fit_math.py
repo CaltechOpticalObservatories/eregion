@@ -6,13 +6,15 @@ I was not able to find a maintained implementation that is shipped in a modern p
 
 """
 
-import numpy as np
-from numpy.linalg import lstsq
-from scipy.optimize import minimize_scalar, dual_annealing
-from typing import Sequence, TypeVar, Optional, Generator
+from typing import TypeVar, Optional, Generator
 import warnings
 import logging
-from math import log
+from math import log, inf, nan, copysign
+
+import numpy as np
+from numpy.linalg import lstsq
+from scipy.optimize import dual_annealing
+
 
 _logger = logging.getLogger(__name__)
 
@@ -21,6 +23,9 @@ Fl = TypeVar("float")
 NDArrF = np.ndarray[np.floating]
 NDArrI = np.ndarray[np.integer]
 Int = int | np.integer
+
+def _safediv(x, y):
+    return x/y if y else (copysign(x*inf, x*y) if x else nan)
 
 
 def Expsumfun(n: NDArrI | Int, a: NDArrF, thetas: NDArrF) -> float | NDArrF:
@@ -177,8 +182,12 @@ class ExpSumFitter:
         # check first convergence criterion (update of residual is tiny)
         if self.R0 is None:
             self.R0 = R0
+        elif R0 == 0.0 or self.R0 == 0.0:
+            _logger.debug("model fits data exactly to machine precision. Unlikely, but it happened. Converged")
+            return True
         else:
-            E = (self.R0 - R0) / self.R0
+            #NOTE: if R0 is close to 0, this safely return infinity, which will compare larger than epsilon
+            E = _safediv(self.R0 - R0, self.R0)
             _logger.debug(f"E update value: {E}")
             self.R0 = R0
             if E < self._R0_epsilon:
@@ -302,7 +311,7 @@ class ExpSumFitter:
             thetas, aas = next(genfit)
 
         if niter >= max_iters:
-            _logger.info("maxc_iters reached, iterations halted!")
+            _logger.info("max_iters reached, iterations halted!")
 
         return niter
 
