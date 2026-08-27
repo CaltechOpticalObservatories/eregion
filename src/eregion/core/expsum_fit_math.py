@@ -15,7 +15,6 @@ import numpy as np
 from numpy.linalg import lstsq
 from scipy.optimize import dual_annealing
 
-
 _logger = logging.getLogger(__name__)
 
 
@@ -24,8 +23,9 @@ NDArrF = np.ndarray[np.floating]
 NDArrI = np.ndarray[np.integer]
 Int = int | np.integer
 
+
 def _safediv(x, y):
-    return x/y if y else (copysign(x*inf, x*y) if x else nan)
+    return x / y if y else (copysign(x * inf, x * y) if x else nan)
 
 
 def Expsumfun(n: NDArrI | Int, a: NDArrF, thetas: NDArrF) -> float | NDArrF:
@@ -183,10 +183,12 @@ class ExpSumFitter:
         if self.R0 is None:
             self.R0 = R0
         elif R0 == 0.0 or self.R0 == 0.0:
-            _logger.debug("model fits data exactly to machine precision. Unlikely, but it happened. Converged")
+            _logger.debug(
+                "model fits data exactly to machine precision. Unlikely, but it happened. Converged"
+            )
             return True
         else:
-            #NOTE: if R0 is close to 0, this safely return infinity, which will compare larger than epsilon
+            # NOTE: if R0 is close to 0, this safely return infinity, which will compare larger than epsilon
             E = _safediv(self.R0 - R0, self.R0)
             _logger.debug(f"E update value: {E}")
             self.R0 = R0
