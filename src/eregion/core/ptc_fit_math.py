@@ -75,7 +75,7 @@ def find_rough_full_well(mean: np.ndarray, noise: np.ndarray, fwfact: float = 0.
     return fwfactloc, am
 
 
-def trad_ptc_shot_noise_fit(mean: np.ndarray, noise: np.ndarray, limitidx: int, brighterfatter: bool=True
+def trad_ptc_shot_noise_fit(mean: np.ndarray, noise: np.ndarray, fitlim: int, brighterfatter: bool=True
                             ) -> tuple[unc.ufloat, unc.ufloat] | tuple[unc.ufloat, unc.ufloat, unc.ufloat]:
     """fit a PTC by the traditional (Janesick) method, with optional brighter-fatter modifications
 
@@ -86,7 +86,7 @@ def trad_ptc_shot_noise_fit(mean: np.ndarray, noise: np.ndarray, limitidx: int, 
        array representing mean counts in the flat images
     :param noise : np.ndarray
        array representing standard deviation values of differenced images
-    :param limitidx : int
+    :param fitlim : int
        integer index up to which to do the fit (should be below full well, and in the case
        of detectors with significant brighter-fatter effect, should be substantially below (e.g. 80% of full well)
     :param brighterfatter : bool
@@ -107,8 +107,8 @@ def trad_ptc_shot_noise_fit(mean: np.ndarray, noise: np.ndarray, limitidx: int, 
     """
 
     deg: int = 2 if brighterfatter else 1
-    xdat = mean[:limitidx]
-    ydat = noise[:limitidx]**2
+    xdat = mean[:fitlim]
+    ydat = noise[:fitlim]**2 # variance
 
     ft, errs = do_polynomial_fit(xdat, ydat, deg)
 
@@ -159,12 +159,8 @@ def astier_approx_one_param_fit(mean: np.ndarray, noise: np.ndarray, Kguess: flo
 
     """
 
-    if fitlim is not None:
-        xdat = mean[:fitlim]
-        ydat = noise[:fitlim]**2
-    else:
-        xdat = mean
-        ydat = noise**2
+    xdat = mean[:fitlim]
+    ydat = noise[:fitlim]**2 # variance
 
     p0 = [Kguess, aguess, (noiseguess/Kguess)**2]
     bounds = ([-np.inf, -np.inf, 0], [np.inf, 0, np.inf])
@@ -202,14 +198,5 @@ def linearity_fit(flux: np.ndarray, mean: np.ndarray, fitlim: Optional[int]):
     tuple containing the array of coefficients (in new numpy order, lowest coefficient first),
     and the array of errors estimated from fit covariance
     """
-
-
-    if fitlim is not None:
-        xdat = flux[:fitlim]
-        ydat = mean[:fitlim]
-    else:
-        xdat = flux
-        ydat = mean
-
-    ft, errs = do_polynomial_fit(xdat, ydat, 1)
+    ft, errs = do_polynomial_fit(xdat=flux[:fitlim], ydat=mean[:fitlim], deg=1)
     return ft, errs
