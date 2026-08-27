@@ -71,6 +71,7 @@ class ExpSumFitter:
         weights: Optional[NDArrF] = None,
         R0_epsilon: float = 1e-20,
         P0_epsilon=1e-20,
+        seed: Optional = None,
     ):
         """
 
@@ -86,6 +87,10 @@ class ExpSumFitter:
             convergence criteria on the R0 least squares residual sum
         P0_epsilon: float
             convergence criteria on the P0 minimum function
+        seed: Optional
+            something to seed the internal RNG with (used in the non-linear part of the fit)
+            anything accepted by np.random.default_rng is acceptable. Supply to get deterministic behaviour for the exact same input data
+
 
         """
         self.data = data
@@ -107,6 +112,8 @@ class ExpSumFitter:
         self.a: list[float] = list()
         self.thetas: list[float] = list()
         self.minPtheta = None
+
+        self._rng = np.random.default_rng(seed=seed)
 
     def _calc_pn(self):
         """calculate the array p_n (defined in equation 7 of Wiscombe & Evans), without the weight prefactor"""
@@ -134,9 +141,21 @@ class ExpSumFitter:
         out = pn**2 * self.weights
         return np.sum(out)
 
-    def find_min_theta(self) -> float:
+    def find_min_theta(self) -> tuple[float, float]:
+        """Do the non-linear portion of the fit. Find the minimum of the residual polynomial
+           P(theta). The location of this theta is then added to the fit terms. Unlike the original paper (which was written in 1977 when computers had somewhat less power available) we use a hideously modern and expensive annealing method to find the global minimum. This is slow but seems to work robustly
+
+        returns
+        -------
+
+        tuple[float, float]
+
+        tuple containing the value of theta which minimises the residual polynomial, and the value of the residual  polynomial respectively
+
+        """
+
         # theta must by construction be between 0 and 1
-        res = dual_annealing(self.residpoly, bounds=[(0, 1.0)])
+        res = dual_annealing(self.residpoly, bounds=[(0, 1.0)], rng=self._rng)
 
         if not res.success:
             warnings.warn("residual poly minimization did not succeed")
@@ -146,6 +165,10 @@ class ExpSumFitter:
         return float(res.x[0]), float(res.fun)
 
     def check_convergence(self, M: Optional[int] = None) -> bool:
+        """Check whether numerical convergence has been achieved, as defined in the paper. Briefly:
+        a) whether the relative update of the L2 norm fit residual stops decreasing on another iteration - this means the fit will not get any better with more iterations
+        b) if not, whether the residual polynomial of the fit is always above 0. Roughly speaking, this implies that adding another trial fitted exponential will not be able to fit the data better (see the paper section 6 for excruciating detail)
+        """
 
         # first check numerical convergence
         R0 = self.R0_resid()
@@ -175,6 +198,7 @@ class ExpSumFitter:
         return False
 
     def do_linear_fit(self) -> list[float]:
+        """Calculate the least-squares inversion part of the fit. For details see the paper"""
         powmat = np.tile(self.n, (len(self.thetas), 1))
         A = (np.asarray(self.thetas)[:, np.newaxis] ** powmat).T
 
@@ -184,6 +208,7 @@ class ExpSumFitter:
         return list(float(_) for _ in x)
 
     def linear_fit_stage(self):
+        """Run the whole linear portion of the fit iteration. For details see the paper"""
         amps = self.do_linear_fit()
         dropidx, amptrim = self.drop_zero_term(self.a, amps)
 
@@ -248,6 +273,27 @@ class ExpSumFitter:
         return min_idx, amps_out
 
     def run_fit(self, M: Optional[int] = None, max_iters: int = 200) -> int:
+        """Run the fit procedure until convergence or a maximum number of iterations is reached
+
+        parameters
+        ----------
+
+        :param M: Optional[int]
+            The number of desired terms in the fit. If not supplied, fit procedes until the numberical
+            convergence criteria descibed in the paper are reached (see docstring for check_convergence
+
+        :param max_iters: int
+            maximum number of iterations to run.
+
+        returns
+        -------
+
+        int
+
+        the number of fit iterations that were actually run
+
+        """
+
         niter: int = 0
         genfit = self.iterate_fit()
         while not self.check_convergence(M) and niter < max_iters:
@@ -262,11 +308,22 @@ class ExpSumFitter:
 
     @property
     def ks(self) -> list[float]:
+        """convenience property to calculate the exponential decay rates corresponding to the
+        currently held theta values"""
         kout = [-1.0 * log(float(_)) / float(self.dU) for _ in self.thetas]
         return kout
 
-    def iterate_fit(self, M: Optional[int] = None, max_iters: int = 200) -> Generator:
-        """iterate the exponential sum fit until convergence is achieved, or maximum iteration count is reached"""
+    def iterate_fit(self) -> Generator:
+        """perform an iteration of the fit procedure, yielding updated values of theta and a. Can be used manually, but intended to be run from one of the overall fit running routines
+
+        returns
+        -------
+
+        Generator
+           when iterated over, this generator performs both the non-linear and linear stages of the fit,
+           and yields copies of the current fitted values of theta and amplitude
+
+        """
         while True:
             new_theta, minPtheta = self.find_min_theta()
             self.minPtheta = minPtheta
@@ -278,11 +335,46 @@ class ExpSumFitter:
             yield self.thetas.copy(), self.a.copy()
 
     def _find_closest_k_pair(self):
+        """Locate the closest pair of k values in the current fit
+
+        returns
+        -------
+
+        tuple[float, float]
+
+        returns the values of theta (NOTE: not the values of k!!! despite the name)
+        corresponding to the k values closest together in the current fit
+
+        """
         s = np.argsort(self.thetas)
         minidx = np.argmin(np.diff(np.array(self.thetas)[s]))
         return s[minidx], s[minidx + 1]
 
     def coalesce_to_tol(self, tol: float = 0.25, maxiter: int = 200) -> int:
+        """repeatedly  coalesce (remove terms from) the fit until a tolerance condition is met, or maximum number of iterations is reached
+
+         The tolerance condition is trivial: that no two k values differ in ratio more than a specified amount.
+        Note: the original paper specifies another non-linear fiut to optimise the coalesced terms. At the moment we do not implement that second fit. HOWEVER, the initial guesses for that fit are pretty good. If only % level accuracy is required (rather than ppm level) this should be sufficient. In future we may implement that second fitting procedure here. This implementation is intended to fit EPER curves of CCD detectors, where that level of accuracy is absolutely pointless, and impossible anyway.
+
+
+        parameters
+        ----------
+
+        :param tol: float
+            the tolerance ratio of the k values (not theta values, you normally care about k in the end!!!)
+
+        :param maxiter: int
+            the maximum number of iterations to do before giving up, even if tolerance condition isn't met
+
+        returns
+        -------
+
+        int
+
+        the number of iterations actually run during coalescence
+
+        """
+
         gencol = self.simple_coalesce_iter(tol)
 
         niter: int = 0
@@ -294,6 +386,19 @@ class ExpSumFitter:
         return niter
 
     def coalesce_to_fixedM(self, M: int, maxiter: int = 200) -> int:
+        """repeatedly coalesce (remove terms from) the fit until only a specified number remain, or maximum number of iterations is reached
+
+        parameters
+        ----------
+
+        :param M: int
+            number of desired terms in the final fit
+
+        :param maxiter: int
+            maximum number of iterations to do (extremely unlikely to occur except for enormous fits)
+
+        """
+
         gencol = self.simple_coalesce_iter(float(np.inf))
         niter: int = 0
         for thet, aa in gencol:
@@ -306,7 +411,26 @@ class ExpSumFitter:
 
     def simple_coalesce_iter(self, tol: float = 0.25) -> Generator:
         """implement trivial term coalescence (just using initial guesses combining nearby terms).
-        The full term coalescence fit from the paper is a future implementation goal"""
+        The full term coalescence fit from the paper is a future implementation goal
+
+        Each iteration first removes the two k terms closest to each other, then replaces those with
+        a single k term in the middle. This trivial algorithm works well enough for our current purposes
+
+
+        parameters
+        ----------
+
+        :param tol: float
+           the relative k term tolerance ratio to check. Stop iterations if it is met
+
+        returns
+        -------
+
+        Generator
+
+        a generator which does one coalescence iteration per yield
+
+        """
 
         # remove any theta ==1.0 or 0.0
         def remove_theta_val(val):
