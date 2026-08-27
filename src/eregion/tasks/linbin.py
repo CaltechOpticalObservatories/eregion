@@ -10,8 +10,9 @@ from eregion.tasks import LazyTask
 from eregion.datamodels import TaskResult, ImageBundle, DetImage, CCDOutput
 from eregion.core.image_operations import do_digital_binning
 from eregion.core.image_stats import do_statistics, STATFUNCS
-from eregion.utils import slice_data, decrease_slicer_stop_index
+from eregion.utils import slice_data, decrease_slicer_stop_index, save_dataframe_to_fits, load_dataframe_from_fits
 
+import os
 from pydantic import Field
 from joblib import Parallel, delayed
 from typing import Callable, Generator
@@ -20,6 +21,18 @@ import pandas as pd
 
 class LinBinResult(TaskResult):
     stats: pd.DataFrame = Field(default_factory=pd.DataFrame)
+
+    def save(self, filepath: str) -> None:
+        """ Save the result to a FITS file. """
+        super().save(filepath)
+        save_dataframe_to_fits(self.stats, os.path.join(filepath, "linbin_table.fits"))
+
+    @classmethod
+    def load(cls, filepath: str):
+        """ Load the result from a FITS file. """
+        stats = load_dataframe_from_fits(os.path.join(filepath, "linbin_table.fits"))
+        metadata = cls.load_metadata(filepath)
+        return cls(stats=stats, **metadata)
 
 
 class LinBin(LazyTask):
@@ -53,7 +66,8 @@ class LinBin(LazyTask):
         super().__init__(name=name, **kwargs)
 
         if isinstance(binsizes, int):
-            binsizes = lambda previous: previous + binsizes if previous is not None else binsizes
+            increment = binsizes
+            binsizes = lambda previous: previous + increment if previous is not None else increment
         elif isinstance(binsizes, Callable):
             pass  # Use the provided callable directly
         else:
@@ -153,7 +167,7 @@ class LinBin(LazyTask):
 
     def do_stats_per_output(self, output: CCDOutput, mask_key: str = 'sigma_clip_mask'):
         imarr, immask = output.get_image_region(return_masks=True)
-        stats = {'output':output.id, 'bins': self.bins}
+        stats = {'output': output.id, 'bins': self.bins}
         if immask is not None and mask_key in immask:
             mask = immask[mask_key].values
             stats["n_masked"] = int(np.count_nonzero(mask))
@@ -175,20 +189,16 @@ class LinBin(LazyTask):
 
     def make_linbin_table(self, stats) -> pd.DataFrame:
         stats = pd.DataFrame(stats)
-        groupkeys = self.groupby_keys + ['output', 'bins']
+        groupkeys = self.groupby_keys + ['output']
         stats['suffix'] = stats['binning'] + '_' + stats['seqnum']
         stats = stats.drop(columns=['seqnum', 'binning'])
-        statcols = [col for col in stats.columns if col not in groupkeys + ['suffix']]
+        statcols = [col for col in stats.columns if col not in groupkeys + ['suffix', 'bins']]
 
         grouped = stats.groupby(groupkeys)
         linbin_table = []
         for _, group in grouped:
-            row = {key: group.iloc[0][key] for key in groupkeys}
+            row = {key: group.iloc[0][key] for key in groupkeys+['bins']}
             for i in range(len(group)):
                 row |= {f"{k}_{group.iloc[i]['suffix']}": group.iloc[i][k] for k in group.columns if k in statcols}
             linbin_table.append(row)
         return pd.DataFrame(linbin_table)
-
-
-
-
