@@ -124,16 +124,13 @@ class FocalPlaneImage:
             dim_pix = calc_dim.astype(int)
 
         # Initialize DataArray
-        self.data = xr.DataArray(
-            np.zeros(dim_pix, dtype=float),
-            dims=("y", "x"),
-            coords={"y": np.arange(frames_df["y_min"].min(), frames_df["y_max"].max(), 1),
-                    "x": np.arange(frames_df["x_min"].min(), frames_df["x_max"].max(), 1)}
-        )
-        self.masks = xr.Dataset(coords=self.data.coords)
-        if self.det_images[0].masks is not None:
-            for m in self.det_images[0].masks.data_vars.keys():
-                self.masks[m] = xr.zeros_like(self.data).astype(bool)
+        coords = {"y": np.arange(frames_df["y_min"].min(), frames_df["y_max"].max(), 1),
+                  "x": np.arange(frames_df["x_min"].min(), frames_df["x_max"].max(), 1)}
+        self.data = xr.DataArray(data=np.zeros(dim_pix, dtype=float), coords=coords, dims=["y", "x"])
+        # Initialize masks Dataset
+        mask_keys = self.det_images[0].masks.data_vars.keys() if self.det_images[0].build_full_mask() else []
+        maskarr = xr.DataArray(data=np.zeros(dim_pix, dtype=bool), coords=coords, dims=["y", "x"])
+        self.masks = xr.Dataset(coords=coords, data_vars={m: maskarr.copy() for m in mask_keys})
 
         # Place tiles
         for i in range(len(frames_df)):
@@ -145,7 +142,7 @@ class FocalPlaneImage:
             else:
                 self.data.loc[slc] = flip_and_rotate(di.data.values, angle=row['angle'], flip_x=row['flip_x'],
                                          flip_y=row['flip_y'])
-                for m in self.masks.data_vars.keys():
+                for m in mask_keys:
                     self.masks[m].loc[slc] = flip_and_rotate(di.masks[m].values, angle=row['angle'], flip_x=row['flip_x'],
                                            flip_y=row['flip_y'])
 
@@ -155,15 +152,18 @@ class FocalPlaneImage:
              textcolor="yellow", **imshow_kwargs):
         if ax is None:
             _, ax = plt.subplots(1,1, figsize=(8, 8), tight_layout=True)
+        # overlay mask if requested
         if with_mask:
             if self.masks is not None and mask_key in self.masks:
-                mdata = np.ma.MaskedArray(data=self.data.values, mask=self.masks[mask_key].values)
-                im = ax.imshow(mdata, **imshow_kwargs)
-                plt.colorbar(im, ax=ax)
+                arr = np.ma.masked_array(data=self.data.values, mask=self.masks[mask_key].values)
+                arr = arr.filled(0)
+                temp = xr.DataArray(data=arr, coords=self.data.coords, dims=self.data.dims)
             else:
                 logger.warning("Mask key '%s' not found in masks. Showing unmasked data.", mask_key)
+                temp = self.data
         else:
-            im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
+            temp = self.data
+        im = temp.plot.imshow(ax=ax, **imshow_kwargs)
         # Draw detector boundaries
         if hasattr(self, "table"):
             for _, row in self.table.iterrows():
@@ -185,22 +185,16 @@ class FocalPlaneImage:
     # TODO: Add to_netcdf() and from_netcdf() methods
 
 
-class FPImageBundle(ImageBundle):
+class FPImageBundle(ImageBundle[FocalPlaneImage]):
     """
     To store list of FocalPlaneImage objects.
     """
     image_class = FocalPlaneImage
 
-    def __init__(self, images: image_class | list[image_class] | None = None):
-        super().__init__(images)
-
-    def tabulate(self) -> pd.DataFrame:
+    def _tabulate(self) -> pd.DataFrame:
         tab = []
         for fpimage in self.images:
-            imtypedf = fpimage.det_images.list
-            imtype = {'object': fpimage}
-            for col in imtypedf.columns:
-                if imtypedf[col].nunique() == 1:
-                    imtype[col] = imtypedf[col].iloc[0]
+            imtype = {'object': fpimage, 'filename': fpimage.meta.get('filename', None)}
+            imtype |= fpimage.det_images[0].image_type
             tab.append(imtype)
         self.list = pd.DataFrame(tab)

@@ -25,11 +25,13 @@ Design rationale:
 from __future__ import annotations
 
 import pandas as pd
+import numpy as np
 from collections.abc import Mapping
 from typing import Any, Iterator
 from pydantic import ConfigDict, Field
 from astropy.time import Time
 import os
+import json
 
 from . import ImageBundle
 from .mappable import Mappable
@@ -37,7 +39,7 @@ from .mappable import Mappable
 
 class TaskResult(Mappable):
     """
-    Base class for task outputs. Combines Pydantic validation with the full
+    Base class for task outputs. Inherits from ``Mappable`` which combines Pydantic validation with the full
     Python Mapping protocol, so instances behave like dicts while remaining
     typed models.
 
@@ -47,21 +49,20 @@ class TaskResult(Mappable):
     ``params``, ``upstream``, and ``timestamp`` attributes, or explicitly through
     ``metadata_dict()``.
 
-    Inheriting from both BaseModel and Mapping works because Pydantic's
-    ModelMetaclass already derives from ABCMeta, so there is no metaclass
-    conflict.  The three abstract methods required by Mapping (__getitem__,
-    __iter__, __len__) are implemented here; everything else (keys(), values(),
-    items(), get(), __contains__, __eq__) is provided for free by Mapping.
+    Examples:
 
-    Usage:
         class MyTaskOutput(TaskResult):
             image: DetImage = Field(..., description="Processed image")
             stats: dict[str, float] = Field(default_factory=dict, description="Processing statistics")
 
         # In a task:
-        def run(self, images):
-            result = MyTaskOutput(image=processed_img, stats={"mean": 100.5})
-            return result
+
+        class MyTask(Task):
+            task_result = MyTaskOutput
+
+            def run(self, images):
+                result = MyTaskOutput(image=processed_img, stats={"mean": 100.5})
+                return result
     """
     params: dict[str, Any] = Field(default_factory=dict)
     upstream: list[str] = Field(default_factory=list)
@@ -123,64 +124,97 @@ class TaskResult(Mappable):
 
     def payload_dict(self) -> dict[str, Any]:
         """Return only the task payload fields, excluding TaskResult metadata."""
-        return self.model_dump(exclude=self.__class__._metadata_field_names())
+        model_data = self.model_dump()
+        return {
+            field_name: model_data[field_name]
+            for field_name in self.__class__._payload_field_names()
+        }
 
     def metadata_dict(self) -> dict[str, Any]:
         """Return only TaskResult metadata fields such as params, upstream, and timestamp."""
-        return self.model_dump(include=self.__class__._metadata_field_names())
+        model_data = self.model_dump()
+        return {
+            field_name: model_data[field_name]
+            for field_name in self.__class__.metadata_field_names()
+        }
 
     def combine(self, other: "TaskResult") -> "TaskResult":
         """
-        Combine this result with another result of the same concrete class.
+            Combine this result with another result of the same concrete class.
 
-        This is primarily useful for lazy task execution where each iteration yields
-        a partial result that should be accumulated across iterations.
+            This is primarily useful for lazy task execution where each iteration yields
+            a partial result that should be accumulated across iterations.
 
-        Non-metadata fields are combined with append semantics:
-          - if the current value is already a list, extend it
-          - otherwise promote it to a list and append the new value
+            Payload fields are combined according to their type:
+              - ``ImageBundle`` / subclasses : images lists concatenated via ``type(a)(images=...)``
+              - ``pd.DataFrame``             : ``pd.concat(..., ignore_index=True)``
+              - ``np.ndarray``               : ``np.concatenate`` along axis 0 when trailing
+                                               dimensions are compatible, otherwise ``[a, b]``
+              - ``dict``                     : merged; duplicate keys are combined recursively
+              - ``list``                     : extended
+              - ``None``                     : non-``None`` value is kept; both ``None`` → ``None``
+              - anything else (scalar, str,
+                tuple, pint.Quantity, etc.)  : promoted to / appended into a list
 
-        Metadata fields are merged as follows:
-          - ``params``: values from ``other`` override values from ``self``
-          - ``upstream``: concatenated and deduplicated while preserving order
-          - ``timestamp``: accumulated into a list in iteration order
+            Metadata fields are merged as follows:
+              - ``params``    : values from ``other`` override values from ``self``
+              - ``upstream``  : concatenated and deduplicated while preserving order
+              - ``timestamp`` : accumulated into a list in iteration order
 
-        Notes:
-            Combined payload fields may no longer match the original field
-            annotations exactly (for example, a scalar field may become a list after
-            accumulation). This is intentional for lazy accumulation, so the combined
-            instance is constructed without re-validating the merged payload.
-        """
-        if self.__class__.__name__ is not other.__class__.__name__:
+            Notes:
+                Combined payload fields may no longer match the original field annotations
+                exactly (e.g. a scalar field may become a list after accumulation). This is
+                intentional for lazy accumulation; the combined instance is constructed
+                without re-validating the merged payload.
+            """
+        if self.__class__ is not other.__class__:
             raise ValueError(
                 "Can only combine TaskResult instances of the same concrete class. "
                 f"Got {self.__class__.__name__} and {other.__class__.__name__}."
             )
 
-        combined_payload: dict[str, Any] = {}
+        def combine_values(current_value: Any, other_value: Any) -> Any:
+            if current_value is None:
+                return other_value
+            if other_value is None:
+                return current_value
+            if isinstance(current_value, ImageBundle) and isinstance(other_value, ImageBundle):
+                return type(current_value)(images=current_value.images + other_value.images)
+            if isinstance(current_value, pd.DataFrame) and isinstance(other_value, pd.DataFrame):
+                return pd.concat([current_value, other_value], ignore_index=True)
+            if isinstance(current_value, np.ndarray) and isinstance(other_value, np.ndarray):
+                if (
+                    current_value.ndim > 0
+                    and other_value.ndim > 0
+                    and current_value.shape[1:] == other_value.shape[1:]
+                ):
+                    return np.concatenate([current_value, other_value], axis=0)
+                return [current_value, other_value]
+            if isinstance(current_value, dict) and isinstance(other_value, dict):
+                combined_dict = current_value.copy()
+                for key, value in other_value.items():
+                    combined_dict[key] = (
+                        combine_values(combined_dict[key], value)
+                        if key in combined_dict
+                        else value
+                    )
+                return combined_dict
+            if isinstance(current_value, list) or isinstance(other_value, list):
+                current_items = current_value if isinstance(current_value, list) else [current_value]
+                other_items = other_value if isinstance(other_value, list) else [other_value]
+                return current_items + other_items
+            return [current_value, other_value]
 
-        for field_name in self.__class__._payload_field_names():
-            current_value = getattr(self, field_name)
-            try:
-                other_value = getattr(other, field_name)
-            except AttributeError:
-                raise
-
-            if type(current_value) is ImageBundle:
-                combined_value = ImageBundle(images=current_value.images + other_value.images)
-            elif type(current_value) is pd.DataFrame:
-                combined_value = pd.concat([current_value, other_value], ignore_index=True)
-            else:
-                current_value = current_value if isinstance(current_value, list) else [current_value]
-                other_value = other_value if isinstance(other_value, list) else [other_value]
-                combined_value = current_value + other_value
-            combined_payload[field_name] = combined_value
+        combined_payload = {
+            field_name: combine_values(getattr(self, field_name), getattr(other, field_name))
+            for field_name in self.__class__._payload_field_names()
+        }
 
         combined_params = {**self.params, **other.params}
         combined_upstream = list(dict.fromkeys([*self.upstream, *other.upstream]))
-        self.timestamp = self.timestamp if isinstance(self.timestamp, list) else [self.timestamp]
-        other_timestamp = other.timestamp if isinstance(other.timestamp, list) else [other.timestamp]
-        combined_timestamp = self.timestamp + other_timestamp
+        current_timestamps = self.timestamp if isinstance(self.timestamp, list) else [self.timestamp]
+        other_timestamps = other.timestamp if isinstance(other.timestamp, list) else [other.timestamp]
+        combined_timestamp = current_timestamps + other_timestamps
 
         return self.__class__.model_construct(
             **combined_payload,
@@ -337,7 +371,13 @@ class TaskResult(Mappable):
 
     def save(self, filepath: str) -> None:
         with open(os.path.join(filepath, f"{self.__class__.__name__}_metadata.json"), "w") as f:
-            f.write(self.model_dump_json(indent=2, exclude=set(self.__class__.payload_field_names())))
+            f.write(self.to_json(indent=2, exclude=set(self.__class__.payload_field_names())))
+
+    @classmethod
+    def load_metadata(cls, filepath: str) -> dict[str, Any]:
+        """Load decoded metadata for a result whose payload is stored separately."""
+        with open(os.path.join(filepath, f"{cls.__name__}_metadata.json"), "r") as f:
+            return cls._decode_json_value(json.load(f))
 
     @classmethod
     def load(cls, filepath: str):

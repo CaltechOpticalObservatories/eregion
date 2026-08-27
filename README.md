@@ -99,11 +99,11 @@ Early development. More tasks and flows to be added.
 ```bash
   pip install .
 ```
-- Development installation:
+- Editable installation:
 ```bash
   pip install -e .
 ```
 ### Install additional dependencies for testing and development
 ```bash
-  pip install -e .[dev]
+  pip install -e '.[dev,test]'
 ```

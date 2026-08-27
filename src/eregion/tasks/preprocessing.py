@@ -64,7 +64,7 @@ class BiasSubtraction(BasePreprocessingTask):
         :param name: Optional[str]
         Keyword arguments
 
-        - only_image_area: bool, If True, only subtract bias from the image area, ignoring overscan/prescan regions. Default is False.
+        - only_image_area: bool, If True, only subtract bias from the image area, ignoring overscan/prescan regions. Default is True.
         """
         super().__init__(name=name, **kwargs)
         self.master_bias = None
@@ -266,8 +266,8 @@ class SigmaClipMasking(BasePreprocessingTask):
 
         # clip image data region
         im_slcs = decrease_slicer_stop_index(output.image_region)
-        image_data = output.get_image_region().values
-        image_data_clipped = sigma_clip_image(image_data, **self.sigma_clip_args)
+        image_data, _ = output.get_image_region()
+        image_data_clipped = sigma_clip_image(image_data.values, **self.sigma_clip_args)
 
         # combine masks
         combined_mask = xr.zeros_like(output.data).astype(bool)
@@ -278,7 +278,10 @@ class SigmaClipMasking(BasePreprocessingTask):
         if output.masks is None:
             output.masks = combined_mask.to_dataset(name="sigma_clip_mask")
         else:
-            output.masks.update({"sigma_clip_mask": combined_mask})
+            if "sigma_clip_mask" in output.masks:
+                output.masks["sigma_clip_mask"] |= combined_mask
+            else:
+                output.masks["sigma_clip_mask"] = combined_mask
         return output
 
     def _process_single_image(self, img: DetImage) -> DetImage:
