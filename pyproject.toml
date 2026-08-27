@@ -45,6 +45,13 @@ test = [
     "pytest>=7.0",
 ]
 
+[tool.pytest.ini_options]
+addopts = "-m 'not slow and not viz'"
+markers = [
+    "slow: large-data/performance tests, excluded by default (run with -m slow)",
+    "viz: generates viewable plot output on disk, excluded by default (run with -m viz)",
+]
+
 [tool.setuptools]
 include-package-data = true
 

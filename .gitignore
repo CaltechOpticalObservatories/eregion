@@ -95,3 +95,6 @@ http-client.private.env.json
 
 # Github Copilot persisted session migrations, see: https://github.com/microsoft/copilot-intellij-feedback/issues/712#issuecomment-3322062215
 **/.idea/**/copilot.data.migration.*.xml
+
+# Generated plots from visualization tests (see tests/test_entropy_visualization.py)
+tests/output/
