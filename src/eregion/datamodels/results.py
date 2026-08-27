@@ -370,6 +370,7 @@ class TaskResult(Mappable):
         print()
 
     def save(self, filepath: str) -> None:
+        os.makedirs(filepath, exist_ok=True)
         with open(os.path.join(filepath, f"{self.__class__.__name__}_metadata.json"), "w") as f:
             f.write(self.to_json(indent=2, exclude=set(self.__class__.payload_field_names())))
 
