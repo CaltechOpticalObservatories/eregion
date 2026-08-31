@@ -258,12 +258,12 @@ class SigmaClipMasking(BasePreprocessingTask):
 
         # clip serial overscan
         soc_slcs = decrease_slicer_stop_index({output.serial_axis: output.serial_overscan})
-        serial_overscan_data = output.get_overscan("serial").values
+        serial_overscan_data = output.get_overscan("serial", corner=True).values
         serial_overscan_clipped = sigma_clip_image(serial_overscan_data, **sigma_clip_args_overscan)
 
         # clip parallel overscan
         poc_slcs = decrease_slicer_stop_index({output.parallel_axis: output.parallel_overscan})
-        parallel_overscan_data = output.get_overscan("parallel").values
+        parallel_overscan_data = output.get_overscan("parallel", corner=True).values
         parallel_overscan_clipped = sigma_clip_image(parallel_overscan_data, **sigma_clip_args_overscan)
 
         # clip image data region

@@ -171,7 +171,8 @@ class CCDOutput(Output):
             other_axis = "serial" if axis == "parallel" else "parallel"
             other_prescan = getattr(self, f"{other_axis}_prescan")
             other_overscan = getattr(self, f"{other_axis}_overscan")
-            slicer[getattr(self, f"{other_axis}_axis")] = slice(other_prescan.stop, other_overscan.start)
+            step = -1 if other_prescan.stop > other_overscan.start else 1
+            slicer[getattr(self, f"{other_axis}_axis")] = slice(other_prescan.stop, other_overscan.start, step)
         return slice_data(self.data, slicer)
 
     def get_prescan(self, axis: Literal['serial', 'parallel'], corner: bool = False) -> xr.DataArray:
