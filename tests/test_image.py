@@ -142,9 +142,13 @@ def test_ccdoutput_serial_axis_and_regions():
     )
     # serial axis should be x if parallel is y
     assert ccd.serial_axis == "x"
-    sp = ccd.get_prescan("serial")
-    pp = ccd.get_prescan("parallel")
+    sp = ccd.get_prescan("serial", corner=False)
+    pp = ccd.get_prescan("parallel", corner=False)
+    sp1 = ccd.get_prescan("serial", corner=True)
+    pp1 = ccd.get_prescan("parallel", corner=True)
     assert sp.shape[1] == 2 and pp.shape[0] == 2
+    assert sp.shape[0] == 4 and pp.shape[1] == 6
+    assert sp1.shape[0] == 8 and pp1.shape[1] == 10
 
 
 def test_detimage_default_output_creation_and_lookup():

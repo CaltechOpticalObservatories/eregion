@@ -195,8 +195,9 @@ class PTC(LazyTask):
 
         ###### EXTRA stats, CCD specific ########
         if isinstance(output, CCDOutput):
-            llel_oscan = output.get_overscan(kind='parallel').values
-            ser_oscan = output.get_overscan(kind='serial').values
+            # Corners not included when doing stats on overscans
+            llel_oscan = output.get_overscan('parallel', corner=False).values
+            ser_oscan = output.get_overscan('serial', corner=False).values
 
             # overscan stats,
             stats |= do_statistics(data=ser_oscan, which=STATFUNCS, axis=None, prepend_kw="ser_oscan_")
