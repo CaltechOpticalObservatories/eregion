@@ -101,7 +101,7 @@ def guess_image_type_from_header(headers: list[fits.Header | dict], keywords=Non
         for key, hkeys in keywords.items():
             for hkey in hkeys:
                 if hkey in header:
-                    imtype[key] = header[hkey].lower()
+                    imtype[key] = header[hkey]
                     break
     return imtype
 

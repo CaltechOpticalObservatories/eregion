@@ -1,0 +1,106 @@
+description: KPF detectors (2 CCDs with 2 outputs each and 1 CCD with 1 output)
+detector_type: CCD
+detector_output_class: CCDOutput
+
+objects:
+  - name: 'green'
+    class: DetImage
+    header_index: 0
+    filename_format: '*.fits*'
+    properties:
+      x_size: 4188
+      y_size: 4110
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'amp1'
+        ext_id: 1 # FITS extension ID
+        ext_slice: [!slice [0, 4110], !slice [0, 2094]]
+        data_slice: [!slice [0, 4110], !slice [0, 2094]]
+        serial_prescan: !slice [0, 4] # 4 pix
+        serial_overscan: !slice [2044, 2094] # 50 pix
+        parallel_prescan: !slice [0, 0] # 0 pix
+        parallel_overscan: !slice [4080, 4110] # 30 pix
+        readout_pixel: [0, 0]
+        parallel_axis: 'y'
+        gain: 5.2 # from header
+      - id: 'amp2'
+        ext_id: 2
+        ext_slice: [!slice [0, 4110], !slice [0, 2094]]
+        data_slice: [ !slice [0, 4110], !slice [2094, 4188]]
+        serial_prescan: !slice [4187, 4183] # 4 pix
+        serial_overscan: !slice [2143, 2093] # 50 pix
+        parallel_prescan: !slice [0, 0] # 0 pix
+        parallel_overscan: !slice [4080, 4110] # 30 pix
+        readout_pixel: [0, 4187]
+        parallel_axis: 'y'
+        gain: 5.32  # electrons/ADU
+    focal_plane_position:
+      x_cen: 0.0  # mm
+      y_cen: 0.0  # mm
+      angle: 0.0  # degrees
+      flip_x: false
+      flip_y: false
+
+  - name: 'red'
+    class: DetImage
+    header_index: 0
+    filename_format: '*.fits*'
+    properties:
+      x_size: 4188
+      y_size: 4110
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'amp1'
+        ext_id: 3 # FITS extension ID
+        ext_slice: [!slice [0, 4110], !slice [0, 2094]]
+        data_slice: [!slice [0, 4110], !slice [0, 2094]]
+        serial_prescan: !slice [0, 4] # 4 pix
+        serial_overscan: !slice [2044, 2094] # 50 pix
+        parallel_prescan: !slice [0, 0] # 0 pix
+        parallel_overscan: !slice [4080, 4110] # 30 pix
+        readout_pixel: [0, 0]
+        parallel_axis: 'y'
+        gain: 5.0 # from header
+      - id: 'amp2'
+        ext_id: 4
+        ext_slice: [!slice [0, 4110], !slice [0, 2094]]
+        data_slice: [ !slice [0, 4110], !slice [2094, 4188]]
+        serial_prescan: !slice [4187, 4183] # 4 pix
+        serial_overscan: !slice [2143, 2093] # 50 pix
+        parallel_prescan: !slice [0, 0] # 0 pix
+        parallel_overscan: !slice [4080, 4110] # 30 pix
+        readout_pixel: [0, 4187]
+        parallel_axis: 'y'
+        gain: 5.3  # electrons/ADU
+    focal_plane_position:
+      x_cen: 0.0  # mm
+      y_cen: 0.0  # mm
+      angle: 0.0  # degrees
+      flip_x: false
+      flip_y: false
+
+  - name: 'cahk'
+    class: DetImage
+    header_index: 0
+    filename_format: '*.fits*'
+    properties:
+      x_size: 1024
+      y_size: 255
+      pixel_size: 0.026  # mm
+    outputs:
+      - id: 'amp1'
+        ext_id: 5 # FITS extension ID
+        ext_slice: [!slice [0, 255], !slice [0, 1024]]
+        data_slice: [!slice [0, 255], !slice [0, 1024]]
+        serial_prescan: !slice [0, 0]
+        serial_overscan: !slice [1023, 1023]
+        parallel_prescan: !slice [0, 0]
+        parallel_overscan: !slice [254, 254]
+        readout_pixel: [0, 0]
+        parallel_axis: 'y'
+    focal_plane_position:
+      x_cen: 0.0  # mm
+      y_cen: 0.0  # mm
+      angle: 0.0  # degrees
+      flip_x: false
+      flip_y: false

@@ -47,10 +47,31 @@ def process_raw_numbers(data: np.ndarray, offs) -> np.ndarray:
 
 def load_image_fits_DEIMOS(filename: str) -> tuple[list[Any], list[fits.Header]]:
     input_data_array, input_headers = load_image_fits(filename)
-    for i, hdr in enumerate(input_headers):
+    for i, data in enumerate(input_data_array):
+        if data is None:
+            continue
+        hdr = input_headers[i]
         if "TAPOFFS" in hdr:
             input_data_array[i] = process_raw_numbers(input_data_array[i], hdr["TAPOFFS"])
             logger.debug("Processed raw numbers for DEIMOS HDU %d", i)
         else:
             logger.debug("TAPOFFS not found in header for file %s HDU %d", filename, i)
+    return input_data_array, input_headers
+
+def load_image_fits_KPF(filename: str) -> tuple[list[Any], list[fits.Header]]:
+    input_data_array, input_headers = load_image_fits(filename)
+    for i, data in enumerate(input_data_array):
+        if data is None:
+            continue
+        hdr = input_headers[i]
+        if i < 5:
+            offset_key = [key for key in hdr.keys() if 'OFFSET' in key]
+            if len(offset_key) == 0:
+                logger.debug(f"No OFFSET keys found in header for file {filename} HDU {i}")
+                offset = 0.0
+            else:
+                logger.debug(f"Found OFFSET key {offset_key[0]} in header for file {filename} HDU {i}")
+                offset = hdr[offset_key[0]]
+            input_data_array[i] = process_raw_numbers(data.view('>u4'), offset)
+        logger.debug("Processed raw numbers for KPF HDU %d", i)
     return input_data_array, input_headers
