@@ -152,15 +152,33 @@ class CCDOutput(Output):
         im_slc_serial = slice(self.serial_prescan.stop, self.serial_overscan.start, serial_step)
         return {self.parallel_axis: im_slc_parallel, self.serial_axis: im_slc_serial}
 
-    def get_prescan(self, kind: Literal['serial', 'parallel']) -> xr.DataArray:
-        slc = self.serial_prescan if kind == "serial" else self.parallel_prescan
-        axis = self.serial_axis if kind == "serial" else self.parallel_axis
-        return slice_data(self.data, {axis: slc})
+    def get_scan(self,
+                 axis: Literal['serial', 'parallel'],
+                 kind: Literal['prescan', 'overscan'],
+                 corner: bool = False,
+                 ) -> xr.DataArray:
+        """
+        Slice the data array to get the scan region (prescan or overscan) along the specified axis (serial or parallel).
+        :param axis: serial or parallel
+        :param kind: prescan or overscan
+        :param corner: True to include the corner region (intersection of prescan and overscan) in the returned slice, False to exclude it.
+        :return: sliced xr.DataArray corresponding to the requested scan region.
+        """
+        slc = getattr(self, f"{axis}_{kind}")
+        slicer = {getattr(self, f"{axis}_axis"): slc}
+        if not corner:
+            # Exclude the corner region by adjusting the slice to avoid overlap with the other axis scans
+            other_axis = "serial" if axis == "parallel" else "parallel"
+            other_prescan = getattr(self, f"{other_axis}_prescan")
+            other_overscan = getattr(self, f"{other_axis}_overscan")
+            slicer[getattr(self, f"{other_axis}_axis")] = slice(other_prescan.stop, other_overscan.start)
+        return slice_data(self.data, slicer)
 
-    def get_overscan(self, kind: Literal['serial', 'parallel']) -> xr.DataArray:
-        slc = self.serial_overscan if kind == "serial" else self.parallel_overscan
-        axis = self.serial_axis if kind == "serial" else self.parallel_axis
-        return slice_data(self.data, {axis: slc})
+    def get_prescan(self, axis: Literal['serial', 'parallel'], corner: bool = False) -> xr.DataArray:
+        return self.get_scan(axis=axis, kind='prescan', corner=corner)
+
+    def get_overscan(self, axis: Literal['serial', 'parallel'], corner: bool = False) -> xr.DataArray:
+        return self.get_scan(axis=axis, kind='overscan', corner=corner)
 
     def show(self, ax=None, shade_regions=False, save=None, **imshow_kwargs):
         ax = super().show(ax=ax, save=None, **imshow_kwargs)
@@ -269,7 +287,7 @@ class DetImage:
             for out_id, out in self.outputs.items():
                 out.parent = self
 
-        self.masks: xr.Dataset = None
+        self.masks: xr.Dataset | None = None
 
     def add_output(self, output: Output, overwrite: bool = True):
         output.parent = self
@@ -348,7 +366,6 @@ class DetImage:
     def build_full_mask(self):
         if self.masks is not None:
             return True
-
         self.masks = xr.Dataset(coords=self.data.coords)
         for out_id, output in self.outputs.items():
             if output.masks is not None:
