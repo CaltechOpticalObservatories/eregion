@@ -281,7 +281,7 @@ class SigmaClipMasking(BasePreprocessingTask):
             output.masks = combined_mask.to_dataset(name="sigma_clip_mask")
         else:
             if "sigma_clip_mask" in output.masks:
-                output.masks["sigma_clip_mask"] |= combined_mask
+                output.masks["sigma_clip_mask"] = (output.masks["sigma_clip_mask"] | combined_mask)
             else:
                 output.masks["sigma_clip_mask"] = combined_mask
         return output
