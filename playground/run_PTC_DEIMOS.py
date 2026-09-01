@@ -99,7 +99,7 @@ def main():
                                     fileloader_func=load_image_fits_DEIMOS,
                                     data_on_demand=True)
         # subtract overscan
-        oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis")
+        oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis", trim_start=6)
         bias_res = oscan_sub.run(images=bias_res.data('type == "bias"'))
         # combine into masterbias
         mb_task = MasterBias(method='median')
@@ -109,7 +109,7 @@ def main():
 
     # init tasks for ptc
     creator = ImageCreator(detector_config=args.detector_config, max_batch_size=args.max_batch_size)
-    oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis")
+    oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis", trim_start=6)
     cr_mask = SigmaClipMasking(sigma_clip_args={"sigma_lower": args.sigma_lower, "sigma_upper": args.sigma_upper})
     bias_sub = BiasSubtraction(only_image_area=True)
     psd_size = None if args.skip_correlations else 9
