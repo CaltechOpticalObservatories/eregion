@@ -174,36 +174,38 @@ class TaskResult(Mappable):
             )
 
         def combine_values(current_value: Any, other_value: Any) -> Any:
-            if current_value is None:
-                return other_value
-            if other_value is None:
-                return current_value
-            if isinstance(current_value, ImageBundle) and isinstance(other_value, ImageBundle):
-                return type(current_value)(images=current_value.images + other_value.images)
-            if isinstance(current_value, pd.DataFrame) and isinstance(other_value, pd.DataFrame):
-                return pd.concat([current_value, other_value], ignore_index=True)
-            if isinstance(current_value, np.ndarray) and isinstance(other_value, np.ndarray):
-                if (
-                    current_value.ndim > 0
-                    and other_value.ndim > 0
-                    and current_value.shape[1:] == other_value.shape[1:]
+            match (current_value, other_value):
+                case None, other:
+                    return other
+                case other, None:
+                    return other
+                case ImageBundle(), ImageBundle():
+                    return type(current_value)(images=current_value.images + other_value.images)
+                case pd.DataFrame(), pd.DataFrame():
+                    return pd.concat([current_value, other_value], ignore_index=True)
+                case np.ndarray() as a, np.ndarray() as b if (
+                    a.ndim > 0 and b.ndim > 0 and a.shape[1:] == b.shape[1:]
                 ):
-                    return np.concatenate([current_value, other_value], axis=0)
-                return [current_value, other_value]
-            if isinstance(current_value, dict) and isinstance(other_value, dict):
-                combined_dict = current_value.copy()
-                for key, value in other_value.items():
-                    combined_dict[key] = (
-                        combine_values(combined_dict[key], value)
-                        if key in combined_dict
-                        else value
-                    )
-                return combined_dict
-            if isinstance(current_value, list) or isinstance(other_value, list):
-                current_items = current_value if isinstance(current_value, list) else [current_value]
-                other_items = other_value if isinstance(other_value, list) else [other_value]
-                return current_items + other_items
-            return [current_value, other_value]
+                    return np.concatenate([a, b], axis=0)
+                case np.ndarray() as a, np.ndarray() as b:
+                    return [a, b]
+                case dict() as a, dict() as b:
+                    combined_dict = a.copy()
+                    for key, value in b.items():
+                        combined_dict[key] = (
+                            combine_values(combined_dict[key], value)
+                            if key in combined_dict
+                            else value
+                        )
+                    return combined_dict
+                case list() as a, list() as b:
+                    return a + b
+                case list() as a, other:
+                    return a + [other]
+                case other, list() as b:
+                    return [other] + b
+                case _:
+                    return [current_value, other_value]
 
         combined_payload = {
             field_name: combine_values(getattr(self, field_name), getattr(other, field_name))

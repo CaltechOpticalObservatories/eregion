@@ -181,8 +181,7 @@ class LinBin(LazyTask):
         stats |= do_statistics(ma_imarr, which=BASICFUNCS, axis=output.serial_axint, prepend_kw='')
 
         # serial overscan region stats, unmasked
-        imslc = output.image_region[output.parallel_axis]
-        ser_oscan = slice_data(output.get_overscan(kind='serial'), {'y': imslc}).values[0:len(self.bins)]
+        ser_oscan = output.get_overscan('serial', corner=False).values[0:len(self.bins)]
         stats |= do_statistics(ser_oscan, which=BASICFUNCS, axis=output.serial_axint, prepend_kw='ser_oscan_')
 
         return stats
