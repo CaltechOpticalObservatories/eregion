@@ -1,6 +1,7 @@
-from typing import Optional, Any, Generator
+from typing import Optional, Any, Generator, Callable
 
 import numpy as np
+import pandas as pd
 
 from eregion.datamodels import TaskResult
 from eregion.tasks.task import Task, LazyTask
@@ -9,6 +10,7 @@ from eregion.tasks.ptc import PTCResult
 from eregion.core.expsum_fit_math import ExpSumFitter
 
 from pydantic import Field
+from eregion.utils.dangerous_magic import pack_argument_helper
 
 Number = int | float
 
@@ -19,9 +21,9 @@ class EPERFitUncalibratedResult(TaskResult):
     CTI_jan: float = Field(description = "CTI, Janesick approximation")
     CTI: float = Field(description = "CTI, full equation")
     signal_level: float = Field(description = "signal level, from input data")
-    trap_rates: list[float] | None = Field(description = "fitted trap decay rates")
-    trap_amplitudes: list[float] | None = Field(description = "fitted trap amplitudes")
-    eper_baseline: Number | None  = Field(description = "EPER trail baseline subtracted")
+    trap_rates: list[float] | None = Field(description = "fitted trap decay rates", default=None)
+    trap_amplitudes: list[float] | None = Field(description = "fitted trap amplitudes", default=None)
+    eper_baseline: Number | None  = Field(description = "EPER trail baseline subtracted", default=None)
 
 
 class SingleEPERTrailFitter(Task):
@@ -56,14 +58,16 @@ class SingleEPERTrailFitter(Task):
         if name is None:
             name = type(self).__name__
 
-        super().__init__(name=name, **kwargs, N_trap_species=N_trap_species, decay_rate_tolerance=decay_rate_tolerance, subtract_eper_zeros=subtract_eper_zeros, N_transfers=N_transfers)
+        superkwargs = pack_argument_helper(selfarg=self)
+        super().__init__(**superkwargs)
 
         self.decay_rate_tolerance = decay_rate_tolerance
         self.N_trap_species = N_trap_species
         self.subtract_eper_zeros = subtract_eper_zeros
         self.N_transfers = N_transfers
+        self.do_trapfit = do_trapfit
 
-    def run(self, siglevel: float, eper_trail: np.ndarray, n_transfers: int) -> EPERFitUncalibratedResult:
+    def run(self, siglevel: float, eper_trail: np.ndarray) -> EPERFitUncalibratedResult:
         results = dict()
 
         assert len(eper_trail.shape) == 1, "eper_trail should be 1D"
@@ -112,34 +116,32 @@ class SingleEPERTrailFitter(Task):
 
 class PTCEPERFitResult(TaskResult):
     """results of an EPER fit to a whole PTC dataset"""
+    eper_table: pd.DataFrame
     
 
 _EPERFitterType = dict[str, Any] | SingleEPERTrailFitter
+_Extractor = str | Callable[[tuple], Any]
     
 class PTCEPERFitter(LazyTask):
     task_result = PTCEPERFitResult
 
-    def __init__(self, selection_columns: list[str], fluxcolname: str, siglevelcolname: str, ser_eper_colname: str, llel_eper_colname: str, ser_settings: _EPERFitterType, llel_settings: _EPERFitterType, name: Optional[str]=None):
+    def __init__(self, pass_columns: list[str], siglevelcol: _Extractor, ser_eper_col: _Extractor, llel_eper_col: _Extractor, ser_settings: _EPERFitterType, llel_settings: _EPERFitterType, name: Optional[str]=None):
         """Task that fits EPER trails from the result of a PTC.
 
         parameters
         ----------
 
-        :param selection_columns: list[str]
-            the names of columns which should be selected for separating PTC curves. For example, to iindividually process curves
-            on columns labelled "det_id" and "output", use selection_columns=["det_id", "output"]
+        :param pass_columns: list[str]
+            the names of columns which should be passed through to the output. For example, if the input PTC data has two columns ["det_id", "output"] representing CCD output names, and a column "exptime" representing flux level, we might choose pass_columns=["det_id", "output", "exptime"]
 
-        :param fluxcolname: str
-            the name of the column to index on for different flux levels in the PTC
+        :param siglevelcol: str | Callable[[tuple], Any]
+            the name of the  column in the PTC table to base the calculation of signal levels on, or a callable that accepts a namedtuple as its only argument. In that case the signal level is calculated by calling this callable on the current namedtuple representing the current row of PTC data
 
-        :param siglevelcolname: str
-            the name of the column in the PTC table to base the calculation of signal levels on
+        :param ser_eper_col: str | Callable[[tuple], Any]
+            the name of the  column in the PTC table which contains serial EPER traces, or a callable that accepts a namedtuple as its only argument. In that case the signal level is calculated by calling this callable on the current namedtuple representing the current row of PTC data
 
-        :param ser_eper_colname: str
-            the name of the column in the PTC table ot use for the serial EPER trail data
-
-        :param llel_eper_colname: str
-            the name of the column in the PTC table to use for the parallel EPER trail data
+        :param llel_eper_col: str | Callable[[tuple], Any]
+            
 
         :param ser_settings: dict[str, Any] | SingleEPERTrailFitter
             dictionary of settings arguments that will be passed to the serial EPER fitter, or an instance of an EPER trail fitter already configured. See documentation for SingleEPERTrailFitter for details
@@ -152,13 +154,14 @@ class PTCEPERFitter(LazyTask):
 
         """
 
-        super().__init__(selection_columns=, fluxcolname, siglevelcolname, ser_eper_colname, llel_eper_colname, ser_settings, llel_settings, name)
+        superkwargs = pack_argument_helper(selfarg=self)
+        super().__init__(**superkwargs)
         
-        #TODO: ability to average EPER trails and flux columns. Needs some more metadata in PTC task
-
-        self.selection_columns = selection_columns
-
-        self.siglevelcolname = siglevelcolname
+        self.pass_columns = pass_columns
+        self.siglevelcol = siglevelcol
+        self.ser_eper_col = ser_eper_col
+        self.llel_eper_col = llel_eper_col
+        
         if name is None:
             name = type(self).__name__
 
@@ -172,14 +175,57 @@ class PTCEPERFitter(LazyTask):
                     setattr(self, f"{ftrname}_fitter", ftr)
                 case dict():
                     outftr = SingleEPERTrailFitter(**ftr)
-                    setattr(self, f"{ftrname}_fitter", ftr)
+                    setattr(self, f"{ftrname}_fitter", outftr)
                 case _:
                     raise TypeError(f"type of supplied argument for {ftrname} fitter is invalid.")
 
+    def _extract_from_row(self, row: tuple, col: _Extractor) -> Any:
+        match col:
+            case str():
+                return getattr(row, col)
+            case callable():
+                return col(row)
+            case _:
+                raise TypeError("invalid column spec, cannot extract data from row")
+                
     def lazy_run(self, ptc_results: PTCResult) -> Generator[PTCEPERFitResult]:
-        grouped_results = ptc_results.ptc_table.groupby(self.selection_columns)
 
-        for identuple, res in grouped_results:
-            self.logger.info("doing EPER fits on detector with identifier %s", identuple)
+        outcols = { k : list() for k in self.pass_columns}
+        outcols |= {"siglevel" : list()}
+
+        colbasenames = ["TDC", "relTDC", "CTI_jan", "CTI", "trap_rates", "trap_amplitudes", "_baseline"]
+        outcols |= {f"ser{k}" : list() for k in colbasenames}
+        outcols |= {f"llel{k}" : list() for k in colbasenames}
+
+
+        for row in  ptc_results.ptc_table.itertuples(index=False):
+            ident = []
+            for pcol in self.pass_columns:
+                v = getattr(row, pcol)
+                ident.append(v)
+                outcols[pcol].append(v)
+
+            siglevel = self._extract_from_row(row, self.siglevelcol)
+            outcols["siglevel"].append(siglevel)
+
+            self.logger.info(f"running serial EPER fit on row with id {ident} and signal level: {siglevel}")
+            seper = self._extract_from_row(row, self.ser_eper_col)
+            seper_result = self.ser_fitter.run(siglevel, seper)
+
+            self.logger.debug("seper_result: %s" , seper_result)
+            
+            self.logger.info(f"running parallel EPER fit on row with id {ident} and signal level: {siglevel}")
+            peper = self._extract_from_row(row, self.llel_eper_col)
+            peper_result = self.llel_fitter.run(siglevel, peper)
+
+            self.logger.debug("peper_result: %s", peper_result)
+            
+
+        outres = PTCEPERFitResult(eper_table=pd.DataFrame())
+        yield outres
+
+            
+
+            
 
 

@@ -10,21 +10,22 @@ FPATH: str = "/dettest_data/DTU_detreduce/DTU_fullfp_bringup/PTC/SCI/20260721-17
 PTCtable = PTCResult.load(FPATH)
 
 
-s_settings = {"N_transfers" : 1024}
+s_settings = {"N_transfers" : 1024, "do_trapfit": False}
 
 p_settings = {"N_transfers" : 4104,
-              "subtract_eper_zeros": 5}
+              "subtract_eper_zeros": 5, "do_trapfit": False}
 
 
-epertask = PTCEPERFitter(selection_columns=["det_id", "output"],
-                         fluxcolname="exptime",
-                         siglevelcolname="mean_0",
-                         ser_eper_colname="ser_eper_mean_0",
-                         llel_eper_colname="llel_eper_mean_0",
+epertask = PTCEPERFitter(pass_columns=["det_id", "output", "exptime"],
+                         siglevelcol="mean_0",
+                         ser_eper_col="ser_eper_mean_0",
+                         llel_eper_col="llel_eper_mean_0",
                          ser_settings=s_settings,
                          llel_settings=p_settings
                          )
 epertask.logger.setLevel(logging.DEBUG)
+
+epertask.run(PTCtable)
 
 
 plt.close("all")

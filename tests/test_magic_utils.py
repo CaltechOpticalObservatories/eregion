@@ -66,6 +66,13 @@ def test_excludeargs_call():
     assert "parg1" not in kw
     
     
+def test_kwargs_args_call():
 
+    def f(parg1, parg2, kwarg1, **kwargs):
+        return pack_argument_helper()
+
+    kw = f(1,2,"one",kwarg2="two")
+    assert kw == {"parg1" : 1, "parg2" : 2,
+                  "kwarg1" : "one", "kwarg2" : "two"}
 
     
