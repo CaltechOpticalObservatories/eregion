@@ -1,7 +1,10 @@
-from typing import Optional
+from typing import Optional, Any, Generator
+
+import numpy as np
 
 from eregion.datamodels import TaskResult
-from eregion.tasks.task import Task
+from eregion.tasks.task import Task, LazyTask
+from eregion.tasks.ptc import PTCResult
 
 from eregion.core.expsum_fit_math import ExpSumFitter
 
@@ -38,7 +41,7 @@ class SingleEPERTrailFitter(Task):
         
         :param N_trap_species: Optional[int]
            how many trap species to fit. If supplied, limits exponential fit to this number of trap species. If unspecified, fit continues until convergence
-        
+
         :param decay_rate_tolerance: float
             when N_trap_species is None, exponential fit terms will be coalesced until there are no decay rates closer together in ratio than this number. This is useful because the trap fit tends to produce many species close together in decay rate when unconstrained in number. When N_trap_species is specified, this value does nothing
 
@@ -82,7 +85,7 @@ class SingleEPERTrailFitter(Task):
         #basic CTI estimates from TDC
         results["CTI_jan"] = TDC / (siglevel * self.N_transfers)
         results["CTI"] = 1 - np.exp(np.log(1-relTDC) / self.N_transfers)
-                                    
+                              
         #run exponential sum fit
         if self.do_trapfit:
             efitter = ExpSumFitter(eper_trail, dU=1.0)
@@ -105,4 +108,78 @@ class SingleEPERTrailFitter(Task):
             results["trap_rates"] = efitter.ks
             results["trap_amplitudes"] = efitter.a
         return EPERFitUncalibratedResult(**results)
+
+
+class PTCEPERFitResult(TaskResult):
+    """results of an EPER fit to a whole PTC dataset"""
+    
+
+_EPERFitterType = dict[str, Any] | SingleEPERTrailFitter
+    
+class PTCEPERFitter(LazyTask):
+    task_result = PTCEPERFitResult
+
+    def __init__(self, selection_columns: list[str], fluxcolname: str, siglevelcolname: str, ser_eper_colname: str, llel_eper_colname: str, ser_settings: _EPERFitterType, llel_settings: _EPERFitterType, name: Optional[str]=None):
+        """Task that fits EPER trails from the result of a PTC.
+
+        parameters
+        ----------
+
+        :param selection_columns: list[str]
+            the names of columns which should be selected for separating PTC curves. For example, to iindividually process curves
+            on columns labelled "det_id" and "output", use selection_columns=["det_id", "output"]
+
+        :param fluxcolname: str
+            the name of the column to index on for different flux levels in the PTC
+
+        :param siglevelcolname: str
+            the name of the column in the PTC table to base the calculation of signal levels on
+
+        :param ser_eper_colname: str
+            the name of the column in the PTC table ot use for the serial EPER trail data
+
+        :param llel_eper_colname: str
+            the name of the column in the PTC table to use for the parallel EPER trail data
+
+        :param ser_settings: dict[str, Any] | SingleEPERTrailFitter
+            dictionary of settings arguments that will be passed to the serial EPER fitter, or an instance of an EPER trail fitter already configured. See documentation for SingleEPERTrailFitter for details
+
+        :param llel_settings: dict[str, Any] | SingleEPERTrailFitter
+            dictionary of settings arguments that will be passed to the parallel EPER fitter, or an instance of an EPER trail fitter already configured. See documentation for SingleEPERTrailFitter for details
+
+        :param name: Optional[str]
+            the name of the task. Default is current class name
+
+        """
+
+        super().__init__(selection_columns=, fluxcolname, siglevelcolname, ser_eper_colname, llel_eper_colname, ser_settings, llel_settings, name)
+        
+        #TODO: ability to average EPER trails and flux columns. Needs some more metadata in PTC task
+
+        self.selection_columns = selection_columns
+
+        self.siglevelcolname = siglevelcolname
+        if name is None:
+            name = type(self).__name__
+
+
+        ftrs = {"ser" : ser_settings,
+                "llel": llel_settings}
+
+        for ftrname, ftr in ftrs.items():
+            match ftr:
+                case SingleEPERTrailFitter():
+                    setattr(self, f"{ftrname}_fitter", ftr)
+                case dict():
+                    outftr = SingleEPERTrailFitter(**ftr)
+                    setattr(self, f"{ftrname}_fitter", ftr)
+                case _:
+                    raise TypeError(f"type of supplied argument for {ftrname} fitter is invalid.")
+
+    def lazy_run(self, ptc_results: PTCResult) -> Generator[PTCEPERFitResult]:
+        grouped_results = ptc_results.ptc_table.groupby(self.selection_columns)
+
+        for identuple, res in grouped_results:
+            self.logger.info("doing EPER fits on detector with identifier %s", identuple)
+
 
