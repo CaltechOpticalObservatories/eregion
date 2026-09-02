@@ -1,2 +1,3 @@
 from .base import Plotter
-from .histogram import HistogramPlotter
+from .descriptor import PlotDescriptor
+from .histogram import HistogramPlotter, HistogramPlotDescriptor

@@ -59,6 +59,9 @@ include-package-data = true
 where = ["src"]
 include = ["eregion*"]
 
+[tool.setuptools.package-data]
+eregion = ["py.typed"]
+
 [tool.hatch.envs.default]
 python = "3.12"
 features = ["dev", "test"]

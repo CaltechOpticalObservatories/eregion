@@ -1,15 +1,26 @@
+from dataclasses import dataclass
+from typing import Optional
+
 import matplotlib.pyplot as plt
 
 from eregion.tasks.histogram import HistogramResult
 from eregion.plotting.base import Plotter
+from eregion.plotting.descriptor import PlotDescriptor
 
 
-class HistogramPlotter(Plotter):
+@dataclass
+class HistogramPlotDescriptor(PlotDescriptor):
+    xlabel: Optional[str] = "Value"
+    ylabel: Optional[str] = "Counts"
+
+
+class HistogramPlotter(Plotter[HistogramResult]):
     """
     Draw a HistogramResult (computed by eregion.tasks.histogram.HistogramTask) as a
     step/stairs plot.
     """
     result_cls = HistogramResult
+    descriptor_cls = HistogramPlotDescriptor
 
     def plot(self, ax=None, **kwargs):
         """
@@ -25,8 +36,14 @@ class HistogramPlotter(Plotter):
         stairs_kwargs.update(kwargs)
         ax.stairs(self.result.counts, self.result.bin_edges, **stairs_kwargs)
 
-        ax.set_xlabel("Value")
-        ax.set_ylabel("Counts")
-        if self.result.label:
-            ax.set_title(self.result.label)
+        ax.set_xlabel(self.descriptor.xlabel)
+        ax.set_ylabel(self.descriptor.ylabel)
+        ax.set_xscale(self.descriptor.xscale)
+        ax.set_yscale(self.descriptor.yscale)
+
+        # HistogramResult.label is task data (what was histogrammed), not plot
+        # metadata -- it's a reasonable default title but the descriptor wins if set.
+        title = self.descriptor.resolve_title(self.result) or self.result.label
+        if title:
+            ax.set_title(title)
         return ax
