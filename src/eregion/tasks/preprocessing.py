@@ -185,7 +185,8 @@ class ScanSubtraction(BasePreprocessingTask):
 
         BASICSTATS = {'mean': STATFUNCS['mean'], 'median': STATFUNCS['median'], 'std': STATFUNCS['std'],
                       'mad': STATFUNCS['mad']}
-        trimmed_scan_stats = do_statistics(trimmed_scan_data.values, which=BASICSTATS, prepend_kw=self.which_scan)
+        trimmed_scan_stats = do_statistics(trimmed_scan_data.values, which=BASICSTATS,
+                                           prepend_kw=f"HIERARCH {self.which_scan}_")
 
         methodkwargs = {'axis': getattr(output, axis+"_axint")} if self.method_name == "median_by_axis" else {}
         subtract_value = self.method(trimmed_scan_data.values, **methodkwargs)
