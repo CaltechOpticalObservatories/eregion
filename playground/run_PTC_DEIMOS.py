@@ -1,16 +1,11 @@
 import argparse
 import os
 import glob2
-import sys
-from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-from datamodels import ImageBundle
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from eregion.datamodels import ImageBundle
 from eregion.tasks import ImageCreator
 from eregion.tasks.calibration import CalibrationResult, MasterBias
 from eregion.tasks.custom import guess_image_type_from_filename_DEIMOS, load_image_fits_DEIMOS
@@ -104,7 +99,7 @@ def main():
                                     fileloader_func=load_image_fits_DEIMOS,
                                     data_on_demand=True)
         # subtract overscan
-        oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis")
+        oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis", trim_start=6)
         bias_res = oscan_sub.run(images=bias_res.data('type == "bias"'))
         # combine into masterbias
         mb_task = MasterBias(method='median')
@@ -114,7 +109,7 @@ def main():
 
     # init tasks for ptc
     creator = ImageCreator(detector_config=args.detector_config, max_batch_size=args.max_batch_size)
-    oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis")
+    oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis", trim_start=6)
     cr_mask = SigmaClipMasking(sigma_clip_args={"sigma_lower": args.sigma_lower, "sigma_upper": args.sigma_upper})
     bias_sub = BiasSubtraction(only_image_area=True)
     psd_size = None if args.skip_correlations else 9
@@ -167,10 +162,10 @@ def parse_args():
     parser.add_argument("--skip-correlations", action="store_true", default=False, help="Skip correlation calculations")
     parser.add_argument("--break_after", type=int, default=0, help="Break after processing this many pairs, set to 0 to disable")
     parser.add_argument("--live_plot", action="store_true", default=False, help="Do live plotting")
-    parser.add_argument("--plot_cols", nargs="+", default=["std_diff"], help="Columns to plot")
+    parser.add_argument("--plot_cols", nargs="+", default=["std"], help="Columns to plot")
     parser.add_argument("--plot-x", nargs="+", default=["mean"], help="Columns to plot on x-axis")
-    parser.add_argument("--yscale", type=str, default='log', help="Scale for y-axis")
-    parser.add_argument("--xscale", type=str, default='log', help="Scale for x-axis")
+    parser.add_argument("--yscale", type=str, default='symlog', help="Scale for y-axis")
+    parser.add_argument("--xscale", type=str, default='symlog', help="Scale for x-axis")
     parser.add_argument("--overwrite", action="store_true", default=False, help="Overwrite existing files")
 
     args = parser.parse_args()

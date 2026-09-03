@@ -1,9 +1,9 @@
-import json
 from functools import partial, wraps
 import inspect
 import os
 import glob2
 import time
+import warnings
 import numpy as np
 from typing import Iterator, Generator, Callable, Iterable, Optional, Any
 from pydantic import model_validator, ConfigDict
@@ -17,6 +17,14 @@ from eregion.tasks import LazyTask, Task
 
 ##################### Class to handle image generation from configuration files ####################################
 class ImageResult(TaskResult):
+    """
+    A dataclass to hold the results of an image generation task.
+
+    Attributes
+    ----------
+    data: ImageBundle | FPImageBundle
+        Bundle of generated images (DetImage or FocalPlaneImage) from the task.
+    """
     data: ImageBundle | FPImageBundle
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
@@ -27,20 +35,23 @@ class ImageResult(TaskResult):
         for key, val in kwargs.items():
             if key not in payload_fields:
                 continue
-            if not isinstance(val, (ImageBundle, FPImageBundle)):
-                if isinstance(val, list):
-                    if all(isinstance(x, DetImage) for x in val):
-                        kwargs[key] = ImageBundle(val)
-                    elif all(isinstance(x, FocalPlaneImage) for x in val):
-                        kwargs[key] = FPImageBundle(val)
-                    else:
-                        raise ValueError(f"Invalid input. Value of {key} must be an ImageBundle, FPImageBundle, or a list of DetImage or FocalPlaneImage objects.")
+            if isinstance(val, list):
+                if all(isinstance(x, DetImage) for x in val):
+                    kwargs[key] = ImageBundle(val)
+                elif all(isinstance(x, FocalPlaneImage) for x in val):
+                    kwargs[key] = FPImageBundle(val)
+                else:
+                    raise ValueError(f"Invalid input. Value of {key} must be an ImageBundle, FPImageBundle, or a list "
+                                     f"of DetImage or FocalPlaneImage objects.")
         return kwargs
 
     def save(self, filepath: str, **kwargs) -> None:
         for attr, value in self.payload_dict().items():
             if isinstance(value, ImageBundle):
-                value.save(os.path.join(filepath, f"{attr}"), **kwargs)
+                if len(value)==0:
+                    warnings.warn(f"ImageBundle for attribute {attr} is empty. Not saving.")
+                else:
+                    value.save(os.path.join(filepath, f"{attr}"), **kwargs)
         super().save(filepath)
 
     @classmethod
@@ -49,8 +60,7 @@ class ImageResult(TaskResult):
         for attr in cls.payload_field_names():
             if isinstance(cls.model_fields[attr].annotation, type(ImageBundle | FPImageBundle)):
                 attrs[attr] = ImageBundle.load(os.path.join(filepath, f"{attr}"))
-        with open(os.path.join(filepath, f"{cls.__name__}_metadata.json"), "r") as f:
-            metadata = json.load(f)
+        metadata = cls.load_metadata(filepath)
         return cls(**attrs, **metadata)
 
 class ImageCreator(LazyTask):
@@ -88,10 +98,10 @@ class ImageCreator(LazyTask):
         Register a custom image-type identification function. It should return a dict with image identifiers as keys and
         their corresponding values, and must have either 'filename' or 'headers' as a required argument.
 
-        Expected signatures:
+        Expected signature::
 
-        >>> func(headers: list[astropy.io.fits.Header | dict], **kwargs) -> dict
-        >>> func(filename: str, **kwargs) -> dict
+            func(headers: list[astropy.io.fits.Header | dict], **kwargs) -> dict
+            func(filename: str, **kwargs) -> dict
         """
         if not callable(func):
             try:
@@ -112,9 +122,9 @@ class ImageCreator(LazyTask):
         In case of loading data from memory instead of files, this custom function can be used to just supply headers,
         with filename as None.
 
-        Expected signature:
+        Expected signature::
 
-        >>> func(filename: str, **kwargs) -> tuple(list[Any], list[astropy.io.fits.Header | dict])
+            func(filename: str, **kwargs) -> tuple(list[Any], list[astropy.io.fits.Header | dict])
         """
         if not callable(func):
             try:
@@ -295,8 +305,10 @@ class ImageCreator(LazyTask):
             args['filename'] = filename
         if 'headers' in sig.parameters.keys():
             args['headers'] = headers
-        image.image_type = self._identifier_task(**args)
-        self.logger.debug("Identified image type as %s", image.image_type)
+        imtype = self._identifier_task(**args)
+        image.meta.update({'image_type': imtype})
+        image.image_type = imtype
+        self.logger.debug("Identified image type as %s", imtype)
 
         # Assemble full image data from outputs if not data_on_demand
         if len(input_data_array) > 0:
@@ -404,26 +416,10 @@ class AssembleFocalPlane(Task):
         self.num_detectors = num_detectors
         self.FPClass = partial(FocalPlaneImage, num_detectors=num_detectors, dim=dim)
 
-    def group_by(self, columns: list[str]) -> Generator:
-        """
-        Group the images in the bundle by the specified columns.
-        :param columns: A list of column names to group by.
-        :return: Grouped images as list of ImageBundle objects.
-        """
-        groups = self.bundle.list.groupby(by=columns)
-        for group in groups:
-            # verify that each group has len <= num_detectors
-            if not (len(group[1]) <= self.num_detectors and group[1]['det_id'].is_unique):
-                self.logger.warning(f"Group with column values {group[0]} has incorrect number of detectors."
-                                    f"Check that the grouping columns are correct to uniquely identify the images."
-                                    f"Skipping this group.")
-                continue
-            yield ImageBundle(group[1]['object'].to_list())
-
     def run(self,
             from_path: str = None,
             from_images: ImageBundle | list[DetImage] = None,
-            grouping_columns: list[str] = None,
+            groupby_keys: list[str] = None,
             **kwargs)-> ImageResult:
 
         if from_path is not None:
@@ -434,7 +430,12 @@ class AssembleFocalPlane(Task):
             raise ValueError("Must provide either from_path or from_images to assemble focal plane images.")
 
         fp_images = []
-        for imbundle in self.group_by(columns=grouping_columns):
+        for unique_keys, group in self.bundle.groupby(by=groupby_keys):
+            if not (len(group) <= self.num_detectors and group['det_id'].is_unique):
+                self.logger.warning(f"Group with groupby column values {unique_keys} has incorrect number of detectors."
+                                    f"Check that the grouping columns are correct to uniquely identify the images."
+                                    f"Skipping this group.")
+                continue
+            imbundle = ImageBundle.from_dataframe(group)
             fp_images.append(self.FPClass(det_images=imbundle))
         return self.task_result(data=FPImageBundle(images=fp_images))
-

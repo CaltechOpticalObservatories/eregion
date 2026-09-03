@@ -4,7 +4,7 @@ from copy import deepcopy
 from eregion.datamodels import TaskResult
 import pandas as pd
 import os
-from eregion.utils import save_ptc_table_fits
+from eregion.utils import save_dataframe_to_fits
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -26,7 +26,7 @@ class TabularTaskResult(TaskResult):
     def save(self, filepath):
         os.makedirs(filepath, exist_ok=True)
         df = dataframe_from_tabular_model(self)
-        save_ptc_table_fits(df, os.path.join(filepath, self.SAVE_FILE_NAME))
+        save_dataframe_to_fits(df, os.path.join(filepath, self.SAVE_FILE_NAME))
         super().save(filepath)
 
 

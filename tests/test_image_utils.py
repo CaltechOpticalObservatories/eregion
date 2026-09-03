@@ -60,5 +60,5 @@ def test_slice_data_dict_with_negative_step():
 def test_slice_data_rejects_non_slice_entries():
     da = xr.DataArray(np.arange(9).reshape(3, 3), dims=("y", "x"), coords={"y": np.arange(3), "x": np.arange(3)})
 
-    with pytest.raises(ValueError, match="must be slices"):
+    with pytest.raises(TypeError, match="slicer must be a tuple of slices or a dict of {dim: slice}"):
         slice_data(da, (slice(0, 2), 1))

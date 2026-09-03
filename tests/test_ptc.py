@@ -1,12 +1,16 @@
+import json
+
 import numpy as np
 import pandas as pd
+import pint
+from astropy.io import fits
 
 from eregion.datamodels import ImageBundle
 from eregion.tasks.ptc import PTCResult
-from eregion.utils import load_ptc_table_fits, save_ptc_table_fits
+from eregion.utils import load_dataframe_from_fits, save_dataframe_to_fits
 
 
-def test_ptc_table_fits_round_trip_preserves_scalar_and_array_columns(tmp_path):
+def test_dataframe_fits_round_trip_preserves_scalar_and_array_columns(tmp_path):
     table = pd.DataFrame(
         {
             "det_id": ["D1", "D2"],
@@ -28,8 +32,8 @@ def test_ptc_table_fits_round_trip_preserves_scalar_and_array_columns(tmp_path):
     )
 
     path = tmp_path / "ptc_table.fits"
-    save_ptc_table_fits(table, str(path))
-    loaded = load_ptc_table_fits(str(path))
+    save_dataframe_to_fits(table, str(path))
+    loaded = load_dataframe_from_fits(str(path))
 
     assert list(loaded.columns) == list(table.columns)
     assert loaded["det_id"].tolist() == table["det_id"].tolist()
@@ -41,6 +45,38 @@ def test_ptc_table_fits_round_trip_preserves_scalar_and_array_columns(tmp_path):
     assert np.array_equal(loaded.loc[1, "llel_eper_mean"], table.loc[1, "llel_eper_mean"])
     assert np.array_equal(loaded.loc[0, "PSD"], table.loc[0, "PSD"])
     assert np.array_equal(loaded.loc[1, "dPSD"], table.loc[1, "dPSD"])
+
+
+def test_dataframe_fits_writes_pint_units_in_fits_format(tmp_path):
+    ureg = pint.UnitRegistry()
+    ureg.define("DN = []")
+    ureg.define("elec = []")
+    table = pd.DataFrame(
+        {
+            "velocity": [1.0 * ureg.meter / ureg.second, 2.0 * ureg.meter / ureg.second],
+            "gain": [1.5 * ureg.elec / ureg.DN, 1.6 * ureg.elec / ureg.DN],
+        }
+    )
+
+    path = tmp_path / "quantities.fits"
+    save_dataframe_to_fits(table, str(path))
+
+    with fits.open(path) as hdul:
+        assert hdul[1].columns["velocity"].unit == "m s-1"
+        assert hdul[1].columns["gain"].unit == "count adu-1"
+
+
+def test_dataframe_fits_preserves_nullable_quantity_column_length(tmp_path):
+    ureg = pint.UnitRegistry()
+    table = pd.DataFrame({"flux": [1.0 * ureg.watt, None, 3.0 * ureg.watt]})
+
+    path = tmp_path / "nullable-quantities.fits"
+    save_dataframe_to_fits(table, str(path))
+
+    with fits.open(path) as hdul:
+        column = hdul[1].data["flux"]
+        assert len(column) == len(table)
+        assert np.isnan(column[1])
 
 
 def test_ptcresult_save_and_load_round_trip(tmp_path):
@@ -62,6 +98,7 @@ def test_ptcresult_save_and_load_round_trip(tmp_path):
     result.save(str(tmp_path))
     loaded = PTCResult.load(str(tmp_path))
 
+    assert loaded.metadata_dict() == {"params": {}, "upstream": [], "timestamp": []}
     assert loaded.ptc_table["det_id"].tolist() == ["D1"]
     assert np.array_equal(loaded.ptc_table.loc[0, "PSD"], np.arange(4.0).reshape(2, 2))
     assert isinstance(loaded.diff_images, ImageBundle)

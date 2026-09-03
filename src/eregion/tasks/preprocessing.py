@@ -64,7 +64,7 @@ class BiasSubtraction(BasePreprocessingTask):
         :param name: Optional[str]
         Keyword arguments
 
-        - only_image_area: bool, If True, only subtract bias from the image area, ignoring overscan/prescan regions. Default is False.
+        - only_image_area: bool, If True, only subtract bias from the image area, ignoring overscan/prescan regions. Default is True.
         """
         super().__init__(name=name, **kwargs)
         self.master_bias = None
@@ -163,8 +163,8 @@ class ScanSubtraction(BasePreprocessingTask):
                 Name identifying the task instance. Default is None.
             kwargs:
                 - method: str, optional, method to use for subtraction. Default is 'median_by_axis'.
-                - skip_rows: int, optional, number of rows to skip from the start of the scan region. Default is 0.
-                - skip_cols: int, optional, number of columns to skip from the start of the scan region. Default is 0.
+                - trim_start: int, optional, number of indices to trim from the start of the scan region before calculating the subtraction value. Default is 0.
+                - trim_end: int, optional, number of indices to trim from the end of the scan region before calculating the subtraction value. Default is 0.
         """
         if 'method' not in kwargs:
             kwargs['method'] = 'median_by_axis'
@@ -173,12 +173,14 @@ class ScanSubtraction(BasePreprocessingTask):
         if self.which_scan not in ["serial_prescan", "serial_overscan", "parallel_prescan", "parallel_overscan"]:
             raise ValueError(f"Invalid which_scan value: {self.which_scan}")
 
-    def _subtract_scan_per_output(self, output: Output, skip_rows: int = 0, skip_cols: int = 0):
-        axis, scan = self.which_scan.split("_")
-        getfunc = getattr(output, "get_" + scan)
+    def _subtract_scan_per_output(self, output: Output, trim_start: int = 0, trim_end: int = 0):
+        axis, kind = self.which_scan.split("_")
+        getfunc = getattr(output, "get_scan")
 
-        scan_data = getfunc(kind=axis) # xr.DataArray
-        trimmed_scan_data = scan_data.isel({'y': slice(skip_rows, None, None), 'x': slice(skip_cols, None, None)})
+        scan_data = getfunc(axis=axis, kind=kind, corner=True) # full scan data including overlapping corners region
+        axis_str = getattr(output, axis+"_axis")
+        trim_slc = slice(trim_start, scan_data.sizes[axis_str] - trim_end)
+        trimmed_scan_data = scan_data.isel({axis_str: trim_slc})
 
         methodkwargs = {'axis': getattr(output, axis+"_axint")} if self.method_name == "median_by_axis" else {}
         subtract_value = self.method(trimmed_scan_data.values, **methodkwargs)
@@ -193,11 +195,11 @@ class ScanSubtraction(BasePreprocessingTask):
         :return: DetImage
             The processed image with scans subtracted.
         """
-        skip_rows = self.meta.get("skip_rows", 0)
-        skip_cols = self.meta.get("skip_cols", 0)
+        trim_start = self.meta.get("trim_start", 0)
+        trim_end = self.meta.get("trim_end", 0)
         outputs = img.outputs.values()
         results = Parallel(n_jobs=self.n_jobs)(
-            delayed(self._subtract_scan_per_output)(output, skip_rows, skip_cols) for output in outputs
+            delayed(self._subtract_scan_per_output)(output, trim_start, trim_end) for output in outputs
         )
 
         for output, (subtracted_scan, subtract_value) in zip(img.outputs.values(), results):
@@ -256,18 +258,18 @@ class SigmaClipMasking(BasePreprocessingTask):
 
         # clip serial overscan
         soc_slcs = decrease_slicer_stop_index({output.serial_axis: output.serial_overscan})
-        serial_overscan_data = output.get_overscan(kind="serial").values
+        serial_overscan_data = output.get_overscan("serial", corner=True).values
         serial_overscan_clipped = sigma_clip_image(serial_overscan_data, **sigma_clip_args_overscan)
 
         # clip parallel overscan
         poc_slcs = decrease_slicer_stop_index({output.parallel_axis: output.parallel_overscan})
-        parallel_overscan_data = output.get_overscan(kind="parallel").values
+        parallel_overscan_data = output.get_overscan("parallel", corner=True).values
         parallel_overscan_clipped = sigma_clip_image(parallel_overscan_data, **sigma_clip_args_overscan)
 
         # clip image data region
         im_slcs = decrease_slicer_stop_index(output.image_region)
-        image_data = output.get_image_region().values
-        image_data_clipped = sigma_clip_image(image_data, **self.sigma_clip_args)
+        image_data, _ = output.get_image_region()
+        image_data_clipped = sigma_clip_image(image_data.values, **self.sigma_clip_args)
 
         # combine masks
         combined_mask = xr.zeros_like(output.data).astype(bool)
@@ -278,7 +280,10 @@ class SigmaClipMasking(BasePreprocessingTask):
         if output.masks is None:
             output.masks = combined_mask.to_dataset(name="sigma_clip_mask")
         else:
-            output.masks.update({"sigma_clip_mask": combined_mask})
+            if "sigma_clip_mask" in output.masks:
+                output.masks["sigma_clip_mask"] = (output.masks["sigma_clip_mask"] | combined_mask)
+            else:
+                output.masks["sigma_clip_mask"] = combined_mask
         return output
 
     def _process_single_image(self, img: DetImage) -> DetImage:

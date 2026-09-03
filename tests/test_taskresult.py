@@ -17,10 +17,12 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+import numpy as np
+import pandas as pd
 from astropy.time import Time
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_serializer, ConfigDict
 
-from eregion.datamodels import TaskResult
+from eregion.datamodels import ImageBundle, TaskResult
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +34,7 @@ class SimpleOutput(TaskResult):
     value: float = Field(..., description="A numeric value")
     count: int   = Field(..., description="A count")
     name: str    = Field(default="default", description="A label")
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
 
 class AllOptionalOutput(TaskResult):
@@ -50,6 +53,36 @@ class CombineOutput(TaskResult):
     """Fixture model used to test lazy accumulation semantics."""
     image_id: str = Field(..., description="Identifier for a single image")
     measurements: list[int] = Field(default_factory=list, description="Per-image measurements")
+
+
+class MergeOutput(TaskResult):
+    """Fixture model covering all type-aware accumulation paths."""
+    array: np.ndarray | list[np.ndarray] | None = None
+    data: pd.DataFrame | None = None
+    nested: dict[str, Any] = Field(default_factory=dict)
+    bundle: ImageBundle | None = None
+    value: Any = None
+
+
+class JsonOutput(TaskResult):
+    """Fixture model used to test Mappable's tagged JSON codec."""
+    region: slice
+    data: np.ndarray
+
+
+class SerializedJsonOutput(TaskResult):
+    """Fixture model proving child field serializers participate in JSON persistence."""
+    value: int
+
+    @field_serializer("value", when_used="json")
+    def serialize_value(self, value: int) -> str:
+        return str(value)
+
+
+class EmptyImageBundle(ImageBundle):
+    """Minimal bundle subclass for testing concrete-type preservation."""
+    def __init__(self, images=None):
+        self.images = images or []
 
 
 # ---------------------------------------------------------------------------
@@ -428,4 +461,90 @@ class TestCombine:
         with pytest.raises(ValueError, match="same concrete class"):
             first.combine(second)
 
+    def test_combine_concatenates_compatible_arrays(self):
+        first = MergeOutput(array=np.array([[1, 2]]))
+        second = MergeOutput(array=np.array([[3, 4], [5, 6]]))
 
+        combined = first.combine(second)
+
+        np.testing.assert_array_equal(combined.array, np.array([[1, 2], [3, 4], [5, 6]]))
+
+    def test_combine_promotes_incompatible_arrays_to_list(self):
+        first = MergeOutput(array=np.array([[1, 2]]))
+        second = MergeOutput(array=np.array([[3, 4, 5]]))
+
+        combined = first.combine(second)
+
+        assert isinstance(combined.array, list)
+        np.testing.assert_array_equal(combined.array[0], first.array)
+        np.testing.assert_array_equal(combined.array[1], second.array)
+
+    def test_combine_concatenates_dataframes(self):
+        first = MergeOutput(data=pd.DataFrame({"id": [1]}))
+        second = MergeOutput(data=pd.DataFrame({"id": [2]}))
+
+        combined = first.combine(second)
+
+        pd.testing.assert_frame_equal(combined.data, pd.DataFrame({"id": [1, 2]}))
+
+    def test_combine_recursively_merges_dicts(self):
+        first = MergeOutput(nested={"shared": {"values": [1]}, "first": "a"})
+        second = MergeOutput(nested={"shared": {"values": [2]}, "second": "b"})
+
+        combined = first.combine(second)
+
+        assert combined.nested == {
+            "shared": {"values": [1, 2]},
+            "first": "a",
+            "second": "b",
+        }
+
+    def test_combine_preserves_concrete_bundle_type(self):
+        first = MergeOutput(bundle=EmptyImageBundle())
+        second = MergeOutput(bundle=EmptyImageBundle())
+
+        combined = first.combine(second)
+
+        assert isinstance(combined.bundle, EmptyImageBundle)
+        assert combined.bundle.images == []
+
+    def test_combine_keeps_non_none_value(self):
+        first = MergeOutput(value=None)
+        second = MergeOutput(value="value")
+
+        assert first.combine(second).value == "value"
+        assert second.combine(first).value == "value"
+
+    def test_combine_promotes_non_collection_values_to_list(self):
+        first = MergeOutput(value=("first",))
+        second = MergeOutput(value=("second",))
+
+        assert first.combine(second).value == [("first",), ("second",)]
+
+    def test_combine_does_not_mutate_source_timestamps(self):
+        timestamp = Time("2025-01-01T00:00:00")
+        first = SimpleOutput(value=1.0, count=1, timestamp=timestamp)
+        second = SimpleOutput(value=2.0, count=2, timestamp=Time("2025-01-01T00:00:01"))
+
+        first.combine(second)
+
+        assert first.timestamp == timestamp
+
+
+class TestJsonPersistence:
+    def test_round_trip_preserves_slice_and_array_dtype(self):
+        result = JsonOutput(
+            region=slice(1, 9, 2),
+            data=np.array([[1, 2], [3, 4]], dtype=np.int16),
+        )
+
+        loaded = JsonOutput.from_json(result.to_json())
+
+        assert loaded.region == slice(1, 9, 2)
+        assert loaded.data.dtype == np.dtype(np.int16)
+        np.testing.assert_array_equal(loaded.data, result.data)
+
+    def test_round_trip_uses_child_field_serializer(self):
+        loaded = SerializedJsonOutput.from_json(SerializedJsonOutput(value=42).to_json())
+
+        assert loaded.value == 42
