@@ -7,6 +7,9 @@ from eregion.datamodels import TaskResult
 from eregion.tasks.task import Task, LazyTask
 from eregion.tasks.ptc import PTCResult
 
+#maybe we should rename this function??
+from eregion.utils.io_utils import save_ptc_table_fits, load_ptc_table_fits
+
 from eregion.core.expsum_fit_math import ExpSumFitter
 
 from pydantic import Field
@@ -117,6 +120,18 @@ class SingleEPERTrailFitter(Task):
 class PTCEPERFitResult(TaskResult):
     """results of an EPER fit to a whole PTC dataset"""
     eper_table: pd.DataFrame
+
+    def save(self, filepath: str, **kwargs) -> None:
+        os.makedirs(filepath, exist_ok=True)
+        save_ptc_table_fits(self.eper_table, os.path.join(filepath, "eper_table.fits"))
+        super().save(filepath)
+
+    @classmethod
+    def load(cls, filepath: str) -> PTCEPERFitResult:
+        eper_table = load_ptc_table_fits(os.path.join(filepath, "eper_table.fits"))
+        with open(os.path.join(filepath, f"{cls.__name__}_metadata.json"), "r") as f:
+            metadata = json.load(f)
+        return cls(eper_table=eper_table, **metadata)    
     
 
 _EPERFitterType = dict[str, Any] | SingleEPERTrailFitter
@@ -189,14 +204,15 @@ class PTCEPERFitter(LazyTask):
                 raise TypeError("invalid column spec, cannot extract data from row")
                 
     def lazy_run(self, ptc_results: PTCResult) -> Generator[PTCEPERFitResult]:
-
         outcols = { k : list() for k in self.pass_columns}
-        outcols |= {"siglevel" : list()}
+        outcols |= {"signal_level" : list()}
 
-        colbasenames = ["TDC", "relTDC", "CTI_jan", "CTI", "trap_rates", "trap_amplitudes", "_baseline"]
-        outcols |= {f"ser{k}" : list() for k in colbasenames}
-        outcols |= {f"llel{k}" : list() for k in colbasenames}
+        empty_res = self.ser_fitter.task_result.model_construct()
+        colbasenames = list(empty_res.keys())
+        colbasenames.remove("signal_level")
 
+        outcols |= {f"ser_{k}" : list() for k in colbasenames}
+        outcols |= {f"llel_{k}" : list() for k in colbasenames}
 
         for row in  ptc_results.ptc_table.itertuples(index=False):
             ident = []
@@ -206,26 +222,24 @@ class PTCEPERFitter(LazyTask):
                 outcols[pcol].append(v)
 
             siglevel = self._extract_from_row(row, self.siglevelcol)
-            outcols["siglevel"].append(siglevel)
+            outcols["signal_level"].append(siglevel)
 
-            self.logger.info(f"running serial EPER fit on row with id {ident} and signal level: {siglevel}")
-            seper = self._extract_from_row(row, self.ser_eper_col)
-            seper_result = self.ser_fitter.run(siglevel, seper)
+            def do_EPER_analysis(EPER_trail_col, fitter, direction):
+                self.logger.info("running %s EPER fit on row with id %s and signal level %s", direction, ident, siglevel)
+                eper = self._extract_from_row(row, EPER_trail_col)
+                result = fitter.run(siglevel, eper)
+                for k,v in result.items():
+                    if k == "signal_level":
+                        continue
+                    outcols[f"{direction}_{k}"].append(v)
+                self.logger.debug("EPER result for %s: %s", direction, result)
 
-            self.logger.debug("seper_result: %s" , seper_result)
-            
-            self.logger.info(f"running parallel EPER fit on row with id {ident} and signal level: {siglevel}")
-            peper = self._extract_from_row(row, self.llel_eper_col)
-            peper_result = self.llel_fitter.run(siglevel, peper)
+            do_EPER_analysis(self.ser_eper_col, self.ser_fitter, "ser")
+            do_EPER_analysis(self.llel_eper_col, self.llel_fitter, "llel")
 
-            self.logger.debug("peper_result: %s", peper_result)
-            
-
-        outres = PTCEPERFitResult(eper_table=pd.DataFrame())
+        breakpoint()
+        outres = PTCEPERFitResult(eper_table=pd.DataFrame(outcols))
         yield outres
 
-            
-
-            
 
 

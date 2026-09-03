@@ -25,7 +25,7 @@ epertask = PTCEPERFitter(pass_columns=["det_id", "output", "exptime"],
                          )
 epertask.logger.setLevel(logging.DEBUG)
 
-epertask.run(PTCtable)
+results = epertask.run(PTCtable)
 
 
 plt.close("all")
