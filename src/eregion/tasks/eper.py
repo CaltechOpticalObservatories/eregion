@@ -1,4 +1,4 @@
-from typing import Optional, Any, Generator, Callable
+from typing import Optional, Any, Generator, Callable, Self
 
 import numpy as np
 import pandas as pd
@@ -79,7 +79,7 @@ class SingleEPERTrailFitter(Task):
         
         if self.subtract_eper_zeros is not None:
             self.logger.debug("subtracting baseline from EPER trail")
-            eper_offset = np.mean(eper_trail[self.subtract_eper_zeros:])
+            eper_offset = np.mean(eper_trail[-self.subtract_eper_zeros:])
             eper_trail -= eper_offset
             results["eper_baseline"] = eper_offset
 
@@ -127,7 +127,7 @@ class PTCEPERFitResult(TaskResult):
         super().save(filepath)
 
     @classmethod
-    def load(cls, filepath: str) -> PTCEPERFitResult:
+    def load(cls, filepath: str) -> Self:
         eper_table = load_ptc_table_fits(os.path.join(filepath, "eper_table.fits"))
         with open(os.path.join(filepath, f"{cls.__name__}_metadata.json"), "r") as f:
             metadata = json.load(f)
@@ -136,11 +136,11 @@ class PTCEPERFitResult(TaskResult):
 
 _EPERFitterType = dict[str, Any] | SingleEPERTrailFitter
 _Extractor = str | Callable[[tuple], Any]
-    
+
 class PTCEPERFitter(LazyTask):
     task_result = PTCEPERFitResult
 
-    def __init__(self, pass_columns: list[str], siglevelcol: _Extractor, ser_eper_col: _Extractor, llel_eper_col: _Extractor, ser_settings: _EPERFitterType, llel_settings: _EPERFitterType, name: Optional[str]=None):
+    def __init__(self, siglevelcol: _Extractor, ser_eper_col: _Extractor, llel_eper_col: _Extractor, ser_settings: _EPERFitterType, llel_settings: _EPERFitterType, pass_columns: list[str]=list(), name: Optional[str]=None):
         """Task that fits EPER trails from the result of a PTC.
 
         parameters
@@ -198,7 +198,7 @@ class PTCEPERFitter(LazyTask):
         match col:
             case str():
                 return getattr(row, col)
-            case callable():
+            case f if callable(f):
                 return col(row)
             case _:
                 raise TypeError("invalid column spec, cannot extract data from row")
@@ -237,7 +237,6 @@ class PTCEPERFitter(LazyTask):
             do_EPER_analysis(self.ser_eper_col, self.ser_fitter, "ser")
             do_EPER_analysis(self.llel_eper_col, self.llel_fitter, "llel")
 
-        breakpoint()
         outres = PTCEPERFitResult(eper_table=pd.DataFrame(outcols))
         yield outres
 
