@@ -550,11 +550,12 @@ class ImageBundle(Generic[TImage]):
         df = self.list.query(pd_query) if pd_query != '' else self.list
         return df['object'].to_list()
 
-    def groupby(self, by, sort=False, **kwargs):
+    def groupby(self, by, sort=False, dropna=False, **kwargs):
         """
         Wrapper for pandas groupby on self.list dataframe. Returns a pandas groupby object.
         :param by: pandas groupby **by** parameter.
-        :param sort: pandas groupby **sort** parameter.
+        :param sort: pandas groupby **sort** parameter. Default is False for faster operation.
+        :param dropna: pandas groupby **dropna** parameter. Default is False to keep NaN groups.
         :param kwargs: pandas groupby additional keyword arguments.
         :return: pandas groupby object.
         """
@@ -562,7 +563,7 @@ class ImageBundle(Generic[TImage]):
         if missing_keys:
             missing = ', '.join(missing_keys)
             raise KeyError(f"Groupby keys not found in DataFrame columns: {missing}")
-        return self.list.groupby(by, sort=sort, **kwargs)
+        return self.list.groupby(by, sort=sort, dropna=dropna, **kwargs)
 
     def save(self, filepath: str, **kwargs):
         """
