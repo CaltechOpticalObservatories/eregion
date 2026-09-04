@@ -30,5 +30,33 @@ results = epertask.run(PTCtable)
 
 plt.close("all")
 
+fig, ax = plt.subplots(1,2, figsize=(10,8))
+
+
+for ident, curve in results.eper_table.groupby(["det_id", "output"]):
+
+    lab = f"{ident[0]}_{ident[1]}"
+    ax[0].plot(curve["signal_level"], curve["ser_CTI_jan"], ".", label=lab)
+    ax[1].plot(curve["signal_level"], curve["llel_CTI_jan"], ".", label=lab)
 
     
+
+ax[0].legend()
+ax[1].legend()
+
+ax[0].set_xlabel("signal level (DN)")
+ax[1].set_xlabel("signal level (DN)")
+
+ax[0].set_ylabel("serial CTI")
+ax[1].set_ylabel("parallel CTI")
+
+ax[0].loglog()
+ax[1].loglog()
+
+
+fig.tight_layout()    
+
+
+
+    
+
