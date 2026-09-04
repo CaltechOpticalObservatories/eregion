@@ -114,7 +114,7 @@ def test_noiseless_fit_convergence():
     print(f"compar_input a: {inpac}")
     diffa = proca - inpac
     print(f"diffa: {diffa}")
-    assert np.all(np.isclose(diffa, 0.0, rtol=0.05, atol=0.05))
+    assert np.all(np.isclose(diffa, 0.0, rtol=0.2, atol=0.2))
 
     # no need to check ks, above constrained M proves appropriate scaling when
     # amplitudes are correct

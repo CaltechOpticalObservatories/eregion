@@ -12,6 +12,7 @@ import warnings
 import logging
 
 import numpy as np
+from numpy.linalg import lstsq
 from scipy.optimize import dual_annealing
 
 _logger = logging.getLogger(__name__)
@@ -363,7 +364,7 @@ class ExpSumFitter:
         If not enough terms are left in the fit to have a pair, will return None, None
 
         """
-	if len(self.thetas) < 3:
+        if len(self.thetas) < 3:
             return None, None
 
         s = np.argsort(self.thetas)
