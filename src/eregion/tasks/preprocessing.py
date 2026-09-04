@@ -10,6 +10,7 @@ from functools import wraps
 from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
 from eregion.core.image_operations import sigma_clip_image
+from eregion.core.image_stats import do_statistics, STATFUNCS
 from eregion.tasks import LazyTask, ImageResult
 
 ########### BasePreprocessingTask ###########
@@ -182,10 +183,24 @@ class ScanSubtraction(BasePreprocessingTask):
         trim_slc = slice(trim_start, scan_data.sizes[axis_str] - trim_end)
         trimmed_scan_data = scan_data.isel({axis_str: trim_slc})
 
+        BASICSTATS = {'mean': STATFUNCS['mean'], 'median': STATFUNCS['median'], 'std': STATFUNCS['std'],
+                      'mad': STATFUNCS['mad']}
+        trimmed_scan_stats = do_statistics(trimmed_scan_data.values, which=BASICSTATS,
+                                           prepend_kw=f"HIERARCH {self.which_scan}_")
+
         methodkwargs = {'axis': getattr(output, axis+"_axint")} if self.method_name == "median_by_axis" else {}
         subtract_value = self.method(trimmed_scan_data.values, **methodkwargs)
         subtracted_scan = output.data.values - subtract_value
-        return subtracted_scan, subtract_value
+
+        output.set_data_in_parent(subtracted_scan)
+        outhdr = getattr(output, "header", {})
+        outhdr.update(trimmed_scan_stats)
+        output.header = outhdr
+
+        # setattr(output, f"{self.which_scan}_subtracted_value",
+        #         subtract_value.tolist() if isinstance(subtract_value, np.ndarray) else subtract_value)
+
+        return output
 
     def _process_single_image(self, img: DetImage) -> DetImage:
         """
@@ -197,14 +212,8 @@ class ScanSubtraction(BasePreprocessingTask):
         """
         trim_start = self.meta.get("trim_start", 0)
         trim_end = self.meta.get("trim_end", 0)
-        outputs = img.outputs.values()
-        results = Parallel(n_jobs=self.n_jobs)(
-            delayed(self._subtract_scan_per_output)(output, trim_start, trim_end) for output in outputs
-        )
-
-        for output, (subtracted_scan, subtract_value) in zip(img.outputs.values(), results):
-            output.set_data_in_parent(subtracted_scan)
-            setattr(output, f"{self.which_scan}_median", subtract_value.tolist() if isinstance(subtract_value, np.ndarray) else subtract_value)
+        for out_id, output in img.outputs.items():
+            img.outputs[out_id] = self._subtract_scan_per_output(output, trim_start, trim_end)
 
         img.image_type.update({f"{self.which_scan}_subtracted": True})
         return img

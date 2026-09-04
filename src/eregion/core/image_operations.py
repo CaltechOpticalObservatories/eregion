@@ -1,4 +1,5 @@
 ### Collection of utility functions for image processing tasks.
+from typing import Callable
 import numpy as np
 from astropy.stats import sigma_clip
 
@@ -83,3 +84,37 @@ def flip_and_rotate(image: np.ndarray, angle: float, flip_x: bool=False, flip_y:
             k = (angle // 90) % 4
             image = np.rot90(image, int(k))
     return image
+
+
+def do_digital_binning(data: np.ndarray, binsizes: list[int], binaxis: int = 0) -> np.ndarray:
+    """
+    Perform digital binning on the provided data. Assumes that readout is towards the 0th index of the binning axis,
+    i.e. the first row of the data is the first row read out from the CCD. If that's not true, pre-flip your data in
+    the correct order.
+
+    NOTE: Eregion's data loading (ImageCreator + DetectorConfig) slicing options can set the readout direction correctly.
+
+    :param data: np.ndarray,
+        The input data to be binned (2D image).
+    :param binsizes: list[int]
+        Number of rows to sum per binning iteration. Each bin size should be an integer.
+    :param binaxis: int, optional
+        The axis along which to perform the binning. Default is 0.
+    :return: np.ndarray
+        The digitally binned data.
+    """
+    assert np.sum(binsizes) == data.shape[binaxis], "Sum of binsizes must equal the size of the data along the binning axis."
+    binaxis = int(binaxis)
+    assert binaxis < data.ndim, "binaxis is out of bounds."
+    binned_data = np.zeros_like(data)
+    src_idx = [slice(None)] * data.ndim
+    dst_idx = [slice(None)] * data.ndim
+    ind = 0
+    # compute start indices for each bin from binsizes
+    starts = np.concatenate(([0], np.cumsum(binsizes)[:-1])).astype(int)
+    # sum each bin along binaxis efficiently
+    binned = np.add.reduceat(data, starts, axis=binaxis)
+    # preserve original output buffer shape: write summed bins into the leading indices
+    dst_idx[binaxis] = slice(0, len(binsizes))
+    binned_data[tuple(dst_idx)] = binned
+    return binned_data
