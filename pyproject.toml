@@ -40,9 +40,24 @@ dev = [
     "black>=24.0",
     "ipykernel>=6.28",
     "flake8",
+    "tox>=4.0",
 ]
 test = [
     "pytest>=7.0",
+]
+docs = [
+    "sphinx>=8.0",
+    "shibuya>=2024.8",
+    "myst-parser>=4.0",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.6",
+]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not slow and not viz'"
+markers = [
+    "slow: large-data/performance tests, excluded by default (run with -m slow)",
+    "viz: generates viewable plot output on disk, excluded by default (run with -m viz)",
 ]
 
 [tool.setuptools]
@@ -54,3 +69,4 @@ include = ["eregion*"]
 
 [tool.hatch.envs.default]
 python = "3.12"
+features = ["dev", "test"]
