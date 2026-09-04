@@ -27,11 +27,13 @@ Int = int | np.integer
 def _safediv(x, y):
     return x / y if y else (copysign(x * inf, x * y) if x else nan)
 
+
 def _safelog(i: float) -> float:
-    #NOTE: 0 is acceptable, up to macheps math.log works fine
+    # NOTE: 0 is acceptable, up to macheps math.log works fine
     if i == 0:
         return -inf
     return log(i)
+
 
 def Expsumfun(n: NDArrI | Int, a: NDArrF, thetas: NDArrF) -> float | NDArrF:
     """
@@ -350,7 +352,7 @@ class ExpSumFitter:
             _logger.debug(f"as: {self.a}")
             yield self.thetas.copy(), self.a.copy()
 
-    def _find_closest_k_pair(self) ->tuple:
+    def _find_closest_k_pair(self) -> tuple:
         """Locate the closest pair of k values in the current fit
 
         returns

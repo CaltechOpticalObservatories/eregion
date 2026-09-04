@@ -1,8 +1,12 @@
 import inspect
 from typing import Optional, Iterable, Container, Any, Type
 
-def pack_argument_helper(exclude_args: Optional[Container[str] | Iterable[str]] = None, selfarg: Optional[Type] = None) -> dict[str, Any]:
-    """ Gets all the arguments passed to the function which calls this function, and their current values, and packs them into a dictionary suitable for use as kwargs in some other call.
+
+def pack_argument_helper(
+    exclude_args: Optional[Container[str] | Iterable[str]] = None,
+    selfarg: Optional[Type] = None,
+) -> dict[str, Any]:
+    """Gets all the arguments passed to the function which calls this function, and their current values, and packs them into a dictionary suitable for use as kwargs in some other call.
 
     parameters
     ----------
@@ -19,21 +23,23 @@ def pack_argument_helper(exclude_args: Optional[Container[str] | Iterable[str]] 
 
     dict[str, Any]
 
-        dictionary of arguments, which will include all the keyword and 
-    
+        dictionary of arguments, which will include all the keyword and
+
 
     """
     outerframe = inspect.currentframe().f_back
     args, vargs, kwargs, lcls = inspect.getargvalues(outerframe)
-    outkwargs = {k : lcls[k] for k in args}
+    outkwargs = {k: lcls[k] for k in args}
     if kwargs is not None:
         outkwargs.update(lcls[kwargs])
 
     if vargs is not None:
-        raise TypeError("pack_argument_helper does not work with unnamed positional arguments")
+        raise TypeError(
+            "pack_argument_helper does not work with unnamed positional arguments"
+        )
 
     if selfarg is not None:
-        selfargk = next( k for k,v in outkwargs.items() if v is selfarg)
+        selfargk = next(k for k, v in outkwargs.items() if v is selfarg)
         outkwargs.pop(selfargk)
 
     if exclude_args is not None:
@@ -42,4 +48,3 @@ def pack_argument_helper(exclude_args: Optional[Container[str] | Iterable[str]] 
                 outkwargs.pop(exarg)
 
     return outkwargs
-
