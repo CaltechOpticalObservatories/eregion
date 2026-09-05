@@ -6,10 +6,10 @@ I was not able to find a maintained implementation that is shipped in a modern p
 
 """
 
-from typing import TypeVar, Optional, Generator
+from math import log, inf, nan, copysign
+from typing import Sequence, TypeVar, Optional, Generator
 import warnings
 import logging
-from math import log, inf, nan, copysign
 
 import numpy as np
 from numpy.linalg import lstsq
@@ -17,6 +17,8 @@ from scipy.optimize import dual_annealing
 
 _logger = logging.getLogger(__name__)
 
+
+_NUMBER_OF_THINGS_IN_A_PAIR: int = 2
 
 Fl = TypeVar("float")
 NDArrF = np.ndarray[np.floating]
@@ -26,6 +28,13 @@ Int = int | np.integer
 
 def _safediv(x, y):
     return x / y if y else (copysign(x * inf, x * y) if x else nan)
+
+
+def _safelog(i: float) -> float:
+    # NOTE: 0 is acceptable, up to macheps math.log works fine
+    if i == 0:
+        return -inf
+    return log(i)
 
 
 def Expsumfun(n: NDArrI | Int, a: NDArrF, thetas: NDArrF) -> float | NDArrF:
@@ -321,7 +330,7 @@ class ExpSumFitter:
     def ks(self) -> list[float]:
         """convenience property to calculate the exponential decay rates corresponding to the
         currently held theta values"""
-        kout = [-1.0 * log(float(_)) / float(self.dU) for _ in self.thetas]
+        kout = [-1.0 * _safelog(float(_)) / float(self.dU) for _ in self.thetas]
         return kout
 
     def iterate_fit(self) -> Generator:
@@ -345,18 +354,26 @@ class ExpSumFitter:
             _logger.debug(f"as: {self.a}")
             yield self.thetas.copy(), self.a.copy()
 
-    def _find_closest_k_pair(self):
+    def _find_closest_k_pair(self) -> tuple:
         """Locate the closest pair of k values in the current fit
 
         returns
         -------
 
-        tuple[float, float]
+        tuple[float | None, float | None]
 
         returns the values of theta (NOTE: not the values of k!!! despite the name)
         corresponding to the k values closest together in the current fit
 
+        If not enough terms are left in the fit to have a pair, will return None, None
+
         """
+        if len(self.thetas) < _NUMBER_OF_THINGS_IN_A_PAIR:
+            return None, None
+        elif len(self.thetas) == _NUMBER_OF_THINGS_IN_A_PAIR:
+            # optimisation if there are only two, avoid the sort
+            return 0, 1
+
         s = np.argsort(self.thetas)
         minidx = np.argmin(np.diff(np.array(self.thetas)[s]))
         return s[minidx], s[minidx + 1]
@@ -456,8 +473,11 @@ class ExpSumFitter:
         # k1 is the bigger of the two terms by construction
         while True:
             s1, s2 = self._find_closest_k_pair()
-            k1 = -1.0 * log(self.thetas[s1]) / self.dU
-            k2 = -1.0 * log(self.thetas[s2]) / self.dU
+            if s1 is None or s2 is None:
+                _logger.debug("no more terms left!")
+                break
+            k1 = -1.0 * _safelog(self.thetas[s1]) / self.dU
+            k2 = -1.0 * _safelog(self.thetas[s2]) / self.dU
 
             assert k1 > k2, "logic error, k2 should be bigger than k1"
 
