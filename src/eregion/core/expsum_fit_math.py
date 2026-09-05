@@ -18,6 +18,8 @@ from scipy.optimize import dual_annealing
 _logger = logging.getLogger(__name__)
 
 
+_NUMBER_OF_THINGS_IN_A_PAIR: int = 2
+
 Fl = TypeVar("float")
 NDArrF = np.ndarray[np.floating]
 NDArrI = np.ndarray[np.integer]
@@ -366,8 +368,11 @@ class ExpSumFitter:
         If not enough terms are left in the fit to have a pair, will return None, None
 
         """
-        if len(self.thetas) < 3:
+        if len(self.thetas) < _NUMBER_OF_THINGS_IN_A_PAIR:
             return None, None
+        elif len(self.thetas) == _NUMBER_OF_THINGS_IN_A_PAIR:
+            # optimisation if there are only two, avoid the sort
+            return 0, 1
 
         s = np.argsort(self.thetas)
         minidx = np.argmin(np.diff(np.array(self.thetas)[s]))

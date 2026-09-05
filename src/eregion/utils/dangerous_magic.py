@@ -39,7 +39,12 @@ def pack_argument_helper(
         )
 
     if selfarg is not None:
-        selfargk = next(k for k, v in outkwargs.items() if v is selfarg)
+        try:
+            selfargk = next(k for k, v in outkwargs.items() if v is selfarg)
+        except StopIteration as err:
+            raise KeyError(
+                "selfarg not found in the arguments passed to this function"
+            ) from err
         outkwargs.pop(selfargk)
 
     if exclude_args is not None:

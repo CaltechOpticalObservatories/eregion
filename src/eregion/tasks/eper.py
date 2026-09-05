@@ -167,7 +167,7 @@ class PTCEPERFitter(LazyTask):
         llel_eper_col: _Extractor,
         ser_settings: _EPERFitterType,
         llel_settings: _EPERFitterType,
-        pass_columns: list[str] = list(),
+        pass_columns: list[str] | None = None,
         name: Optional[str] = None,
     ):
         """Task that fits EPER trails from the result of a PTC.
@@ -197,6 +197,8 @@ class PTCEPERFitter(LazyTask):
             the name of the task. Default is current class name
 
         """
+
+        pass_columns = pass_columns if pass_columns is not None else list()
 
         superkwargs = pack_argument_helper(selfarg=self)
         super().__init__(**superkwargs)
