@@ -6,6 +6,8 @@ Linearity analysis following the method in:
     https://doi.org/10.1117/12.2314251
 
 """
+from functools import wraps
+
 from eregion.tasks import LazyTask
 from eregion.datamodels import TaskResult, ImageBundle, DetImage, CCDOutput
 from eregion.core.image_operations import do_digital_binning
@@ -15,7 +17,7 @@ from eregion.utils import slice_data, decrease_slicer_stop_index, save_dataframe
 import os
 from pydantic import Field
 from joblib import Parallel, delayed
-from typing import Callable, Generator
+from typing import Callable, Generator, Literal
 import numpy as np
 import pandas as pd
 
@@ -50,17 +52,21 @@ class LinBin(LazyTask):
 
     def __init__(self,
                  binsizes: int | Callable[[int | None], int] = 1,
+                 binaxis: Literal["parallel", "serial"] = "parallel",
                  groupby_keys: list[str] = ["det_id"],
                  name: str = "LinBin", **kwargs):
         """
         Initialize the LinBin task.
         :param binsizes: int | Callable,
             If integer, increment the number of rows to sum per bin by it. If Callable, a function that yields the next binning value.
+        :param binaxis: Literal["parallel", "serial"]
+            The axis along which linbin images are binned. Default is "parallel".
         :param groupby_keys: list[str]
             The keys to group the images by to identify pairs of related standard and linbin flats.
         :param name: str, optional
             The name of the task. Default is "LinBin".
-        :param kwargs: Additional keyword arguments.
+        :keyword mask_key: str, optional
+            The key for the mask to use when calculating statistics. Default is "sigma_clip_mask".
 
         """
         super().__init__(name=name, **kwargs)
@@ -74,6 +80,7 @@ class LinBin(LazyTask):
             raise ValueError("binsizes must be an integer or a callable function that returns integer.")
         self.binsizes = binsizes
         self.bins = None
+        self.binaxis = binaxis
         self.groupby_keys = groupby_keys
 
     def lazy_run(self,
@@ -114,19 +121,21 @@ class LinBin(LazyTask):
             # stats per output channel for the digbin and linbin flats
             stats = {key: dig_group.iloc[0][key] for key in self.groupby_keys}
             for i, img in enumerate(dig_group['object']):  # dig_group is a DataFrame
-                outstat = stats.copy()
                 for out_id, output in img.outputs.items():
-                    outstat |= {"seqnum": str(i), "binning": "digital"} | self.do_stats_per_output(output)
-                pairstats.append(outstat)
+                    outstat = stats.copy() | {"seqnum": str(i), "binning": "digital"} | self.do_stats_per_output(output)
+                    pairstats.append(outstat)
 
             for i, img in enumerate(lin_group['object']):  # lin_group is a DataFrame
-                outstat = stats.copy()
                 for out_id, output in img.outputs.items():
-                    outstat |= {"seqnum": str(i), "binning": "analog"} | self.do_stats_per_output(output)
-                pairstats.append(outstat)
+                    outstat = stats.copy() | {"seqnum": str(i), "binning": "analog"} | self.do_stats_per_output(output)
+                    pairstats.append(outstat)
 
         stats = self.make_linbin_table(pairstats)
         yield self.task_result(stats=stats)
+
+    @wraps(lazy_run)
+    def run(self, *args, **kwargs):
+        return super().run(*args, **kwargs)
 
     def _bin_image(self, img: DetImage):
         if not all(isinstance(output, CCDOutput) for output in img.outputs.values()):
@@ -135,20 +144,23 @@ class LinBin(LazyTask):
         mask_key = self.meta.get("mask_key", "sigma_clip_mask")
 
         for output in img.outputs.values():
-            # Ensure we take all serial pixels and not parallel prescan/overscan
+            binaxint = getattr(output, f"{self.binaxis}_axint")
+            # Ensure we take all pixels not along the binaxis.
             imslc = output.image_region
-            imslc[output.serial_axis] = slice(None)
+            otheraxis = "serial_axis" if self.binaxis == "parallel" else "parallel_axis"
+            imslc[getattr(output, otheraxis)] = output.output_slice[1-binaxint]
             # Slice the data and mask for the current output, slice direction is from prescan to overscan, so that the first row is the first row read out from the CCD
             imdata = slice_data(output.data, imslc).values
             immask = slice_data(output.masks[mask_key], imslc).values if (output.masks is not None and mask_key in output.masks) else None
             # get bins
-            self._get_binsizes(imdata.shape[output.parallel_axint])
+
+            self._get_binsizes(imdata.shape[binaxint])
             # bin data
-            binned_data = do_digital_binning(imdata, binsizes=self.bins, binaxis=output.parallel_axint)
+            binned_data = do_digital_binning(imdata, binsizes=self.bins, binaxis=binaxint)
             output.set_data_in_parent(binned_data, imslc)
             # bin mask if it exists
             if immask is not None:
-                binned_mask = do_digital_binning(immask.astype(int), binsizes=self.bins, binaxis=output.parallel_axint).astype(bool)
+                binned_mask = do_digital_binning(immask.astype(int), binsizes=self.bins, binaxis=binaxint).astype(bool)
                 _imslc = decrease_slicer_stop_index(imslc)
                 output.masks[mask_key].loc[_imslc] = binned_mask
 
@@ -176,13 +188,11 @@ class LinBin(LazyTask):
             stats["n_masked"] = 0
         ma_imarr = np.ma.masked_array(imarr.values, mask=mask)[0:len(self.bins)] # only take the binned rows, i.e. the first len(bins) rows
 
-        BASICFUNCS = {'mean': STATFUNCS['mean'], 'median': STATFUNCS['median'],
-                      'std': STATFUNCS['std'], 'mad': STATFUNCS['mad']}
-        stats |= do_statistics(ma_imarr, which=BASICFUNCS, axis=output.serial_axint, prepend_kw='')
+        stats |= do_statistics(ma_imarr, which=STATFUNCS, axis=output.serial_axint, prepend_kw='')
 
         # serial overscan region stats, unmasked
         ser_oscan = output.get_overscan('serial', corner=False).values[0:len(self.bins)]
-        stats |= do_statistics(ser_oscan, which=BASICFUNCS, axis=output.serial_axint, prepend_kw='ser_oscan_')
+        stats |= do_statistics(ser_oscan, which=STATFUNCS, axis=output.serial_axint, prepend_kw='ser_oscan_')
 
         return stats
 

@@ -72,8 +72,8 @@ def do_statistics(data: np.ndarray | np.ma.MaskedArray,
     for kw, operation in which.items():
         if kw in ["skewtest", "kurttest"]:
             stat, pval = operation(data, axis=axis)
-            stats[f"{prepend_kw}{kw}"] = float(stat)
-            stats[f"{prepend_kw}{kw}p"] = float(pval)
+            stats[f"{prepend_kw}{kw}"] = stat
+            stats[f"{prepend_kw}{kw}p"] = pval
         else:
             val = operation(data, axis=axis)
             val = np.nan if isinstance(val, np.ma.core.MaskedConstant) else val.filled(np.nan) if isinstance(val, np.ma.MaskedArray) else val
