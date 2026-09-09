@@ -1,0 +1,178 @@
+debug: false
+pipelines:
+  - name: masterbias_flow
+    description: Load biases, subtract overscan, and create master biases
+    lazy: false
+    nodes:
+      - name: bias_creator
+        task: eregion.tasks.imagegen.ImageCreator
+        init:
+          params:
+            detector_config: ${DETECTOR_CONFIG}
+        run:
+          params:
+            input_source: ${BIAS_INPUT_SOURCE}
+            identifier_func: eregion.tasks.custom.guess_image_type_from_filename_DEIMOS
+            fileloader_func: eregion.tasks.custom.load_image_fits_DEIMOS
+            data_on_demand: true
+
+      - name: overscan_sub
+        task: eregion.tasks.preprocessing.ScanSubtraction
+        init:
+          params:
+            which_scan: 'serial_overscan'
+            method: 'median_by_axis'
+            trim_start: 6
+        run:
+          inputs:
+            images: masterbias_flow.bias_creator.data('type == "bias" | type == "linbin"')
+        depends_on: [masterbias_flow.bias_creator]
+
+      - name: make_master_bias
+        task: eregion.tasks.calibration.MasterBias
+        init:
+          params:
+            groupby_keys: ["det_id", "type", "extra_0"]
+            method: "median"
+        run:
+          inputs:
+            images: masterbias_flow.overscan_sub.data
+        depends_on: [masterbias_flow.overscan_sub]
+
+      - name: cleanup_0
+        task: eregion.tasks.bookkeeping.DeleteResult
+        run:
+          inputs:
+            result: masterbias_flow.bias_creator
+
+      - name: cleanup_1
+        task: eregion.tasks.bookkeeping.DeleteResult
+        run:
+          inputs:
+            result: masterbias_flow.overscan_sub
+
+  - name: linbin_flow
+    description: Flow for LinBin processing
+    lazy: false
+    nodes:
+      - name: linbin_creator
+        task: eregion.tasks.imagegen.ImageCreator
+        init:
+          params:
+            detector_config: ${DETECTOR_CONFIG}
+        run:
+          params:
+            input_source: ${LINBIN_INPUT_SOURCE}
+            identifier_func: eregion.tasks.custom.guess_image_type_from_filename_DEIMOS
+            fileloader_func: eregion.tasks.custom.load_image_fits_DEIMOS
+            data_on_demand: true
+
+      - name: overscan_sub
+        task: eregion.tasks.preprocessing.ScanSubtraction
+        init:
+          params:
+            which_scan: 'serial_overscan'
+            method: 'median_by_axis'
+            trim_start: 6
+        run:
+          inputs:
+            images: linbin_flow.linbin_creator.data('type == "linbin" & extra_0 != "bias"')
+        depends_on: [linbin_flow.linbin_creator]
+
+      - name: badpixel_masking
+        task: eregion.tasks.preprocessing.SigmaClipMasking
+        init:
+          params:
+            clip_axis: "serial"
+        run:
+          inputs:
+            images: linbin_flow.overscan_sub.data
+        depends_on: [linbin_flow.overscan_sub]
+
+      - name: bias_subtraction
+        task: eregion.tasks.preprocessing.BiasSubtraction
+        init:
+          params:
+            only_image_area: true
+        run:
+          inputs:
+            images: linbin_flow.badpixel_masking.data
+            master_bias: masterbias_flow.make_master_bias.master_bias('type == "master_linbin_bias"')
+        depends_on: [linbin_flow.badpixel_masking, masterbias_flow.make_master_bias]
+
+      - name: combine
+        task: eregion.tasks.calibration.MasterCombine
+        init:
+          params:
+            groupby_keys: ["det_id", "type"]
+        run:
+          inputs:
+            images: linbin_flow.bias_subtraction.data
+        depends_on: [linbin_flow.bias_subtraction]
+
+  - name: digital_flow
+    description: Flow for normal flat digital binning and linearity stats
+    lazy: false
+    nodes:
+      - name: flat_creator
+        task: eregion.tasks.imagegen.ImageCreator
+        init:
+          params:
+            detector_config: ${DETECTOR_CONFIG}
+        run:
+          params:
+            input_source: ${FLAT_INPUT_SOURCE}
+            identifier_func: eregion.tasks.custom.guess_image_type_from_filename_DEIMOS
+            fileloader_func: eregion.tasks.custom.load_image_fits_DEIMOS
+            data_on_demand: true
+
+      - name: overscan_sub
+        task: eregion.tasks.preprocessing.ScanSubtraction
+        init:
+          params:
+            which_scan: 'serial_overscan'
+            method: 'median_by_axis'
+            trim_start: 6
+        run:
+          inputs:
+            images: digital_flow.flat_creator.data('type == "flat"')
+        depends_on: [digital_flow.flat_creator]
+
+      - name: badpixel_masking
+        task: eregion.tasks.preprocessing.SigmaClipMasking
+        run:
+          inputs:
+            images: digital_flow.overscan_sub.data
+        depends_on: [digital_flow.overscan_sub]
+
+      - name: bias_subtraction
+        task: eregion.tasks.preprocessing.BiasSubtraction
+        init:
+          params:
+            only_image_area: true
+        run:
+          inputs:
+            images: digital_flow.badpixel_masking.data
+            master_bias: masterbias_flow.make_master_bias.master_bias('type == "master_bias_nan"')
+        depends_on: [digital_flow.badpixel_masking, masterbias_flow.make_master_bias]
+
+      - name: combine
+        task: eregion.tasks.calibration.MasterCombine
+        init:
+          params:
+            groupby_keys: ["det_id", "type"]
+        run:
+          inputs:
+            images: digital_flow.bias_subtraction.data
+        depends_on: [digital_flow.bias_subtraction]
+
+      - name: linbin_stats
+        task: eregion.tasks.linbin.LinBin
+        init:
+          params:
+            groupby_keys: ["det_id"]
+        run:
+          inputs:
+            normal_flats: digital_flow.combine.data
+            linbin_flats: linbin_flow.combine.data
+        depends_on: [digital_flow.combine, linbin_flow.combine]
