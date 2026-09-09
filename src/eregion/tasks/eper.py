@@ -1,5 +1,6 @@
 from typing import Optional, Any, Generator, Callable, Self
-
+import os
+import json
 import numpy as np
 import pandas as pd
 
@@ -7,8 +8,7 @@ from eregion.datamodels import TaskResult
 from eregion.tasks.task import Task, LazyTask
 from eregion.tasks.ptc import PTCResult
 
-# maybe we should rename this function??
-from eregion.utils.io_utils import save_ptc_table_fits, load_ptc_table_fits
+from eregion.utils.io_utils import save_dataframe_to_fits, load_dataframe_from_fits
 
 from eregion.core.expsum_fit_math import ExpSumFitter
 
@@ -142,12 +142,12 @@ class PTCEPERFitResult(TaskResult):
 
     def save(self, filepath: str, **kwargs) -> None:
         os.makedirs(filepath, exist_ok=True)
-        save_ptc_table_fits(self.eper_table, os.path.join(filepath, "eper_table.fits"))
+        save_dataframe_to_fits(self.eper_table, os.path.join(filepath, "eper_table.fits"))
         super().save(filepath)
 
     @classmethod
     def load(cls, filepath: str) -> Self:
-        eper_table = load_ptc_table_fits(os.path.join(filepath, "eper_table.fits"))
+        eper_table = load_dataframe_from_fits(os.path.join(filepath, "eper_table.fits"))
         with open(os.path.join(filepath, f"{cls.__name__}_metadata.json"), "r") as f:
             metadata = json.load(f)
         return cls(eper_table=eper_table, **metadata)
