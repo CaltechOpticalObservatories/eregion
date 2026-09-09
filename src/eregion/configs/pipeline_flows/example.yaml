@@ -12,9 +12,12 @@ pipelines:
         task: package.module.class   # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
         init:  # Initialization parameters (for Task.__init__)
           inputs: # Specify any args needed from outputs of other tasks in this config
-            arg_1: pipe_name.node_name.data.key # Output of tasks are wrapped in TaskResult objects by the engine, and the data
-                                                # produced by the task is in the TaskResult.data dict; specify the path to the
-                                                # data you want to use as input for this task
+            arg_1: pipe_name.node_name.field_name # Each task's output is its own TaskResult subclass; reference a
+                                                   # named payload field on an upstream task's result with
+                                                   # 'pipeline.node.field'. Use 'pipeline.node' (no field) to pass
+                                                   # the whole upstream TaskResult instead. If the field's value
+                                                   # supports being called (e.g. ImageBundle), append a query
+                                                   # string to filter it, e.g. pipe_name.node_name.field_name('type == "bias"')
             # etc.
           params: # Specify any additional kwargs (which are not task outputs) needed; refer to the task documentation for required and optional params and kwargs
             param_1: value
@@ -23,7 +26,7 @@ pipelines:
         run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters, as above, use `inputs` to specify data coming from
               # outputs of other tasks, and `params` for any additional parameters
           inputs:
-            arg_1: pipe_name.node_name.data.key
+            arg_1: pipe_name.node_name.field_name
             # etc.
           params:
             param_1: value
@@ -34,13 +37,13 @@ pipelines:
         task: package.module.class
         init:
           inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from TASK_1 as input for TASK_2
+            arg_1: PIPE_1.TASK_1.field_name  # Example of using output from TASK_1 as input for TASK_2
           params:
             param_1: value
             # etc.
         run:
           inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from TASK_1 as input for TASK_2
+            arg_1: PIPE_1.TASK_1.field_name  # Example of using output from TASK_1 as input for TASK_2
           params:
             param_1: value
             # etc.
@@ -54,13 +57,13 @@ pipelines:
         task: package.module.class
         init:
           inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from a task in another pipeline flow as input
+            arg_1: PIPE_1.TASK_1.field_name  # Example of using output from a task in another pipeline flow as input
           params:
             param_1: value
             # etc.
         run:
           inputs:
-            arg_1: PIPE_1.TASK_2.data.key  # Example of using output from a task in another pipeline flow as input
+            arg_1: PIPE_1.TASK_2.field_name  # Example of using output from a task in another pipeline flow as input
           params:
             param_1: value
             # etc.
