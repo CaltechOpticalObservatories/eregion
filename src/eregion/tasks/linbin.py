@@ -59,7 +59,7 @@ class LinBin(LazyTask):
         :param binsizes: int | Callable,
             If integer, increment the number of rows to sum per bin by it. If Callable, a function that yields the next binning value.
         :param binaxis: Literal["parallel", "serial"]
-            The axis along which linbin images are binned. Default is "parallel".
+            The axis along which linbin images are binned. Default is "parallel" (see Kaye et al. 2018).
         :param groupby_keys: list[str]
             The keys to group the images by to identify pairs of related standard and linbin flats.
         :param name: str, optional

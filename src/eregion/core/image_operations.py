@@ -110,7 +110,6 @@ def do_digital_binning(data: np.ndarray, binsizes: list[int], binaxis: int = 0) 
     if not 0 <= binaxis < data.ndim:
         raise ValueError("binaxis is out of bounds.")
 
-    binned_data = np.zeros(data.shape)
     dst_idx = [slice(None)] * data.ndim
     # compute start indices for each bin from binsizes
     starts = np.concatenate(([0], np.cumsum(binsizes)[:-1])).astype(int)
@@ -118,5 +117,6 @@ def do_digital_binning(data: np.ndarray, binsizes: list[int], binaxis: int = 0) 
     binned = np.add.reduceat(data, starts, axis=binaxis)
     # preserve original output buffer shape: write summed bins into the leading indices
     dst_idx[binaxis] = slice(0, len(binsizes))
+    binned_data = np.zeros(data.shape, dtype=np.promote_types(data.dtype, binned.dtype))
     binned_data[tuple(dst_idx)] = binned
     return binned_data

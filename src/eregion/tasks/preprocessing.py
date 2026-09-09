@@ -261,7 +261,7 @@ class SigmaClipMasking(BasePreprocessingTask):
         self.sigma_clip_args = {"sigma": 5.0, "axis": None, "masked": True, "copy": True, "grow": 10.0}
         self.sigma_clip_args.update(sigma_clip_args or {})
         if clip_axis is not None and clip_axis in ["serial", "parallel"]:
-            self.clip_axis = clip_axis+"_axint"
+            self.clip_axis = clip_axis+"_axint" # CCDOutput attribute name for serial/parallel axis integer index
         else:
             self.clip_axis = None
 
@@ -295,6 +295,9 @@ class SigmaClipMasking(BasePreprocessingTask):
         """
         Apply sigma clipping to a single output to create a mask. Masks are saved as attributes of the output for later use.
         """
+        # If clip_axis is specified but axis is not set in sigma_clip_args, set it from output attribute.
+        # Setting it in original dict to reduce redundancy in the following calls to this function as all outputs
+        # processed in the same image (by same task instance) will have the same axis for clipping.
         if self.clip_axis is not None and self.sigma_clip_args["axis"] is None:
             self.sigma_clip_args["axis"] = getattr(output, self.clip_axis)
 
