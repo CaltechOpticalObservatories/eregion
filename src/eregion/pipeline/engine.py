@@ -1,14 +1,10 @@
 from typing import Iterator
 from copy import deepcopy
 import graphlib
+import re
 
-from eregion.tasks import TaskResult
 from eregion.configs import PipelineConfig
 from eregion.utils import configure_logger, load_class
-
-from prefect import task, flow
-from prefect.futures import wait
-from prefect.task_runners import ThreadPoolTaskRunner
 
 import concurrent.futures as cf
 
@@ -87,7 +83,7 @@ class PipelineEngine:
         self.__init__(
             pipeline_config_input=new_config,
             runtime_variables=self.runtime_variables if runtime_variables is None else runtime_variables,
-            enable_env_vars=self.enable_env_vars if enable_env_vars is None else enable_env_vars
+            enable_env_vars=self.enable_env_vars if enable_env_vars is None else enable_env_vars,
         )
 
     @staticmethod
@@ -128,14 +124,15 @@ class PipelineEngine:
             # If not, log a warning and add them to the dependencies list
             def check_inputs(inputs):
                 for arg_name, arg_ref in inputs.items():
-                    upnode_name, _, key = arg_ref.partition(".data.")
+                    upnode_name, _, _ = parse_upstream_ref(arg_ref, pipeline_cfg['name'])
                     # Ensure that task_path (which should be a node name) is named fully with pipeline name
-                    if '.' not in upnode_name:
-                        logger.warning(f"Input '{arg_name}' for task '{node['name']}' references '{upnode_name}' "
+                    ref_base, ref_paren, ref_call = arg_ref.partition("(")
+                    if '.' not in ref_base:
+                        fixed_ref = f"{upnode_name}({ref_call}" if ref_paren else upnode_name
+                        logger.warning(f"Input '{arg_name}' for task '{node['name']}' references '{arg_ref}' "
                                      f"without pipeline name. Assuming it is from the same pipeline and converting it "
-                                     f"to '{pipeline_cfg['name']}.{upnode_name}'.")
-                        upnode_name = f"{pipeline_cfg['name']}.{upnode_name}"
-                        inputs[arg_name] = f"{upnode_name}.data.{key}"
+                                     f"to '{fixed_ref}'.")
+                        inputs[arg_name] = fixed_ref
                     if upnode_name not in upstream:
                         logger.warning(f"Input '{arg_name}' for task '{node['name']}' references '{upnode_name}' "
                                        f"which is not listed in 'depends_on'. Adding it to the dependencies.")
@@ -180,14 +177,15 @@ class PipelineEngine:
         return pipe_order, node_orders
 
     @staticmethod
-    def execute_task(node_name, node_dict, upstream_results, lazy=False) -> TaskResult:
+    def execute_task(node_name, node_dict, upstream_results, lazy=False):
         """
         Execute a single task given its node_dict containing the task instance, inputs, and parameters.
          - Resolve the inputs using self.resolve_inputs
          - Call the task's run or lazy_run method with the resolved inputs and parameters
-         - Return a TaskResult containing the task name, output data, upstream dependencies, and parameters
-         - If lazy is True, call the task's lazy_run method and return an iterator wrapped in TaskResult.
-           The caller is responsible for iterating through the results and feeding them downstream.
+         - Return the task's own TaskResult (subclass) with upstream dependencies and params attached
+         - If lazy is True, call the task's lazy_run method and return the raw generator of TaskResult
+           batches, unmodified. The caller is responsible for iterating through the results, attaching
+           upstream/params metadata to each yielded batch, and feeding them downstream.
          :param node_name: The name of the node to execute.
          :param node_dict: dict
             A dictionary containing the task instance, inputs, parameters, and upstream dependencies.
@@ -195,17 +193,27 @@ class PipelineEngine:
             A dictionary containing the results of previously executed tasks that are dependencies, used for resolving inputs.
          :param lazy: bool
             Whether to execute the task in lazy mode. If True, the task must have a lazy_run method that returns an iterator.
-         :return: TaskResult
-             A TaskResult containing the task name, output data (or iterator if lazy), upstream dependencies, and parameters.
+         :return: TaskResult | Generator[TaskResult, None, None]
+             The task's own TaskResult with 'upstream'/'params' set, or (if lazy) a generator of TaskResults
+             still missing 'upstream'/'params', which the caller must attach.
         """
 
         def resolve_inputs(input_spec: dict) -> dict:
             resolved = {}
+            pipeline_name = node_name.split('.')[0]
             for arg_name, ref in input_spec.items():
-                task_path, _, key = ref.partition(".data.")
+                task_path, field_name, call_arg = parse_upstream_ref(ref, pipeline_name)
                 if task_path not in upstream_results:
                     raise ValueError(f"Upstream task '{task_path}' not found in results")
-                resolved[arg_name] = upstream_results[task_path].data[key]
+                result = upstream_results[task_path]
+                value = result[field_name] if field_name is not None else result
+                if call_arg is not None:
+                    if not callable(value):
+                        raise TypeError(f"Input '{arg_name}' for task '{node_name}' references "
+                                        f"'{task_path}.{field_name}' with a filter call, but its value "
+                                        f"(type {type(value).__name__}) is not callable.")
+                    value = value(call_arg)
+                resolved[arg_name] = value
             return resolved
 
         init_inputs = resolve_inputs(node_dict["init_inputs"])
@@ -217,18 +225,15 @@ class PipelineEngine:
         if lazy:
             if not hasattr(eregion_task, "lazy_run"):
                 raise ValueError(f"Task '{eregion_task.name}' does not have a 'lazy_run' method for lazy execution")
-            res = eregion_task.lazy_run(**run_inputs, **run_params)
-        else:
-            res = eregion_task.run(**run_inputs, **run_params)
-        return TaskResult(task_name=eregion_task.name, data=res, upstream=node_dict["upstream"],
-                          params=node_dict["params"])
+            return eregion_task.lazy_run(**run_inputs, **run_params)
+
+        res = eregion_task.run(**run_inputs, **run_params)
+        return res.model_copy(update={"upstream": node_dict["upstream"], "params": node_dict["params"]})
 
     def execute_pipeline(self, pipe_name, node_order, nodes_dict, results):
         """
         Execute a single pipeline given its name, execution order of its nodes, the nodes_dict containing task instances
         , and the results dict containing results of previously executed tasks (both from this pipeline and other pipelines).
-         - Each node task is wrapped in a Prefect task instance that calls self.execute_task
-         - Nodes belonging to same generation in the execution order are executed in parallel using Prefect's task runner
          - Only nodes belonging to the current pipeline are executed, nodes from other pipelines in the order that are
            dependencies are checked for their results in the results dict and passed as upstream_results to the current nodes
         :param pipe_name: str
@@ -245,7 +250,6 @@ class PipelineEngine:
              Updated results dictionary after adding results of all executed tasks from this pipeline.
         """
         for node_names in node_order:
-            submitted, futures = [], []
             for node_name in node_names:
                 # For nodes belonging to other pipelines, check that their results are available
                 if node_name.split('.')[0] != pipe_name:
@@ -253,15 +257,8 @@ class PipelineEngine:
                         raise ValueError(f"Upstream task '{node_name}' not found in results")
                     continue
 
-                prefect_task = make_prefect_task(node_name, self.execute_task) # Wrap in Prefect task
                 upstream_results = {up: results[up] for up in nodes_dict[node_name]["upstream"]}
-                futures.append(prefect_task.submit(node_name=node_name, node_dict=nodes_dict[node_name],
-                                                   upstream_results=upstream_results, lazy=False)) # Submit for parallel execution
-                submitted.append(node_name)
-
-            wait(futures) # Wait for all tasks in this generation to complete before moving to the next generation
-            for node_name, future in zip(submitted, futures):
-                results[node_name] = future.result()
+                results[node_name] = self.execute_task(node_name, nodes_dict[node_name], upstream_results, lazy=False)
 
         return results
 
@@ -270,7 +267,6 @@ class PipelineEngine:
         Execute a single eager pipeline (non-lazy) given its name.
          - This is a wrapper around self.execute_pipeline that retrieves the node order and nodes_dict for the given
            pipeline name
-         - Pipeline is executed as a Prefect flow that calls self.execute_pipeline
          - self.results is updated directly
         :param pipe_name: str
             Name of the pipeline being executed, used for retrieving node order and nodes_dict, and for logging.
@@ -278,8 +274,7 @@ class PipelineEngine:
         """
         node_order = self.execution_orders[1][pipe_name]
         nodes_dict = self.pipelines[pipe_name]["nodes_dict"]
-        pipe_prefect_flow = make_prefect_flow(pipe_name, self.execute_pipeline)
-        self.results = pipe_prefect_flow(pipe_name, node_order, nodes_dict, self.results)
+        self.results = self.execute_pipeline(pipe_name, node_order, nodes_dict, self.results)
         return self.results
 
     def execute_lazy_pipeline(self, pipe_name):
@@ -287,7 +282,7 @@ class PipelineEngine:
         Execute a single lazy pipeline given its name.
         - Lazy pipelines must have a single source node in the first generation of the node order that returns an
           iterator when executed with self.execute_task with lazy=True
-        - Execute the rest of the pipeline (as a Prefect flow) for each item in the source node's iterator,
+        - Execute the rest of the pipeline for each item in the source node's iterator,
           feeding the result of each iteration as input, storing iteration results in a temp results dict.
         - After each iteration, merge the temp results into self.results by combining results of the same nodes across iterations
         :param pipe_name: str
@@ -310,21 +305,20 @@ class PipelineEngine:
                     raise ValueError(f"Upstream task '{node_name}' not found in results")
 
         # For lazy pipelines, we need to execute the source node using self.execute_task
-        # that returns an iterator wrapped in TaskResult, and then feed it downstream.
+        # that returns a generator of TaskResult batches, and then feed it downstream.
         temp_results = deepcopy(self.results)  # Use a temporary results dict to store the iterating results
-        source_res = self.execute_task(nodes_dict[source_node], temp_results, lazy=True)
-        source_res_iterator = source_res.data
+        source_node_dict = nodes_dict[source_node]
+        source_upstream_results = {up: temp_results[up] for up in source_node_dict["upstream"]}
+        source_res_iterator = self.execute_task(source_node, source_node_dict, source_upstream_results, lazy=True)
         if not isinstance(source_res_iterator, Iterator):
             raise ValueError(f"Source node '{source_node}' for lazy pipeline '{pipe_name}' did not return an iterator")
 
         # Iterate through the source result and feed it downstream to the rest of the nodes in the pipeline according
         # to the execution order
         for item in source_res_iterator:
-            temp_results[source_node] = TaskResult(task_name=source_res.task_name, upstream=source_res.upstream,
-                                                   params=source_res.params, data=item)
-            pipe_prefect_flow = make_prefect_flow(pipe_name, self.execute_pipeline)
-            temp_results = pipe_prefect_flow(pipe_name=pipe_name, node_order=node_order[1:], nodes_dict=nodes_dict,
-                                                temp_results=temp_results)
+            temp_results[source_node] = item.model_copy(update={"upstream": source_node_dict["upstream"],
+                                                                  "params": source_node_dict["params"]})
+            temp_results = self.execute_pipeline(pipe_name, node_order[1:], nodes_dict, temp_results)
 
             # Merge the temp_results into self.results (a bit convoluted as we need to add this iterations result
             # for all nodes into the main results dict)
@@ -337,6 +331,13 @@ class PipelineEngine:
 
     ## Execute the pipelines
     def run(self, max_workers=4):
+        """
+        Execute all pipelines, generation by generation, in a thread pool.
+        :param max_workers: int
+            Maximum number of pipelines to execute concurrently within a generation.
+        :return: None, self.results holds the results of every executed task.
+        """
+
         pipe_order = self.execution_orders[0]
         for pipe_names in pipe_order:
             with cf.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -372,6 +373,46 @@ class PipelineEngine:
                         raise
 
 ################################# Helper functions #################################
+_UPSTREAM_REF_CALL_PATTERN = re.compile(r"^(?P<base>[^()]+)\((?P<quote>['\"])(?P<arg>.*)(?P=quote)\)$")
+
+def parse_upstream_ref(ref: str, pipeline_name: str) -> tuple[str, str | None, str | None]:
+    """
+    Parse an upstream reference string into (task_path, field_name, call_arg).
+
+    Pipeline and node names must not contain '.'. Accepted forms:
+      - 'node'                          -> (f'{pipeline_name}.node', None, None)  # same-pipeline, whole result
+      - 'pipeline.node'                 -> ('pipeline.node', None, None)          # whole result
+      - 'pipeline.node.field'           -> ('pipeline.node', 'field', None)       # single payload field
+      - "pipeline.node.field('query')"  -> ('pipeline.node', 'field', 'query')    # field's value is called
+                                            with 'query' (e.g. ImageBundle.__call__ for filtering by a
+                                            pandas query string); the field's value must be callable.
+    :param ref: str
+        Reference string as written in the pipeline config.
+    :param pipeline_name: str
+        Name of the pipeline the reference appears in, used to qualify same-pipeline
+        references that omit the pipeline name.
+    :return: tuple[str, str | None, str | None]
+        (task_path, field_name, call_arg). field_name is None when the whole upstream TaskResult is
+        requested; call_arg is None unless a "field('query')" call was used.
+    """
+    call_match = _UPSTREAM_REF_CALL_PATTERN.match(ref)
+    base_ref = call_match.group("base") if call_match else ref
+    call_arg = call_match.group("arg") if call_match else None
+
+    parts = base_ref.split(".")
+    if len(parts) == 1:
+        task_path, field_name = f"{pipeline_name}.{parts[0]}", None
+    elif len(parts) == 2:
+        task_path, field_name = base_ref, None
+    else:
+        task_path, field_name = ".".join(parts[:2]), ".".join(parts[2:])
+
+    if call_arg is not None and field_name is None:
+        raise ValueError(f"Invalid upstream reference '{ref}': a filter call requires a field name "
+                          f"(use 'pipeline.node.field(...)').")
+
+    return task_path, field_name, call_arg
+
 def get_dag_order(deps):
     """
     Get the execution order of tasks based on their dependencies using topological sorting.
@@ -393,42 +434,3 @@ def get_dag_order(deps):
         execution_order.append(generation)
         ts.done(*generation)
     return execution_order
-
-def make_prefect_task(task_name, task_func, retries=3, retry_delay_seconds=3):
-    """
-    Wrap a task function in a Prefect task with the given name and retry logic.
-    :param task_name: str
-        Name of the Prefect task, used for logging and tracking in Prefect.
-    :param task_func: function
-        The function that implements the task logic
-    :param retries: int
-        Number of times to retry the task in case of failure before giving up.
-    :param retry_delay_seconds: int
-        Number of seconds to wait between retries.
-    :return: Prefect task
-        A Prefect task that wraps the given task function with the specified name and retry logic.
-    """
-    @task(name=task_name, retries=retries, retry_delay_seconds=retry_delay_seconds)
-    def prefect_task(*args, **kwargs):
-        return task_func(*args, **kwargs)
-    return prefect_task
-
-def make_prefect_flow(flow_name, flow_func, task_runner=ThreadPoolTaskRunner, max_workers=4):
-    """
-    Wrap a flow function in a Prefect flow with the given name and task runner for parallel execution.
-    :param flow_name: str
-        Name of the Prefect flow, used for logging and tracking in Prefect.
-    :param flow_func: function
-        The function that implements the flow logic.
-    :param task_runner: Prefect task runner class
-        The Prefect task runner class to use for parallel execution of tasks within the flow
-        (e.g., ThreadPoolTaskRunner or ProcessPoolTaskRunner).
-    :param max_workers: int
-        The maximum number of worker threads/processes to use for parallel execution of tasks within the flow
-    :return: Prefect flow
-        A Prefect flow that wraps the given flow function with the specified name and task runner for parallel execution.
-    """
-    @flow(name=flow_name, task_runner=task_runner(max_workers=max_workers))
-    def prefect_flow(*args, **kwargs):
-        return flow_func(*args, **kwargs)
-    return prefect_flow
