@@ -63,6 +63,7 @@ class BiasSubtraction(BasePreprocessingTask):
         """
         Subtract master bias frames from input images.
         :param name: Optional[str]
+        :keyword groupby_keys: list[str], image_type keys to filter master_bias imagebundle by to match the input image other than det_id.
         :keyword only_image_area: bool, If True, only subtract bias from the image area, ignoring overscan/prescan regions. Default is True.
         :keyword quick: bool, If True, perform full image subtraction including overscan/prescan regions. Default is False.
         """
@@ -78,8 +79,10 @@ class BiasSubtraction(BasePreprocessingTask):
             The bias-subtracted science image.
         """
         # Load the appropriate master bias for this image based on metadata (e.g., detector name)
-        # TODO: this should be improved to match the correct master bias using groupby keys.
-        master_bias = self.master_bias.filter(f'det_id == "{img.id}"')
+        filter_vals = {"det_id": img.id}
+        filter_vals.update({k: img.image_type.get(k, None) for k in self.meta.get('groupby_keys', [])})
+        filter_str = ' and '.join([f'{k} == "{v}"' for k, v in filter_vals.items() if v is not None])
+        master_bias = self.master_bias.filter(filter_str)
         if not master_bias:
             raise ValueError(f"No matching master bias found for DetImage with name '{img.id}'.")
         else:

@@ -16,7 +16,6 @@ from eregion.utils import slice_data, decrease_slicer_stop_index, save_dataframe
 
 import os
 from pydantic import Field
-from joblib import Parallel, delayed
 from typing import Callable, Generator, Literal
 import numpy as np
 import pandas as pd
@@ -100,9 +99,7 @@ class LinBin(LazyTask):
         linbin_flats = linbin_flats if isinstance(linbin_flats, ImageBundle) else ImageBundle(linbin_flats)
 
         # digital binning of the normal flats to match the linbin flats
-        results = Parallel(n_jobs=self.n_jobs)(
-            delayed(self._bin_image)(normal_flat) for normal_flat in normal_flats
-        )
+        results = [self._bin_image(normal_flat) for normal_flat in normal_flats]
         digbin_flats = ImageBundle(results)
 
 
@@ -179,20 +176,25 @@ class LinBin(LazyTask):
 
     def do_stats_per_output(self, output: CCDOutput, mask_key: str = 'sigma_clip_mask'):
         imarr, immask = output.get_image_region(return_masks=True)
+        binaxint = getattr(output, f"{self.binaxis}_axint")
+        slicer = [slice(None)] * imarr.ndim
+        slicer[binaxint] = slice(0, len(self.bins))
+        slicer = tuple(slicer)
+
         stats = {'output': output.id, 'bins': self.bins}
         if immask is not None and mask_key in immask:
             mask = immask[mask_key].values
             stats["n_masked"] = int(np.count_nonzero(mask))
         else:
-            mask = np.zeros_like(imarr)
+            mask = np.zeros(imarr.shape, dtype=bool)
             stats["n_masked"] = 0
-        ma_imarr = np.ma.masked_array(imarr.values, mask=mask)[0:len(self.bins)] # only take the binned rows, i.e. the first len(bins) rows
+        ma_imarr = np.ma.masked_array(imarr.values[slicer], mask=mask[slicer])
+        stats |= do_statistics(ma_imarr, which=STATFUNCS, axis=int(1-binaxint), prepend_kw='')
 
-        stats |= do_statistics(ma_imarr, which=STATFUNCS, axis=output.serial_axint, prepend_kw='')
-
-        # serial overscan region stats, unmasked
-        ser_oscan = output.get_overscan('serial', corner=False).values[0:len(self.bins)]
-        stats |= do_statistics(ser_oscan, which=STATFUNCS, axis=output.serial_axint, prepend_kw='ser_oscan_')
+        # overscan region stats, unmasked
+        _oscan = "serial" if self.binaxis == "parallel" else "parallel"
+        oscan = output.get_overscan(_oscan, corner=False).values[slicer]
+        stats |= do_statistics(oscan, which=STATFUNCS, axis=int(1-binaxint), prepend_kw=f'{_oscan}_overscan_')
 
         return stats
 

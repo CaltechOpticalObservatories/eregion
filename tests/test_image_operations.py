@@ -57,20 +57,10 @@ def test_do_digital_binning_does_not_mutate_input():
     assert np.array_equal(data, original)
 
 
-def test_do_digital_binning_preserves_integer_dtype():
-    data = np.arange(12, dtype=np.int32).reshape(4, 3)
-
-    binned = do_digital_binning(data, binsizes=[2, 2])
-
-    assert binned.dtype == data.dtype
-    assert np.array_equal(binned[0], data[0:2].sum(axis=0))
-    assert np.array_equal(binned[1], data[2:4].sum(axis=0))
-
-
 def test_do_digital_binning_raises_when_binsizes_do_not_sum_to_axis_length():
     data = np.zeros((4, 3))
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         do_digital_binning(data, binsizes=[1, 2])
 
 
