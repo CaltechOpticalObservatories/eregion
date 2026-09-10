@@ -31,12 +31,11 @@ class PTCResult(TaskResult):
         return inp
 
     def save(self, filepath: str, save_diffs=False, **kwargs) -> None:
-        os.makedirs(filepath, exist_ok=True)
+        super().save(filepath)
         if save_diffs:
             self.diff_images.save(os.path.join(filepath, "diff_images"), **kwargs)
         save_dataframe_to_fits(self.ptc_table, os.path.join(filepath, "ptc_table.fits"))
         self.params.update(self.ptc_meta)
-        super().save(filepath)
 
     @classmethod
     def load(cls, filepath: str, load_diffs=False):

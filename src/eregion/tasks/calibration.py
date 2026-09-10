@@ -134,7 +134,7 @@ class MasterCombine(Task):
             'median': 'core.image_operations.median_combine',
         }
 
-    def __call__(self, images: list[np.ndarray],  method='median') -> np.ndarray:
+    def __call__(self, images: list[np.ndarray],  method='median'):
         return self._create_mastercal(images, method=method)
 
 

@@ -1,6 +1,6 @@
 from copy import deepcopy
 from abc import abstractmethod
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 import numpy as np
 import xarray as xr
 from joblib import Parallel, delayed
@@ -10,6 +10,7 @@ from functools import wraps
 from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
 from eregion.core.image_operations import sigma_clip_image
+from eregion.core.image_stats import do_statistics, STATFUNCS
 from eregion.tasks import LazyTask, ImageResult
 
 ########### BasePreprocessingTask ###########
@@ -62,9 +63,9 @@ class BiasSubtraction(BasePreprocessingTask):
         """
         Subtract master bias frames from input images.
         :param name: Optional[str]
-        Keyword arguments
-
-        - only_image_area: bool, If True, only subtract bias from the image area, ignoring overscan/prescan regions. Default is True.
+        :keyword groupby_keys: list[str], image_type keys to filter master_bias imagebundle by to match the input image other than det_id.
+        :keyword only_image_area: bool, If True, only subtract bias from the image area, ignoring overscan/prescan regions. Default is True.
+        :keyword quick: bool, If True, perform full image subtraction including overscan/prescan regions. Default is False.
         """
         super().__init__(name=name, **kwargs)
         self.master_bias = None
@@ -78,13 +79,18 @@ class BiasSubtraction(BasePreprocessingTask):
             The bias-subtracted science image.
         """
         # Load the appropriate master bias for this image based on metadata (e.g., detector name)
-        master_bias = self.master_bias.filter(f'det_id == "{img.id}"')
+        filter_vals = {"det_id": img.id}
+        filter_vals.update({k: img.image_type.get(k, None) for k in self.meta.get('groupby_keys', [])})
+        filter_str = ' and '.join([f'{k} == "{v}"' for k, v in filter_vals.items() if v is not None])
+        master_bias = self.master_bias.filter(filter_str)
         if not master_bias:
             raise ValueError(f"No matching master bias found for DetImage with name '{img.id}'.")
         else:
             master_bias = master_bias[0]
+            self.logger.info(f"Using master bias with det_id='{master_bias.id}' and type='{master_bias.image_type}'.")
 
         if self.meta.get('quick', False):
+            self.logger.warning("kwarg 'quick' is True, performing full image subtraction including overscan/prescan regions.")
             sub_img = self._subtract(img.data, master_bias.data)
             img.set_data(sub_img)
         else:
@@ -100,6 +106,7 @@ class BiasSubtraction(BasePreprocessingTask):
                     else:
                         raise ValueError(f"No image_region attribute found for Output '{output.id}' of DetImage {img.id}.")
                 else:
+                    self.logger.warning("kwarg 'only_image_area' is False, performing full output subtraction including overscan/prescan regions.")
                     sub_output = self._subtract(output.data, mb_output.data)
                     output.set_data_in_parent(sub_output)
 
@@ -111,13 +118,10 @@ class BiasSubtraction(BasePreprocessingTask):
                  master_bias: Optional[ImageBundle | list[DetImage] | DetImage] = None,
                  **kwargs):
         """
-        Calls this class' _process_single_image() per input image.
+        Calls this class' _process_single_image() per input image which applies bias subtraction.
         :param images: Iterable of DetImage objects or ImageBundle to be processed.
         :param master_bias: ImageBundle | list[DetImage] The master bias frames to subtract from science images.
-
-        Keyword arguments
-
-        - batch_size: int, Number of images to process per batch
+        :keyword batch_size: int, Number of images to process per batch
         """
         if master_bias is None:
             raise ValueError("master_bias must be provided for bias subtraction.")
@@ -153,20 +157,25 @@ class ScanSubtraction(BasePreprocessingTask):
                  **kwargs
     ):
         """
-        Subtract scan region from input image. Example, overscan subtraction.
+        Subtract scan region from input image. Example, serial overscan subtraction.
+        Basic statistics are calculated on the scan region and stored in the output header, before the subtraction
+        value is calculated and subtracted from the output data. The subtraction is done on the full array, for example,
+        in case of serial overscan the full slice along the parallel axis (prescan, image area, overscan) is used
+        and subtracted from the full array (including serial overscan itself).
 
-        Parameters
-        ----------------------
-            which_scan: str, required
-                One of 'serial_prescan', 'serial_overscan', 'parallel_prescan', 'parallel_overscan'.
-            name: Optional[str]
-                Name identifying the task instance. Default is None.
-            kwargs:
-                - method: str, optional, method to use for subtraction. Default is 'median_by_axis'.
-                - trim_start: int, optional, number of indices to trim from the start of the scan region before calculating the subtraction value. Default is 0.
-                - trim_end: int, optional, number of indices to trim from the end of the scan region before calculating the subtraction value. Default is 0.
+        :param which_scan: str, required
+            One of 'serial_prescan', 'serial_overscan', 'parallel_prescan', 'parallel_overscan'.
+        :param name: Optional[str]
+            Name identifying the task instance. Default is None.
+        :keyword method: str
+            method to use for subtraction. Default is 'median_by_axis'.
+        :keyword trim_start: int
+            number of indices to trim from the start of the scan region before calculating the subtraction value. Default is 0.
+        :keyword trim_end: int
+            number of indices to trim from the end of the scan region before calculating the subtraction value. Default is 0.
         """
         if 'method' not in kwargs:
+            self.logger.warning("'method' not specified, defaulting to 'median_by_axis'.")
             kwargs['method'] = 'median_by_axis'
         super().__init__(name=name, **kwargs)
         self.which_scan = which_scan.lower()
@@ -182,29 +191,27 @@ class ScanSubtraction(BasePreprocessingTask):
         trim_slc = slice(trim_start, scan_data.sizes[axis_str] - trim_end)
         trimmed_scan_data = scan_data.isel({axis_str: trim_slc})
 
+        BASICSTATS = {'mean': STATFUNCS['mean'], 'median': STATFUNCS['median'], 'std': STATFUNCS['std'],
+                      'mad': STATFUNCS['mad']}
+        trimmed_scan_stats = do_statistics(trimmed_scan_data.values, which=BASICSTATS,
+                                           prepend_kw=f"HIERARCH {self.which_scan}_")
+
         methodkwargs = {'axis': getattr(output, axis+"_axint")} if self.method_name == "median_by_axis" else {}
         subtract_value = self.method(trimmed_scan_data.values, **methodkwargs)
         subtracted_scan = output.data.values - subtract_value
-        return subtracted_scan, subtract_value
+
+        output.set_data_in_parent(subtracted_scan)
+        outhdr = getattr(output, "header", {})
+        outhdr.update(trimmed_scan_stats)
+        output.header = outhdr
+
+        return output
 
     def _process_single_image(self, img: DetImage) -> DetImage:
-        """
-        Process a single DetImage by subtracting the specified scan from each output.
-        :param img: DetImage
-            The image to be processed.
-        :return: DetImage
-            The processed image with scans subtracted.
-        """
         trim_start = self.meta.get("trim_start", 0)
         trim_end = self.meta.get("trim_end", 0)
-        outputs = img.outputs.values()
-        results = Parallel(n_jobs=self.n_jobs)(
-            delayed(self._subtract_scan_per_output)(output, trim_start, trim_end) for output in outputs
-        )
-
-        for output, (subtracted_scan, subtract_value) in zip(img.outputs.values(), results):
-            output.set_data_in_parent(subtracted_scan)
-            setattr(output, f"{self.which_scan}_median", subtract_value.tolist() if isinstance(subtract_value, np.ndarray) else subtract_value)
+        for out_id, output in img.outputs.items():
+            img.outputs[out_id] = self._subtract_scan_per_output(output, trim_start, trim_end)
 
         img.image_type.update({f"{self.which_scan}_subtracted": True})
         return img
@@ -230,29 +237,70 @@ class SigmaClipMasking(BasePreprocessingTask):
     def __init__(self,
                  name: Optional[str] = "sigma_clip_masking",
                  sigma_clip_args: Optional[dict[str, Any]] = None,
+                 clip_axis: Optional[Literal["serial", "parallel"]] = None,
                  **kwargs
     ):
         """
-        Create a bad pixel mask/cosmic ray mask by sigma clipping.
+        Create a bad pixel mask/cosmic ray mask by sigma clipping. Clipping is performed per output.
+        'simple' method applies clipping to entire output. 'ccd' method applies clipping separately to serial overscan,
+        parallel overscan, and image region. Masks are saved as attributes of the output for later use.
+
+        Currently only supports sigma clipping
         :param name: Optional[str]
         :param sigma_clip_args: Optional[dict[str, Any]]
             Arguments to pass to astropy.stats.sigma_clip function.
-        :param kwargs:
+        :param clip_axis: Optional[Literal["serial", "parallel"]]
+            Axis along which to perform clipping. Example, for image where parallel readout is along y-axis and serial
+            readout along x-axis, to do the clipping per row set clip_axis="serial".
+        :keyword method: Optional[str]
+            Method to use for sigma clipping. Default is 'ccd' which applies sigma clipping per CCD output.
         """
         if 'method' not in kwargs:
-            kwargs['method'] = 'ccd'  # default method is to apply sigma clipping per CCD output
+            kwargs['method'] = 'ccd'  # ccd default for now
         super().__init__(name=name, **kwargs)
         self.sigma_clip_args = {"sigma": 5.0, "axis": None, "masked": True, "copy": True, "grow": 10.0}
         self.sigma_clip_args.update(sigma_clip_args or {})
+        if clip_axis is not None and clip_axis in ["serial", "parallel"]:
+            self.clip_axis = clip_axis+"_axint" # CCDOutput attribute name for serial/parallel axis integer index
+        else:
+            self.clip_axis = None
+
+
+    def _process_single_image(self, img: DetImage) -> DetImage:
+        """
+        Process a single DetImage by applying sigma clipping to create a mask.
+        :param img: DetImage
+            The image to be processed.
+        :return: DetImage
+            The processed image with updated mask.
+        """
+        for out_id, output in img.outputs.items():
+            img.outputs[out_id] = self.method(output)
+        img.image_type.update({"bad_pixel_masked": True})
+        return img
+
+    @property
+    def methods(self):
+        """
+        Return a dictionary of available methods for sigma clipping and their function signatures.
+        :return: dict
+            Dictionary with method names as keys and function signatures as values.
+        """
+        return {
+            'simple': self._sigma_clip_per_output,  # simple sigma clipping on the entire output
+            'ccd': self._sigma_clip_per_ccdoutput,  # ccd specific, clips overscans and image region separately
+        }
 
     def _sigma_clip_per_ccdoutput(self, output: CCDOutput) -> CCDOutput:
         """
         Apply sigma clipping to a single output to create a mask. Masks are saved as attributes of the output for later use.
-        :param output: CCDOutput
-            The output to be processed.
-        :return: CCDOutput
-            The output with an added mask attribute for sigma clipping.
         """
+        # If clip_axis is specified but axis is not set in sigma_clip_args, set it from output attribute.
+        # Setting it in original dict to reduce redundancy in the following calls to this function as all outputs
+        # processed in the same image (by same task instance) will have the same axis for clipping.
+        if self.clip_axis is not None and self.sigma_clip_args["axis"] is None:
+            self.sigma_clip_args["axis"] = getattr(output, self.clip_axis)
+
         sigma_clip_args_overscan = deepcopy(self.sigma_clip_args)
         sigma_clip_args_overscan.pop("grow")
 
@@ -286,32 +334,20 @@ class SigmaClipMasking(BasePreprocessingTask):
                 output.masks["sigma_clip_mask"] = combined_mask
         return output
 
-    def _process_single_image(self, img: DetImage) -> DetImage:
+    def _sigma_clip_per_output(self, output: Output) -> Output:
         """
-        Process a single DetImage by applying sigma clipping to create a mask.
-        :param img: DetImage
-            The image to be processed.
-        :return: DetImage
-            The processed image with updated mask.
+        Apply sigma clipping to a single output to create a mask. Masks are saved as attributes of the output for later use.
         """
-        results = Parallel(n_jobs=self.n_jobs)(
-            delayed(self.method)(output) for output in img.outputs.values())
-        for new_output in results:
-            img.add_output(new_output, overwrite=True)
+        clipped = sigma_clip_image(output.data.values, **self.sigma_clip_args)
+        mask = clipped.mask
 
-        img.image_type.update({"bad_pixel_masked": True})
-        return img
-
-    @property
-    def methods(self):
-        """
-        Return a dictionary of available methods for sigma clipping and their function signatures.
-        :return: dict
-            Dictionary with method names as keys and function signatures as values.
-        """
-        return {
-            'ccd': self._sigma_clip_per_ccdoutput,
-        }
-
+        if output.masks is None:
+            output.masks = mask.to_dataset(name="sigma_clip_mask")
+        else:
+            if "sigma_clip_mask" in output.masks:
+                output.masks["sigma_clip_mask"] = (output.masks["sigma_clip_mask"] | mask)
+            else:
+                output.masks["sigma_clip_mask"] = mask
+        return output
 
 
