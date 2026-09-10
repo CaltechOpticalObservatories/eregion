@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import ClassVar, Generic, Optional, TypeVar
 
+import matplotlib.pyplot as plt
+
 from eregion.datamodels import TaskResult
 from eregion.plotting.descriptor import PlotDescriptor
 from eregion.utils import configure_logger
@@ -66,4 +68,29 @@ class Plotter(ABC, Generic[TResult]):
         ax = self.plot(ax=ax, **kwargs)
         if save is not None:
             ax.figure.savefig(save)
+        return ax
+
+
+class SeabornPlotter(Plotter[TResult], ABC):
+    """
+    Base class for Plotters that draw with seaborn instead of matplotlib calls.
+
+    Seaborn's plotting functions (sns.lineplot, sns.histplot, sns.scatterplot,
+    ...) all accept an `ax=` argument the same way matplotlib does, so a
+    SeabornPlotter is still just a Plotter: it takes one TaskResult, draws it
+    onto one Axes, and gets show()/save() for free. Subclasses are free to mix
+    seaborn calls and direct matplotlib calls on the same ax, e.g. sns.lineplot()
+    for the data and ax.axhline() for a reference line.
+    """
+
+    def new_axes(self, **kwargs) -> plt.Axes:
+        """
+        Create a new Axes with this Plotter's default figure size, for
+        subclasses that need one to hand to a seaborn plotting function.
+        :param kwargs: Forwarded to plt.subplots, overriding the defaults
+        :return: matplotlib.axes.Axes
+        """
+        subplots_kwargs = {"figsize": (8, 5), "tight_layout": True}
+        subplots_kwargs.update(kwargs)
+        _, ax = plt.subplots(1, 1, **subplots_kwargs)
         return ax
