@@ -4,7 +4,7 @@ from typing import Optional
 import seaborn as sns
 
 from eregion.tasks.ptc import PTCResult
-from eregion.plotting.base import SeabornPlotter
+from eregion.plotting.base import Plotter
 from eregion.plotting.descriptor import PlotDescriptor
 
 
@@ -16,13 +16,17 @@ class PTCCurvePlotDescriptor(PlotDescriptor):
     yscale: str = "log"
 
 
-class PTCCurvePlotter(SeabornPlotter[PTCResult]):
+class PTCCurvePlotter(Plotter[PTCResult]):
     """
     Draw a PTCResult's photon transfer curve: variance vs. mean signal, one
     point per (det_id, output, exptime) row of PTCResult.ptc_table.
 
     A PTCResult commonly holds rows for several CCD outputs (and/or det_ids)
-    at once, so this is drawn with seaborn.
+    at once, so this is drawn with seaborn (sns.scatterplot) rather than raw
+    matplotlib: passing the grouping column as `hue` tells the series apart by
+    color and builds the legend, instead of a hand-rolled loop over groups.
+    Seaborn's axes-level functions accept `ax=` like matplotlib does, so this
+    is still just a Plotter -- one TaskResult drawn onto one Axes.
     """
     result_cls = PTCResult
     descriptor_cls = PTCCurvePlotDescriptor
@@ -48,12 +52,5 @@ class PTCCurvePlotter(SeabornPlotter[PTCResult]):
 
         sns.scatterplot(x=table["mean"], y=variance, hue=hue_data, ax=ax, **kwargs)
 
-        ax.set_xlabel(self.descriptor.xlabel)
-        ax.set_ylabel(self.descriptor.ylabel)
-        ax.set_xscale(self.descriptor.xscale)
-        ax.set_yscale(self.descriptor.yscale)
-
-        title = self.descriptor.resolve_title(self.result)
-        if title:
-            ax.set_title(title)
+        self.descriptor.apply(ax, self.result)
         return ax

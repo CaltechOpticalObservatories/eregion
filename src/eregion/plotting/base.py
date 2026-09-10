@@ -70,23 +70,10 @@ class Plotter(ABC, Generic[TResult]):
             ax.figure.savefig(save)
         return ax
 
-
-class SeabornPlotter(Plotter[TResult], ABC):
-    """
-    Base class for Plotters that draw with seaborn instead of matplotlib calls.
-
-    Seaborn's plotting functions (sns.lineplot, sns.histplot, sns.scatterplot,
-    ...) all accept an `ax=` argument the same way matplotlib does, so a
-    SeabornPlotter is still just a Plotter: it takes one TaskResult, draws it
-    onto one Axes, and gets show()/save() for free. Subclasses are free to mix
-    seaborn calls and direct matplotlib calls on the same ax, e.g. sns.lineplot()
-    for the data and ax.axhline() for a reference line.
-    """
-
     def new_axes(self, **kwargs) -> plt.Axes:
         """
-        Create a new Axes with this Plotter's default figure size, for
-        subclasses that need one to hand to a seaborn plotting function.
+        Create a new Axes with this Plotter's default figure size, for plot()
+        implementations that need one when ax isn't given.
         :param kwargs: Forwarded to plt.subplots, overriding the defaults
         :return: matplotlib.axes.Axes
         """

@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
 
-import matplotlib.pyplot as plt
-
 from eregion.tasks.histogram import HistogramResult
 from eregion.plotting.base import Plotter
 from eregion.plotting.descriptor import PlotDescriptor
@@ -30,20 +28,13 @@ class HistogramPlotter(Plotter[HistogramResult]):
         :return: matplotlib.axes.Axes
         """
         if ax is None:
-            _, ax = plt.subplots(1, 1, figsize=(8, 5), tight_layout=True)
+            ax = self.new_axes()
 
         stairs_kwargs = {"fill": True}
         stairs_kwargs.update(kwargs)
         ax.stairs(self.result.counts, self.result.bin_edges, **stairs_kwargs)
 
-        ax.set_xlabel(self.descriptor.xlabel)
-        ax.set_ylabel(self.descriptor.ylabel)
-        ax.set_xscale(self.descriptor.xscale)
-        ax.set_yscale(self.descriptor.yscale)
-
         # HistogramResult.label is task data (what was histogrammed), not plot
         # metadata -- it's a reasonable default title but the descriptor wins if set.
-        title = self.descriptor.resolve_title(self.result) or self.result.label
-        if title:
-            ax.set_title(title)
+        self.descriptor.apply(ax, self.result, default_title=self.result.label)
         return ax

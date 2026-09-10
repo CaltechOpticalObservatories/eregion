@@ -43,6 +43,29 @@ class PlotDescriptor:
             return self.title(result)
         return self.title
 
+    def apply(self, ax, result: TaskResult, default_title: Optional[str] = None) -> None:
+        """
+        Apply this descriptor's axis labels, scale, and title to ax.
+
+        Centralizes the handful of ax.set_*() calls a Plotter.plot()
+        implementation would otherwise end with, so a new basic formatting
+        default only needs to be added here once.
+        :param ax: matplotlib.axes.Axes
+        :param result: TaskResult
+            Passed through to a callable title, via resolve_title.
+        :param default_title: Optional[str]
+            Used if this descriptor doesn't resolve to a title of its own,
+            e.g. a Plotter falling back to a title carried on the result itself.
+        """
+        ax.set_xlabel(self.xlabel)
+        ax.set_ylabel(self.ylabel)
+        ax.set_xscale(self.xscale)
+        ax.set_yscale(self.yscale)
+
+        title = self.resolve_title(result) or default_title
+        if title:
+            ax.set_title(title)
+
     def resolve_legend_label(self, key: Hashable) -> str:
         """Resolve legend text for a multi-series key."""
         if callable(self.legend_label):
