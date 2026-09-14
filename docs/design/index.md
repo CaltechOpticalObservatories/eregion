@@ -251,6 +251,13 @@ the pipelines in "flows" for execution. Prefect handles retries, and concurrent 
 the same generation of tasks. This allows users to focus on defining workflows rather than
 managing execution details.
 
+Before any task is executed, the engine dry runs the whole DAG: every task is instantiated
+with its configured init params, asked for a dummy result (`TaskResult.get_empty_instance()`),
+and the inputs of the tasks downstream are resolved against those dummies and checked against
+the signature of their `run()`/`lazy_run()` method. Wiring mistakes, such as a reference to an
+unknown node or payload field, or an argument a task does not accept, are therefore reported
+when the engine is built rather than part-way through a long run.
+
 ### 5.3 Execution Modes
 
 Eregion supports both eager and lazy execution at the pipeline level. For eager pipelines, all
@@ -272,7 +279,7 @@ level of traceability is critical for scientific workflows.
 ```{code-block} yaml
 :caption: "Fig. 2: Example pipeline YAML structure"
 
-debug: false  # Optional: set to true to enable debug mode (more verbose logging, etc.)
+debug: false   # Optional: set to true to enable debug mode (more verbose logging, etc.)
 
 pipelines:
   - name: PIPE_1  # Name of the pipeline flow, required
@@ -280,22 +287,27 @@ pipelines:
     lazy: false  # Set true if this sub-pipeline should be run lazily (i.e. as images arrive)
 
     nodes:  # List of tasks (nodes) in the pipeline flow
-      - name: TASK_1  # Name of the task node, required
-        task: package.module.class  # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
-        init:  # Initialization parameters (for Task.__init__)
-          inputs:  # Specify any args needed from outputs of other tasks in this config
-            arg_1: pipe_name.node_name.data.key  # Output of tasks are wrapped in TaskResult objects by the engine, and the data
-                                                  # produced by the task is in the TaskResult.data dict; specify the path to the
-                                                  # data you want to use as input for this task
-            # etc.
-          params:  # Specify any additional kwargs (which are not task outputs) needed; refer to the task documentation for required and optional params and kwargs
+      - name: TASK_1   # Name of the task node, required
+        task: package.module.class   # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
+        init:  # Initialization parameters (for Task.__init__); only `params`, outputs of other tasks are never passed to __init__
+          params: # Specify the kwargs needed to configure the task; refer to the task documentation for required and optional params and kwargs
             param_1: value
             param_2: value
             # etc.
-        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters, as above; use `inputs` for data coming from
+        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters; use `inputs` to specify data coming from
               # outputs of other tasks, and `params` for any additional parameters
-          inputs:
-            arg_1: pipe_name.node_name.data.key
+          inputs: # Specify any args needed from outputs of other tasks in this config
+            arg_1: pipe_name.node_name.field_name # Each task's output is its own TaskResult subclass; reference a
+                                                   # named payload field on an upstream task's result with
+                                                   # 'pipeline.node.field'. Use 'pipeline.node' (no field) to pass
+                                                   # the whole upstream TaskResult instead. If the field's value
+                                                   # supports being called (e.g. ImageBundle), append a query
+                                                   # string to filter it, e.g. pipe_name.node_name.field_name('type == "bias"')
+            arg_2: [pipe_name.node_a, pipe_name.node_b]  # A list of references is resolved into a list of values, in
+                                                          # this order (e.g. for a task taking several TaskResults)
+            arg_3:  # A mapping of references is resolved into a dict of values under the same keys
+              key_1: pipe_name.node_a.field_name
+              key_2: pipe_name.node_b.field_name
             # etc.
           params:
             param_1: value
@@ -305,18 +317,16 @@ pipelines:
       - name: TASK_2
         task: package.module.class
         init:
-          inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from TASK_1 as input for TASK_2
           params:
             param_1: value
             # etc.
         run:
           inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from TASK_1 as input for TASK_2
+            arg_1: PIPE_1.TASK_1.field_name  # Example of using output from TASK_1 as input for TASK_2
           params:
             param_1: value
             # etc.
-        depends_on: [TASK_1]  # should be specified if this task depends on the output of another task; ensures correct execution order in the pipeline flow
+        depends_on: [TASK_1]   # should be specified if this task depends on the output of another task; ensures correct execution order in the pipeline flow
 
   - name: PIPE_2
     description: Pipeline flow 2
@@ -325,18 +335,16 @@ pipelines:
       - name: TASK_3
         task: package.module.class
         init:
-          inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from a task in another pipeline flow as input
           params:
             param_1: value
             # etc.
         run:
           inputs:
-            arg_1: PIPE_1.TASK_2.data.key  # Example of using output from a task in another pipeline flow as input
+            arg_1: PIPE_1.TASK_2.field_name  # Example of using output from a task in another pipeline flow as input
           params:
             param_1: value
             # etc.
-        depends_on: [PIPE_1.TASK_1, PIPE_1.TASK_2]  # specify dependencies across pipeline flows as well
+        depends_on: [PIPE_1.TASK_1, PIPE_1.TASK_2]   # specify dependencies across pipeline flows as well
 ```
 
 ### 5.5 Pipeline Example
@@ -351,53 +359,56 @@ further processed or analyzed.
 
 debug: false
 pipelines:
-  - name: calib_flow
-    description: Pipeline flow to create a master bias frame from bias images
+  - name: masterbias_flow
+    description: Load biases, subtract overscan, and create master biases
     lazy: false
     nodes:
-      - name: image_creator
-        task: tasks.imagegen.ImageCreator
+      - name: bias_creator
+        task: eregion.tasks.imagegen.ImageCreator
         init:
           params:
-            detector_config: "/path/to/eregion/configs/detectors/deimos_singledet.yaml"
+            detector_config: ${DETECTOR_CONFIG}
         run:
           params:
-            input_source: "/path/to/data/PTC/SCI/20250812-101359/*_bias_*.fits"
-            identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
+            input_source: ${BIAS_INPUT_SOURCE}
+            identifier_func: eregion.tasks.custom.guess_image_type_from_filename_DEIMOS
+            fileloader_func: eregion.tasks.custom.load_image_fits_DEIMOS
+            data_on_demand: true
 
-      - name: master_bias
-        task: tasks.calibration.MasterBias
+      - name: overscan_sub
+        task: eregion.tasks.preprocessing.ScanSubtraction
         init:
           params:
+            which_scan: 'serial_overscan'
+            method: 'median_by_axis'
+            trim_start: 6
+        run:
+          inputs:
+            images: masterbias_flow.bias_creator.data('type == "bias"')
+        depends_on: [masterbias_flow.bias_creator]
+
+      - name: make_master_bias
+        task: eregion.tasks.calibration.MasterBias
+        init:
+          params:
+            groupby_keys: ["det_id"]
             method: "median"
         run:
           inputs:
-            bias_images: calib_flow.image_creator.data.bias
-        depends_on: [calib_flow.image_creator]
+            images: masterbias_flow.overscan_sub.data('type == "bias"')
+        depends_on: [masterbias_flow.overscan_sub]
 
-  - name: preproc_flow
-    description: Example pre-processing pipeline flow
-    lazy: false
-    nodes:
-      - name: image_creator
-        task: tasks.imagegen.ImageCreator
-        init:
-          params:
-            detector_config: "/path/to/eregion/configs/detectors/deimos_singledet.yaml"
-        run:
-          params:
-            input_source: "/path/to/data/PTC/SCI/20250812-101359/*flat_0.000*.fits"
-            identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
-
-      - name: bias_subtraction
-        task: tasks.preprocessing.BiasSubtraction
-        init:
-          inputs:
-            master_biases: calib_flow.master_bias.data.master_biases
+      - name: cleanup_0
+        task: eregion.tasks.bookkeeping.DeleteResult
         run:
           inputs:
-            images: preproc_flow.image_creator.data.flat
-        depends_on: [preproc_flow.image_creator, calib_flow.master_bias]
+            result: masterbias_flow.bias_creator
+
+      - name: cleanup_1
+        task: eregion.tasks.bookkeeping.DeleteResult
+        run:
+          inputs:
+            result: masterbias_flow.overscan_sub
 ```
 
 ## 6. Standardized Characterization Reports

@@ -55,7 +55,8 @@ def test_validate_runnable_config_prints_dag_and_does_not_execute():
         result = runner.invoke(app, ["validate", path])
 
     assert result.exit_code == 0
-    assert "Config OK: 1 pipeline(s) defined." in result.output
+    assert "Config OK: 1 pipeline(s) defined" in result.output
+    assert "node(s) checked by the dry run" in result.output
     assert "PIPE" in result.output
     assert "No tasks were executed." in result.output
 

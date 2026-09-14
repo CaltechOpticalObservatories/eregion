@@ -329,6 +329,26 @@ class TestGetEmptyInstance:
         dummy = ComplexOutput.get_empty_instance()
         assert dummy.payload_list == []
 
+    def test_required_class_field_defaults_to_an_empty_instance_of_that_class(self):
+        """A required field annotated with a class gets an argument-less instance of it."""
+        class BundleOutput(TaskResult):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+            data: ImageBundle = Field(..., description="Images produced by the task")
+
+        dummy = BundleOutput.get_empty_instance()
+        assert isinstance(dummy.data, ImageBundle)
+        assert len(dummy.data.images) == 0
+
+    def test_union_of_classes_uses_the_first_member_and_optional_stays_none(self):
+        class UnionOutput(TaskResult):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+            data: ImageBundle | list = Field(..., description="Either form")
+            maybe: ImageBundle | None = Field(..., description="Optional form")
+
+        dummy = UnionOutput.get_empty_instance()
+        assert isinstance(dummy.data, ImageBundle)
+        assert dummy.maybe is None
+
     def test_override_get_empty_instance(self):
         """Users can override to supply custom placeholder logic."""
         class CustomOutput(TaskResult):

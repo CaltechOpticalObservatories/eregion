@@ -1,6 +1,7 @@
 from typing import Iterator
 from copy import deepcopy
 import graphlib
+import inspect
 import re
 
 from eregion.configs import PipelineConfig
@@ -27,6 +28,9 @@ class PipelineEngine:
         Dictionary of runtime variables that can be used to resolve placeholders in the configuration.
     enable_env_vars : bool, optional
         If True, environment variables can be used to resolve placeholders in the configuration.
+    dry_run : bool, optional
+        If True (the default), `dry_run()` validates the wiring between tasks while the engine is
+        built, so configuration mistakes are raised before any task is executed.
 
     Attributes
     ----------
@@ -43,10 +47,13 @@ class PipelineEngine:
         - node_orders: mapping pipeline_name -> ordered generations of node names
     results : dict
         Stores TaskResult objects keyed by node/task names produced during runs.
+    dummy_results : dict
+        Dummy TaskResult objects produced by the dry run, keyed by node/task names; empty when the
+        dry run is disabled. Useful to inspect which payload fields each node will produce.
     """
 
     def __init__(self, pipeline_config_input: str | dict, runtime_variables: dict | None = None,
-                 enable_env_vars: bool = False):
+                 enable_env_vars: bool = False, dry_run: bool = True):
 
         self.runtime_variables = dict(runtime_variables or {})
         self.enable_env_vars = enable_env_vars
@@ -70,6 +77,10 @@ class PipelineEngine:
         self.execution_orders = self.build_execution_order(all_node_dependencies)
         self.results = {}
 
+        # Validate the wiring between tasks up front, using dummy results in place of real ones
+        self.dry_run_enabled = dry_run
+        self.dummy_results = self.dry_run() if dry_run else {}
+
     def update(self, new_config: str | dict, runtime_variables: dict | None = None, enable_env_vars: bool | None = None):
         """
             Update the pipeline configuration and rebuild the pipelines and execution orders.
@@ -84,6 +95,7 @@ class PipelineEngine:
             pipeline_config_input=new_config,
             runtime_variables=self.runtime_variables if runtime_variables is None else runtime_variables,
             enable_env_vars=self.enable_env_vars if enable_env_vars is None else enable_env_vars,
+            dry_run=self.dry_run_enabled,
         )
 
     @staticmethod
@@ -91,12 +103,13 @@ class PipelineEngine:
         """
         Build the task nodes for a single pipeline based on its configuration.
          - For each node, load the corresponding task class
-         - Extract the inputs (that are outputs of other nodes) for init and run arguments from the config
+         - Extract the run inputs (that are outputs of other nodes) and the init/run params from the config
          - Track the dependencies of each node based on the inputs and explicit depends_on field
         :param pipeline_cfg: dict
             Configuration dictionary for a single pipeline, containing at least the keys "name", "lazy", and "nodes".
             Each node should have at least "name" and "task", and can optionally have "init", "run", and "depends_on"
-            fields.
+            fields. Only the "run" block may declare "inputs"; outputs of other tasks are never passed to
+            `Task.__init__`, so an "init" block only takes "params".
         :return: tuple
             A tuple containing:
             - nodes: dict mapping node names to their corresponding task instances, inputs, parameters
@@ -105,49 +118,133 @@ class PipelineEngine:
         """
         node_dependencies = {}
         nodes = {}
+        pipe_name = pipeline_cfg["name"]
         for node in pipeline_cfg["nodes"]:
+            # get task instance
             eregion_task = load_class(node["task"])
+            # get init params
             init_block = node.get("init", {})
-            init_inputs = init_block.get("inputs", {})
+            if "inputs" in init_block:
+                raise ValueError(f"Node '{node['name']}' declares 'init.inputs'; outputs of other tasks cannot be "
+                                 f"passed to Task.__init__. Move them to the node's 'run.inputs' block, 'init' only "
+                                 f"takes 'params'.")
             init_params = init_block.get("params", {})
+            # get run params and inputs, qualify the inputs and record upstream dependencies
             run_block = node.get("run", {})
-            run_inputs = run_block.get("inputs", {})
             run_params = run_block.get("params", {})
+            run_inputs = run_block.get("inputs", {})
             upstream = node.get("depends_on", [])
-
-            # Ensure that node names in upstream list are named fully with pipeline name
-            for i, dep in enumerate(upstream):
-                if '.' not in dep:
-                    upstream[i] = f"{pipeline_cfg['name']}.{dep}"
-
-            # sanity check: if init_inputs and run_inputs are not empty, the corresponding dependencies must be listed in depends_on
-            # If not, log a warning and add them to the dependencies list
-            def check_inputs(inputs):
-                for arg_name, arg_ref in inputs.items():
-                    upnode_name, _, _ = parse_upstream_ref(arg_ref, pipeline_cfg['name'])
-                    # Ensure that task_path (which should be a node name) is named fully with pipeline name
-                    ref_base, ref_paren, ref_call = arg_ref.partition("(")
-                    if '.' not in ref_base:
-                        fixed_ref = f"{upnode_name}({ref_call}" if ref_paren else upnode_name
-                        logger.warning(f"Input '{arg_name}' for task '{node['name']}' references '{arg_ref}' "
-                                     f"without pipeline name. Assuming it is from the same pipeline and converting it "
-                                     f"to '{fixed_ref}'.")
-                        inputs[arg_name] = fixed_ref
-                    if upnode_name not in upstream:
-                        logger.warning(f"Input '{arg_name}' for task '{node['name']}' references '{upnode_name}' "
-                                       f"which is not listed in 'depends_on'. Adding it to the dependencies.")
-                        upstream.append(upnode_name)
-
-            check_inputs(init_inputs)
-            check_inputs(run_inputs)
-
+            ## Ensure that node names in upstream list are named fully with pipeline name
+            upstream = [f"{pipe_name}.{dep}" for dep in upstream if '.' not in dep]
+            ## sanity check: if run_inputs is not empty, the corresponding dependencies must be listed in depends_on
+            ## If not, log a warning and add them to the dependencies list
             node_dependencies[f"{pipeline_cfg['name']}.{node['name']}"] = set(upstream)
-            node_dict = {"task": eregion_task, "init_inputs": init_inputs, "init_params": init_params,
+            node_dict = {"task": eregion_task, "init_params": init_params,
                          "run_inputs": run_inputs, "run_params": run_params, "upstream": upstream,
-                         "params": {'init': init_params | init_inputs, 'run': run_params | run_inputs}}
+                         "params": {'init': init_params, 'run': run_params | run_inputs}}
             nodes[f"{pipeline_cfg['name']}.{node['name']}"] = node_dict
 
         return nodes, node_dependencies
+
+    @staticmethod
+    def qualify_inputs(node: dict, pipeline_name: str) -> dict:
+        """
+        Qualify the references of a node's inputs and record the nodes they point to as dependencies.
+
+        References written without a pipeline name are assumed to belong to `pipeline_name`, and any
+        referenced node missing from `depends_on` is appended to `upstream`; both cases are logged as
+        warnings. An input entry can be a single reference or a list/dict of them, so each entry is
+        walked structurally.
+        :param node: dict
+            Node entry holding the node's 'run' block with 'inputs' and 'params', and 'depends_on' list.
+        :param pipeline_name: str
+            Name of the pipeline the node belongs to, used to qualify same-pipeline references that omit the pipeline name.
+        :return: dict
+            The inputs with every reference fully qualified, in the same structure as `run_inputs`.
+        """
+        def qualify_ref(arg_ref: str, arg_path: str) -> str:
+            upnode_name, _, _ = parse_upstream_ref(arg_ref, pipeline_name)
+            # Ensure that task_path (which should be a node name) is named fully with pipeline name
+            ref_base, ref_paren, ref_call = arg_ref.partition("(")
+            if '.' not in ref_base:
+                fixed_ref = f"{upnode_name}({ref_call}" if ref_paren else upnode_name
+                logger.warning(f"Input '{arg_path}' for task '{node_name}' references '{arg_ref}' "
+                               f"without pipeline name. Assuming it is from the same pipeline and converting it "
+                               f"to '{fixed_ref}'.")
+                arg_ref = fixed_ref
+            if upnode_name not in upstream:
+                logger.warning(f"Input '{arg_path}' for task '{node_name}' references '{upnode_name}' "
+                               f"which is not listed in 'depends_on'. Adding it to the dependencies.")
+                upstream.append(upnode_name)
+            return arg_ref
+
+
+        return {arg_name: map_input_refs(arg_spec, qualify_ref, arg_name)
+                for arg_name, arg_spec in run_inputs.items()}
+
+    @staticmethod
+    def resolve_inputs(run_inputs: dict, upstream_results: dict, node_name: str, dry: bool = False) -> dict:
+        """
+        Resolve a node's input references into the values produced by its upstream tasks.
+
+        An input entry can be a single reference or a list/dict of them, in which case the resolved
+        value keeps that structure.
+        :param run_inputs: dict
+            Fully qualified node inputs, mapping argument name -> reference(s).
+        :param upstream_results: dict
+            Results of the node's dependencies, keyed by fully qualified node name.
+        :param node_name: str
+            Fully qualified name of the node being resolved, used in error messages.
+        :param dry: bool
+            If True the upstream results are dummies (see `dry_run`), so a filter call on a
+            placeholder value is skipped instead of raising.
+        :return: dict
+            Mapping of argument name -> resolved value(s), ready to be passed to the task.
+        """
+        pipeline_name = node_name.split('.')[0]
+
+        def resolve_ref(ref: str, arg_path: str):
+            task_path, field_name, call_arg = parse_upstream_ref(ref, pipeline_name)
+            if task_path not in upstream_results:
+                raise ValueError(f"Upstream task '{task_path}' not found in results")
+            result = upstream_results[task_path]
+            try:
+                value = result[field_name] if field_name is not None else result
+            except KeyError as e:
+                raise KeyError(f"Input '{arg_path}' for task '{node_name}' references field '{field_name}', which "
+                               f"'{task_path}' ({type(result).__name__}) does not produce; it produces "
+                               f"{list(result.keys())}") from e
+            # Dummy payloads carry no data to filter on, so the call is left out of a dry run
+            if call_arg is not None and not dry:
+                if not callable(value):
+                    raise TypeError(f"Input '{arg_path}' for task '{node_name}' references "
+                                    f"'{task_path}.{field_name}' with a filter call, but its value "
+                                    f"(type {type(value).__name__}) is not callable.")
+                value = value(call_arg)
+            return value
+
+        return {arg_name: map_input_refs(arg_spec, resolve_ref, arg_name)
+                for arg_name, arg_spec in run_inputs.items()}
+
+    @staticmethod
+    def collect_upstream_results(node_name: str, node_dict: dict, results: dict) -> dict:
+        """
+        Pick the results of a node's dependencies out of the results collected so far.
+        :param node_name: str
+            Fully qualified name of the node whose dependencies are needed, used in error messages.
+        :param node_dict: dict
+            Node entry holding the node's 'upstream' dependencies.
+        :param results: dict
+            Results collected so far, keyed by fully qualified node name.
+        :return: dict
+            Results of the node's dependencies, keyed by fully qualified node name.
+        """
+        upstream_results = {}
+        for upstream_name in node_dict["upstream"]:
+            if upstream_name not in results:
+                raise ValueError(f"Upstream task '{upstream_name}' of node '{node_name}' not found in results")
+            upstream_results[upstream_name] = results[upstream_name]
+        return upstream_results
 
     @staticmethod
     def build_execution_order(node_dependencies: dict):
@@ -180,7 +277,8 @@ class PipelineEngine:
     def execute_task(node_name, node_dict, upstream_results, lazy=False):
         """
         Execute a single task given its node_dict containing the task instance, inputs, and parameters.
-         - Resolve the inputs using self.resolve_inputs
+         - Resolve the run inputs against the upstream results; an input can be a single reference or a
+           list/dict of references, in which case the task receives a list/dict of resolved values
          - Call the task's run or lazy_run method with the resolved inputs and parameters
          - Return the task's own TaskResult (subclass) with upstream dependencies and params attached
          - If lazy is True, call the task's lazy_run method and return the raw generator of TaskResult
@@ -198,29 +296,10 @@ class PipelineEngine:
              still missing 'upstream'/'params', which the caller must attach.
         """
 
-        def resolve_inputs(input_spec: dict) -> dict:
-            resolved = {}
-            pipeline_name = node_name.split('.')[0]
-            for arg_name, ref in input_spec.items():
-                task_path, field_name, call_arg = parse_upstream_ref(ref, pipeline_name)
-                if task_path not in upstream_results:
-                    raise ValueError(f"Upstream task '{task_path}' not found in results")
-                result = upstream_results[task_path]
-                value = result[field_name] if field_name is not None else result
-                if call_arg is not None:
-                    if not callable(value):
-                        raise TypeError(f"Input '{arg_name}' for task '{node_name}' references "
-                                        f"'{task_path}.{field_name}' with a filter call, but its value "
-                                        f"(type {type(value).__name__}) is not callable.")
-                    value = value(call_arg)
-                resolved[arg_name] = value
-            return resolved
-
-        init_inputs = resolve_inputs(node_dict["init_inputs"])
         init_params = node_dict["init_params"]
-        run_inputs = resolve_inputs(node_dict["run_inputs"])
+        run_inputs = PipelineEngine.resolve_inputs(node_dict["run_inputs"], upstream_results, node_name)
         run_params = node_dict["run_params"]
-        eregion_task = node_dict["task"](name=node_name, **init_params, **init_inputs)
+        eregion_task = node_dict["task"](name=node_name, **init_params)
 
         if lazy:
             if not hasattr(eregion_task, "lazy_run"):
@@ -257,10 +336,26 @@ class PipelineEngine:
                         raise ValueError(f"Upstream task '{node_name}' not found in results")
                     continue
 
-                upstream_results = {up: results[up] for up in nodes_dict[node_name]["upstream"]}
+                upstream_results = self.collect_upstream_results(node_name, nodes_dict[node_name], results)
                 results[node_name] = self.execute_task(node_name, nodes_dict[node_name], upstream_results, lazy=False)
 
         return results
+
+    def get_source_node(self, pipe_name: str) -> str:
+        """
+        Return the fully qualified source node of a lazy pipeline.
+        :param pipe_name: str
+            Name of the lazy pipeline whose 'source' node is wanted.
+        :return: str
+            Fully qualified name of the source node, checked to start the pipeline's execution order.
+        """
+        source_node = self.pipelines[pipe_name]["source"]
+        source_node = f"{pipe_name}.{source_node}" if '.' not in source_node else source_node
+        # Sanity check: source_node must be in the first generation of the node order
+        if source_node not in self.execution_orders[1][pipe_name][0]:
+            raise ValueError(f"Source node '{source_node}' for lazy pipeline '{pipe_name}' must be in the "
+                             f"first generation of the node order")
+        return source_node
 
     def execute_eager_pipeline(self, pipe_name):
         """
@@ -291,13 +386,8 @@ class PipelineEngine:
         """
         node_order = self.execution_orders[1][pipe_name]
         nodes_dict = self.pipelines[pipe_name]["nodes_dict"]
-        source_node = self.pipelines[pipe_name]["source"]
-        source_node = f"{pipe_name}.{source_node}" if '.' not in source_node else source_node
+        source_node = self.get_source_node(pipe_name)
 
-        # Sanity check: source_node must be in the first generation of the node order
-        if source_node not in node_order[0]:
-            raise ValueError(f"Source node '{source_node}' for lazy pipeline '{pipe_name}' must be in the "
-                             f"first generation of the node order")
         # Check that rest of the nodes in first generation have been executed and their results are available
         for node_name in node_order[0]:
             if node_name.split('.')[0] != pipe_name:
@@ -308,7 +398,7 @@ class PipelineEngine:
         # that returns a generator of TaskResult batches, and then feed it downstream.
         temp_results = deepcopy(self.results)  # Use a temporary results dict to store the iterating results
         source_node_dict = nodes_dict[source_node]
-        source_upstream_results = {up: temp_results[up] for up in source_node_dict["upstream"]}
+        source_upstream_results = self.collect_upstream_results(source_node, source_node_dict, temp_results)
         source_res_iterator = self.execute_task(source_node, source_node_dict, source_upstream_results, lazy=True)
         if not isinstance(source_res_iterator, Iterator):
             raise ValueError(f"Source node '{source_node}' for lazy pipeline '{pipe_name}' did not return an iterator")
@@ -328,6 +418,83 @@ class PipelineEngine:
                 else:
                     self.results[node_name] = self.results[node_name].combine(temp_results[node_name])
             yield self.results
+
+    ## Validate the pipelines without executing them
+    @staticmethod
+    def dry_run_task(node_name: str, node_dict: dict, dummy_results: dict, lazy: bool = False):
+        """
+        Check that a single node can be built and called, without executing it.
+         - Instantiate the task with its configured init params
+         - Resolve its inputs against the dummy results of its upstream nodes, which checks that every
+           referenced node and payload field exists
+         - Bind the resolved inputs and the run params to the signature of run()/lazy_run(), which
+           checks for missing, unexpected or duplicated arguments
+        :param node_name: str
+            Fully qualified name of the node to check.
+        :param node_dict: dict
+            Node entry holding the task class, inputs, params and upstream dependencies.
+        :param dummy_results: dict
+            Dummy results of the nodes checked so far, keyed by fully qualified node name.
+        :param lazy: bool
+            Whether the node is the source of a lazy pipeline, and is therefore called via lazy_run().
+        :return: TaskResult
+            A dummy instance of the task's own result class, standing in for what it would produce.
+        """
+        upstream_results = PipelineEngine.collect_upstream_results(node_name, node_dict, dummy_results)
+        # Upstream payloads are placeholders here, so filter calls on them are skipped rather than applied
+        run_inputs = PipelineEngine.resolve_inputs(node_dict["run_inputs"], upstream_results, node_name, dry=True)
+
+        task_class = node_dict["task"]
+        try:
+            eregion_task = task_class(name=node_name, **node_dict["init_params"])
+        except (TypeError, ValueError) as e:
+            raise type(e)(f"Node '{node_name}': cannot initialise {task_class.__name__} with the configured "
+                          f"'init.params' {sorted(node_dict['init_params'])}: {e}") from e
+
+        run_method = "lazy_run" if lazy else "run"
+        if lazy and not hasattr(eregion_task, run_method):
+            raise ValueError(f"Task '{node_name}' does not have a 'lazy_run' method for lazy execution")
+        try:
+            inspect.signature(getattr(eregion_task, run_method)).bind(**run_inputs, **node_dict["run_params"])
+        except TypeError as e:
+            raise TypeError(f"Node '{node_name}': the configured inputs {sorted(run_inputs)} and params "
+                            f"{sorted(node_dict['run_params'])} do not match "
+                            f"{task_class.__name__}.{run_method}(): {e}") from e
+
+        return eregion_task.dummy_run()
+
+    def dry_run(self):
+        """
+        Walk the whole DAG in execution order without executing any task.
+
+        Each node is checked with `dry_run_task` and contributes a dummy TaskResult, which the nodes
+        downstream of it resolve their inputs against. Wiring mistakes (an unknown node or payload
+        field, an argument a task does not take, a missing required argument) therefore surface when
+        the engine is built rather than part-way through a long run. Payload values are placeholders,
+        so their types are not checked.
+        :return: dict
+            Mapping of fully qualified node name -> dummy TaskResult that the node would produce.
+        """
+        dummy_results = {}
+        for pipe_names in self.execution_orders[0]:
+            for pipe_name in pipe_names:
+                nodes_dict = self.pipelines[pipe_name]["nodes_dict"]
+                source_node = self.get_source_node(pipe_name) if self.pipelines[pipe_name]["lazy"] else None
+                for node_names in self.execution_orders[1][pipe_name]:
+                    for node_name in node_names:
+                        # Nodes from other pipelines have been checked when that pipeline was walked
+                        if node_name.split('.')[0] != pipe_name:
+                            if node_name not in dummy_results:
+                                raise ValueError(f"Upstream task '{node_name}' of pipeline '{pipe_name}' is not "
+                                                 f"produced by any earlier pipeline")
+                            continue
+                        if node_name not in nodes_dict:
+                            raise ValueError(f"Node '{node_name}' is referenced by pipeline '{pipe_name}' but is "
+                                             f"not defined in it")
+                        dummy_results[node_name] = self.dry_run_task(node_name, nodes_dict[node_name],
+                                                                     dummy_results, lazy=node_name == source_node)
+        logger.info(f"Dry run passed for {len(dummy_results)} nodes")
+        return dummy_results
 
     ## Execute the pipelines
     def run(self, max_workers=4):
@@ -412,6 +579,36 @@ def parse_upstream_ref(ref: str, pipeline_name: str) -> tuple[str, str | None, s
                           f"(use 'pipeline.node.field(...)').")
 
     return task_path, field_name, call_arg
+
+def map_input_refs(spec, func, arg_path: str):
+    """
+    Apply `func` to every upstream reference in an input entry, keeping the entry's structure.
+
+    A task argument can be wired to a single upstream output ('images: pipe.node.field'), or to
+    several at once by giving a list or dict of references (nested arbitrarily), e.g.
+    'task_results: [pipe.node_a, pipe.node_b]'. The task then receives a list/dict of the resolved
+    values, in the order/under the keys written in the config.
+    :param spec: str | list | dict
+        Input entry as written in the config: a reference string, or a list/dict of them.
+    :param func: callable
+        Called as func(reference, arg_path) for each reference string; its return value takes the
+        reference's place in the returned structure.
+    :param arg_path: str
+        Location of `spec` within the node's inputs, used in log and error messages
+        (e.g. "task_results[0]").
+    :return: str | list | dict
+        `spec` with every reference string replaced by the corresponding `func` return value.
+    """
+    match spec:
+        case str():
+            return func(spec, arg_path)
+        case list():
+            return [map_input_refs(item, func, f"{arg_path}[{i}]") for i, item in enumerate(spec)]
+        case dict():
+            return {key: map_input_refs(value, func, f"{arg_path}.{key}") for key, value in spec.items()}
+        case _:
+            raise TypeError(f"Input '{arg_path}' must be an upstream reference string, or a list/dict of them, "
+                            f"got {type(spec).__name__}")
 
 def get_dag_order(deps):
     """
