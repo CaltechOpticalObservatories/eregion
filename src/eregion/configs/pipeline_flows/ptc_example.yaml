@@ -112,3 +112,16 @@ pipelines:
           inputs:
             images: ptc_flow.bias_subtraction.data
         depends_on: [ptc_flow.bias_subtraction]
+
+      - name: save
+        task: eregion.tasks.bookkeeping.SaveResult
+        run:
+          inputs:
+            # A list of references is resolved into a list of TaskResults, in this order
+            task_results:
+              - masterbias_flow.make_master_bias
+              - ptc_flow.make_ptc_table
+          params:
+            output_dir: ${OUTPUT_DIR}
+        depends_on: [masterbias_flow.make_master_bias, ptc_flow.make_ptc_table]
+

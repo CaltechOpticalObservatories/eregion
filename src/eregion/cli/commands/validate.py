@@ -25,8 +25,9 @@ def validate(
     ),
 ):
     """
-    Build the pipeline DAG from a config and print the resulting execution plan, 
-    without executing any task. Useful for sanity-checking a config.
+    Build the pipeline DAG from a config and print the resulting execution plan,
+    without executing any task. Building the engine dry runs the flow with dummy results,
+    so wiring mistakes between tasks are reported here too.
     """
     runtime_variables = parse_var_options(var)
 
@@ -36,7 +37,8 @@ def validate(
         fail(f"Failed to build pipeline from '{config}': {e}")
 
     pipe_order, node_orders = engine.execution_orders
-    typer.secho(f"Config OK: {len(engine.pipelines)} pipeline(s) defined.\n", fg=typer.colors.GREEN)
+    typer.secho(f"Config OK: {len(engine.pipelines)} pipeline(s) defined, "
+                f"{len(engine.dummy_results)} node(s) checked by the dry run.\n", fg=typer.colors.GREEN)
 
     for gen_idx, pipe_names in enumerate(pipe_order):
         typer.echo(f"pipeline generation {gen_idx}: {sorted(pipe_names)}")

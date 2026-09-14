@@ -10,7 +10,13 @@ pipelines:
     nodes:  # List of tasks (nodes) in the pipeline flow
       - name: TASK_1   # Name of the task node, required
         task: package.module.class   # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
-        init:  # Initialization parameters (for Task.__init__)
+        init:  # Initialization parameters (for Task.__init__); only `params`, outputs of other tasks are never passed to __init__
+          params: # Specify the kwargs needed to configure the task; refer to the task documentation for required and optional params and kwargs
+            param_1: value
+            param_2: value
+            # etc.
+        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters; use `inputs` to specify data coming from
+              # outputs of other tasks, and `params` for any additional parameters
           inputs: # Specify any args needed from outputs of other tasks in this config
             arg_1: pipe_name.node_name.field_name # Each task's output is its own TaskResult subclass; reference a
                                                    # named payload field on an upstream task's result with
@@ -18,15 +24,11 @@ pipelines:
                                                    # the whole upstream TaskResult instead. If the field's value
                                                    # supports being called (e.g. ImageBundle), append a query
                                                    # string to filter it, e.g. pipe_name.node_name.field_name('type == "bias"')
-            # etc.
-          params: # Specify any additional kwargs (which are not task outputs) needed; refer to the task documentation for required and optional params and kwargs
-            param_1: value
-            param_2: value
-            # etc.
-        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters, as above, use `inputs` to specify data coming from
-              # outputs of other tasks, and `params` for any additional parameters
-          inputs:
-            arg_1: pipe_name.node_name.field_name
+            arg_2: [pipe_name.node_a, pipe_name.node_b]  # A list of references is resolved into a list of values, in
+                                                          # this order (e.g. for a task taking several TaskResults)
+            arg_3:  # A mapping of references is resolved into a dict of values under the same keys
+              key_1: pipe_name.node_a.field_name
+              key_2: pipe_name.node_b.field_name
             # etc.
           params:
             param_1: value
@@ -36,8 +38,6 @@ pipelines:
       - name: TASK_2
         task: package.module.class
         init:
-          inputs:
-            arg_1: PIPE_1.TASK_1.field_name  # Example of using output from TASK_1 as input for TASK_2
           params:
             param_1: value
             # etc.
@@ -56,8 +56,6 @@ pipelines:
       - name: TASK_3
         task: package.module.class
         init:
-          inputs:
-            arg_1: PIPE_1.TASK_1.field_name  # Example of using output from a task in another pipeline flow as input
           params:
             param_1: value
             # etc.

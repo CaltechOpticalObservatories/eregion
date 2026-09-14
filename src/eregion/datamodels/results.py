@@ -27,7 +27,8 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from collections.abc import Mapping
-from typing import Any, Iterator
+from types import UnionType
+from typing import Any, Iterator, Union, get_args, get_origin
 from pydantic import ConfigDict, Field
 from astropy.time import Time
 import os
@@ -296,6 +297,12 @@ class TaskResult(Mappable):
         """
         def get_type_default(annotation):
             """Get a sensible default for a type."""
+            # An optional field is happy with None; for a union of concrete types, stand in for the first one
+            union_args = get_args(annotation)
+            if get_origin(annotation) in (Union, UnionType) and union_args:
+                if type(None) in union_args:
+                    return None
+                annotation = union_args[0]
             try:
                 # Check the type annotation
                 type_name = getattr(annotation, '__name__', str(annotation))
@@ -312,6 +319,9 @@ class TaskResult(Mappable):
                     return []
                 elif 'dict' in type_name.lower():
                     return {}
+                elif isinstance(annotation, type):
+                    # A concrete class (e.g. ImageBundle): an argument-less instance is its empty value
+                    return annotation()
                 else:
                     return None
             except:
@@ -323,14 +333,11 @@ class TaskResult(Mappable):
                 # Get a type-appropriate default
                 kwargs[field_name] = get_type_default(field_info.annotation)
             else:
-                # Use the field's default or default_factory
-                if field_info.default is not None:
-                    kwargs[field_name] = field_info.default
-                elif field_info.default_factory is not None:
+                # An optional field always declares a default, which may legitimately be None
+                if field_info.default_factory is not None:
                     kwargs[field_name] = field_info.default_factory()
                 else:
-                    # Fall back to None or type default
-                    kwargs[field_name] = get_type_default(field_info.annotation)
+                    kwargs[field_name] = field_info.default
 
         try:
             instance = cls(**kwargs)
