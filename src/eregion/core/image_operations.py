@@ -1,43 +1,54 @@
 ### Collection of utility functions for image processing tasks.
-from typing import Callable
 import numpy as np
 from astropy.stats import sigma_clip
 
-def median_combine(images: list[np.ndarray]) -> np.ndarray:
+def median_combine(images: list[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
     """
-    Combine a list of images by computing the median across them.
+    Combine a list of images by computing the median across them. If a masked array is passed, median is computed
+    only on the unmasked pixels.
 
     Parameters
     ----------
-    images : list of np.ndarray
+    images : list of np.ndarray or np.ma.MaskedArray
         List of 2D numpy arrays representing images to be combined.
 
     Returns
     -------
-    np.ndarray
-        A 2D numpy array representing the median-combined image.
+    dict
+        A dictionary containing the median-combined image, standard deviation, and count of pixels used in the combination.
     """
-    stacked_images = np.stack(images, axis=0)
-    return np.median(stacked_images, axis=0)
+    stacked_images = np.ma.stack(images, axis=0)
+    median = np.ma.median(stacked_images, axis=0)
+    stddev = np.ma.std(stacked_images, axis=0)
+    count = np.ma.count(stacked_images, axis=0)
+    return {'data': median.filled(np.nan), 'std': stddev.filled(np.nan), 'count': count}
 
-def mean_combine(images: list[np.ndarray]) -> np.ndarray:
+def mean_combine(images: list[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
     """
-    Combine a list of images by computing the mean across them.
+    Combine a list of images by computing the mean across them. If a masked array is passed, mean is computed only on
+    the unmasked pixels.
 
     Parameters
     ----------
-    images : list of np.ndarray
+    images : list of np.ndarray or np.ma.MaskedArray
         List of 2D numpy arrays representing images to be combined.
 
     Returns
     -------
-    np.ndarray
-        A 2D numpy array representing the mean-combined image.
+    dict
+        A dictionary containing the mean-combined image, standard deviation, and count of pixels used in the combination.
     """
-    stacked_images = np.stack(images, axis=0)
-    return np.mean(stacked_images, axis=0)
+    stacked_images = np.ma.stack(images, axis=0)
+    mean = np.ma.mean(stacked_images, axis=0)
+    stddev = np.ma.std(stacked_images, axis=0)
+    count = np.ma.count(stacked_images, axis=0)
+    return {'data': mean.filled(np.nan), 'std': stddev.filled(np.nan), 'count': count}
 
-def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray, sigma: float, axis: int | None=None, **kwargs) -> np.ma.MaskedArray:
+
+def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray,
+                     sigma: float,
+                     axis: int | None=None,
+                     **kwargs) -> np.ma.MaskedArray:
     """
     Apply sigma clipping (astropy.stats.sigma_clip) to an image.
 
