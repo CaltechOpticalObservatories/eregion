@@ -12,7 +12,8 @@ import json
 from copy import deepcopy
 
 from .mappable import Mappable
-from eregion.utils import ensure_dataarray, slice_data, ensure_numpy, configure_logger, decrease_slicer_stop_index
+from eregion.utils import (ensure_dataarray, slice_data, ensure_numpy, configure_logger,
+                           decrease_slicer_stop_index, set_slice_in_data, XRDATA)
 
 logger = configure_logger(__name__)
 
@@ -28,6 +29,7 @@ class DetectorProperties(Mappable):
 
     model_config = ConfigDict(extra="allow")
 
+
 class FocalPlanePosition(Mappable):
     """
     Center position of the detector on the focal plane (same units as pixel_size, typically mm).
@@ -36,6 +38,7 @@ class FocalPlanePosition(Mappable):
     y_cen: float = Field(..., description="Center Y in length units.")
 
     model_config = ConfigDict(extra="allow")
+
 
 class DetImageMeta(Mappable):
     """
@@ -46,22 +49,24 @@ class DetImageMeta(Mappable):
     properties: DetectorProperties
     focal_plane_position: Optional[FocalPlanePosition]
     image_type: dict[str, Any] = Field(default_factory=dict,
-                                      description="Dictionary of identifying keys for this image, e.g. type, exptime, mode, etc.")
+                                       description="Dictionary of identifying keys for this image, e.g. type, exptime, mode, etc.")
 
     model_config = ConfigDict(extra="allow")
+
 
 ############################################### OUTPUT BASE CLASS #####################################################
 class Output(Mappable):
     """
     One amplifier/output region within a detector image.
+
     """
     id: str = Field(..., alias="id")
     input_array_axis: int = Field(..., alias="ext_id",
-                            description="Axis index in the input array, "
-                                        "or extension ID in FITS file which contains the data for this output.")
+                                  description="Axis index in the input array, "
+                                              "or extension ID in FITS file which contains the data for this output.")
     input_slice: tuple[slice, ...] = Field(..., alias="ext_slice",
-                                            description="List of Slice objects defining the portion of the data array at input_array_axis "
-                                                        "in input array or FITS that corresponds to this Detector Output.")
+                                           description="List of Slice objects defining the portion of the data array at input_array_axis "
+                                                       "in input array or FITS that corresponds to this Detector Output.")
     output_slice: tuple[slice, ...] = Field(..., alias="data_slice",
                                             description="List of Slice objects defining the portion of the full detector data array "
                                                         "that this Detector Output maps to.")
@@ -69,7 +74,8 @@ class Output(Mappable):
                                                  description="FITS header in dict form for this output if available.")
     parent: Optional["DetImage"] = Field(default=None, description="Parent detector image.", exclude=True)
     masks: Optional[xr.Dataset] = Field(default=None,
-                                        description="Optional xr.Dataset containing masks for this output.", exclude=True)
+                                        description="Optional xr.Dataset containing masks for this output.",
+                                        exclude=True)
 
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True, populate_by_name=True)
 
@@ -77,38 +83,92 @@ class Output(Mappable):
     def serialize_header(self, value: fits.Header | dict | None) -> dict | None:
         return dict(value) if isinstance(value, fits.Header) else value
 
-    @property
-    def data(self):
-        # Full data from parent DetImage corresponding to this output, including any prescan/overscan.
+    def get_output_data(self, data_var: Optional[str | Literal['all']] = 'data') -> XRDATA:
+        """
+        Return the array corresponding to this output from the parent DetImage's .data attribute using the output_slice.
+        :param data_var: str or 'all'
+            Name of the data variable in the DetImage.data (xr.Dataset) to slice. If 'all', slices the entire dataset.
+        :return: xr.DataArray or xr.Dataset corresponding to this output.
+        """
         if self.parent is None or getattr(self.parent, "data", None) is None:
             raise ValueError("Attach this Output to a DetImage with valid data.")
+        return slice_data(self.parent.get_data(data_var), self.output_slice)
+
+    @property
+    def data(self):
+        """
+        Return the array corresponding to this output from the parent DetImage's .data attribute using the output_slice.
+        DetImage.data is expected to be a xr.Dataset with a data_var named 'data'.
+        """
         return slice_data(self.parent.data, self.output_slice)
 
     @property
     def image_region(self) -> dict[str, slice]:
-        # Return the slice defining image region (i.e. only the active light capturing pixels) for this output.
+        """Return the slice defining image region (i.e. only the active light capturing pixels) for this output."""
         return {axis: slc for axis, slc in zip(['y', 'x'], self.output_slice)}
 
-    def get_image_region(self, return_masks: bool = False) -> tuple[xr.DataArray, Optional[xr.Dataset]]:
+    def get_image_region(self,
+                         return_masks: bool = False,
+                         data_var: Optional[str | Literal['all']] = 'data') -> tuple[XRDATA, Optional[XRDATA]]:
+        """
+        Return the image region data and optionally the corresponding masks for this output from the parent DetImage.
+        :param return_masks: bool, if True, return the corresponding masks for this output if available.
+        :param data_var: str or 'all'
+            Name of the data variable in the DetImage.data (xr.Dataset) to slice. If 'all', slices the entire dataset.
+        :return: tuple of (image region data, image region masks) where masks is None if return_masks is False
+        or no masks are available.
+        """
         imslc = self.image_region
-        imdata = slice_data(self.data, imslc)
+        imdata = slice_data(self.parent.get_data(data_var), imslc)
         immask = slice_data(self.masks, imslc) if (return_masks and self.masks is not None) else None
         return imdata, immask
 
-    def set_data_in_parent(self, new_data: xr.DataArray | np.ndarray,
-                           slicer: tuple[slice, ...] | dict[str, slice] = None):
+    def set_data_in_parent(self,
+                           new_data: XRDATA,
+                           slicer: Optional[dict[str, slice]] = None,
+                           data_var: Optional[str | Literal['all']] = 'data'):
+        """
+        Set the data for this output in the parent DetImage's .data attribute using the provided new_data and slicer.
+        :param new_data: xr.DataArray or xr.Dataset containing the new data to set for this output.
+        :param slicer: dict
+            Mapping of dimension names to slice objects defining the region of the parent DetImage's data to update.
+            If None, uses the output_slice of this output.
+        :param data_var: str or 'all'
+            Name of the data variable in the DetImage.data (xr.Dataset) to update. If 'all', updates the entire dataset.
+        """
         if self.parent is None or getattr(self.parent, "data", None) is None:
             raise ValueError("Attach this Output to a DetImage with valid data.")
-        # Convert new_data to numpy array if it's an xarray DataArray, to ensure compatibility with parent data array.
-        new_data_np = ensure_numpy(new_data)
+        new_data = ensure_dataarray(new_data)
         # Assign new data to the appropriate slice in the parent DetImage
-        slicer = self.output_slice if slicer is None else slicer
-        self.parent.set_data_slice(new_data_np, slicer)
+        slicer = {new_data.dims[i]: slc for i, slc in enumerate(self.output_slice)} if slicer is None else slicer
+        self.parent.set_data_slice(new_data, slicer, data_var=data_var)
 
-    def show(self, ax=None, save=None, **imshow_kwargs):
+    def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', data_var='data', **imshow_kwargs):
+        """
+        Plot this output's image.
+        :param ax: Matplotlib Axes object to plot on. If None, a new figure and axes are created.
+        :param save: Optional[str]
+            Path to save the plot.
+        :param with_mask: bool, if True, overlay the mask specified by mask_key on the image if available.
+        :param mask_key: str, key in self.masks to use for masking the image. Default is 'sigma_clip_mask'.
+        :param data_var: str, name of the data variable in the DetImage.data to plot. Default is 'data'.
+        :param imshow_kwargs: dict, additional keyword arguments to pass to xarray.DataArray.plot.imshow().
+        :return: Matplotlib Axes object containing the plot.
+        """
         if ax is None:
-            _, ax = plt.subplots(1,1, figsize=(6, 6), tight_layout=True)
-        im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
+            _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
+
+        data = slice_data(self.parent.get_data(data_var), self.output_slice)
+
+        if with_mask and self.masks is not None and mask_key in self.masks:
+            arr = np.ma.masked_array(data=data.values, mask=self.masks[mask_key].values)
+            arr = arr.filled(0)
+            temp = xr.DataArray(data=arr, coords=data.coords, dims=data.dims)
+        else:
+            temp = data
+
+        im = temp.plot.imshow(ax=ax, **imshow_kwargs)
+
         if save is not None:
             ax.figure.savefig(save)
         return ax
@@ -119,15 +179,15 @@ class CCDOutput(Output):
     CCD-specific output region with prescan/overscan info.
     """
     serial_prescan: slice = Field(slice(None),
-                                          description="Slice object defining the serial prescan region for this output.")
+                                  description="Slice object defining the serial prescan region for this output.")
     serial_overscan: slice = Field(slice(None),
-                                           description="Slice object defining the serial overscan region for this output.")
+                                   description="Slice object defining the serial overscan region for this output.")
     parallel_prescan: slice = Field(slice(None),
-                                           description="Slice object defining the parallel prescan region for this output.")
+                                    description="Slice object defining the parallel prescan region for this output.")
     parallel_overscan: slice = Field(slice(None),
-                                            description="Slice object defining the parallel overscan region for this output.")
+                                     description="Slice object defining the parallel overscan region for this output.")
     parallel_axis: Literal['x', 'y'] = Field('y',
-                                description="Name of the parallel readout axis for this output ('x' or 'y').")
+                                             description="Name of the parallel readout axis for this output ('x' or 'y').")
     readout_pixel: tuple[int, int] = Field((0, 0),
                                            description="Tuple defining the (y, x) pixel coordinates of the readout amplifier "
                                                        "for this output in the full detector array.")
@@ -156,16 +216,20 @@ class CCDOutput(Output):
                  axis: Literal['serial', 'parallel'],
                  kind: Literal['prescan', 'overscan'],
                  corner: bool = False,
-                 ) -> xr.DataArray:
+                 data_var: Optional[str | Literal['all']] = 'data'
+                 ) -> XRDATA:
         """
         Slice the data array to get the scan region (prescan or overscan) along the specified axis (serial or parallel).
         :param axis: serial or parallel
         :param kind: prescan or overscan
-        :param corner: True to include the corner region (intersection of prescan and overscan) in the returned slice, False to exclude it.
+        :param corner: True to include the corner region (intersection of prescan and overscan) in the returned slice,
+        False to exclude it.
+        :param data_var: Name of the data variable in the DetImage to slice. If 'all', slices the entire dataset.
         :return: sliced xr.DataArray corresponding to the requested scan region.
         """
         slc = getattr(self, f"{axis}_{kind}")
-        slicer = {getattr(self, f"{axis}_axis"): slc}
+        slicer = {dim: self.output_slice[i] for i, dim in enumerate(['y', 'x'])}
+        slicer[getattr(self, f"{axis}_axis")] = slc
         if not corner:
             # Exclude the corner region by adjusting the slice to avoid overlap with the other axis scans
             other_axis = "serial" if axis == "parallel" else "parallel"
@@ -173,22 +237,41 @@ class CCDOutput(Output):
             other_overscan = getattr(self, f"{other_axis}_overscan")
             step = -1 if other_prescan.stop > other_overscan.start else 1
             slicer[getattr(self, f"{other_axis}_axis")] = slice(other_prescan.stop, other_overscan.start, step)
-        return slice_data(self.data, slicer)
+        return slice_data(self.parent.get_data(data_var), slicer)
 
-    def get_prescan(self, axis: Literal['serial', 'parallel'], corner: bool = False) -> xr.DataArray:
-        return self.get_scan(axis=axis, kind='prescan', corner=corner)
+    def get_prescan(self, axis: Literal['serial', 'parallel'], corner: bool = False,
+                    data_var: Optional[str | Literal['all']] = 'data') -> XRDATA:
+        """
+        Slice the data array to get the prescan region along the specified axis (serial or parallel).
+        :param axis: serial or parallel
+        :param corner: True to include the corner region (intersection of prescan and overscan) in the returned slice,
+        False to exclude it.
+        :param data_var: Name of the data variable in the DetImage to slice. If 'all', slices the entire dataset.
+        :return: sliced xr.DataArray corresponding to the requested prescan region.
+        """
+        return self.get_scan(axis=axis, kind='prescan', corner=corner, data_var=data_var)
 
-    def get_overscan(self, axis: Literal['serial', 'parallel'], corner: bool = False) -> xr.DataArray:
-        return self.get_scan(axis=axis, kind='overscan', corner=corner)
+    def get_overscan(self, axis: Literal['serial', 'parallel'], corner: bool = False,
+                     data_var: Optional[str | Literal['all']] = 'data') -> XRDATA:
+        """
+        Slice the data array to get the overscan region along the specified axis (serial or parallel).
+        :param axis: serial or parallel
+        :param corner: True to include the corner region (intersection of prescan and overscan) in the returned slice,
+        False to exclude it.
+        :param data_var: Name of the data variable in the DetImage to slice. If 'all', slices the entire dataset.
+        :return: sliced xr.DataArray corresponding to the requested overscan region.
+        """
+        return self.get_scan(axis=axis, kind='overscan', corner=corner, data_var=data_var)
 
-    def show(self, ax=None, shade_regions=False, save=None, **imshow_kwargs):
-        ax = super().show(ax=ax, save=None, **imshow_kwargs)
+    def show(self, ax=None, shade_regions=False, save=None, with_mask=True, mask_key='sigma_clip_mask', data_var='data',
+             **imshow_kwargs):
+        ax = super().show(ax=ax, save=None, with_mask=with_mask, mask_key=mask_key, data_var=data_var, **imshow_kwargs)
 
         if shade_regions:
             ## Shade the prescan and overscan regions
             def _bounds(s: slice, n: int) -> tuple[int, int]:
                 s0 = s.start if s.start is not None else (0 if s.step > 0 else n)
-                s1 = (s.stop-1 if s.step>0 else s.stop+1) if s.stop is not None else (n if s.step>0 else 0)
+                s1 = (s.stop - 1 if s.step > 0 else s.stop + 1) if s.stop is not None else (n if s.step > 0 else 0)
                 return s0, s1
 
             spandict = {0: ax.axvspan, 1: ax.axhspan}
@@ -200,7 +283,7 @@ class CCDOutput(Output):
             ]
             shape = self.data.shape
             for s, axis, color, label in regions:
-                axis_idx = 0 if axis=='y' else 1
+                axis_idx = 0 if axis == 'y' else 1
                 a, b = _bounds(s, shape[axis_idx])
                 spandict[axis_idx](a, b, color=color, alpha=0.3, label=label)
             ax.scatter(self.readout_pixel[1],
@@ -212,21 +295,27 @@ class CCDOutput(Output):
             ax.figure.savefig(save)
         return ax
 
+
 class CMOSOutput(Output):
     # CMOS specific output region can be added here if needed
     pass
+
 
 class IRDetectorOutput(Output):
     # IR Detector specific output region can be added here if needed
     pass
 
+
 ############################################## DETIMAGE CLASS #######################################################
 class DetImage:
     """
-    Base detector image holding 2D (only spatial) pixel data and outputs.
+    Base detector image holding 2D (only spatial) pixel data and outputs. The data arrays are stored in .data
+    as an xarray.Dataset. Since xarray.Dataset requires a data variable name to store arrays in, the default name used
+    for the main image array is 'data'. Additional arrays commonly stored are 'std' for standard deviation and
+    'count' for number of pixels used when storing combined multiple 2D arrays.
 
-    Args:
-        data: 2D image array (np.ndarray or xr.DataArray) or Callable
+    Parameters:
+        data: optional, 2D image array (np.ndarray or xr.DataArray or xr.Dataset) or Callable
         output_objects: Prebuilt Output regions.
         meta: Dict or DetImageMeta; validated if provided.
         kwargs: Backward-compatible meta fields (merged if meta is a dict).
@@ -241,19 +330,21 @@ class DetImage:
         _dataloader: Internal variable for storing data loader Callable for on-demand loading.
 
     """
+
     def __init__(
-        self,
-        data: Optional[xr.DataArray | np.ndarray | Callable] = None,
-        output_objects: Optional[dict[str, Output]] = None,
-        meta: Optional[DetImageMeta | dict[str, Any]] = None,
-        **kwargs: Any,
+            self,
+            data: Optional[XRDATA | np.ndarray | Callable] = None,
+            output_objects: Optional[dict[str, Output]] = None,
+            meta: Optional[DetImageMeta | dict[str, Any]] = None,
+            **kwargs: Any,
     ):
 
         self.ndim: int = 2
         self.outputs: dict[str, Output] = {}
         self.meta: DetImageMeta | dict[str, Any] = {}
-        self._data: xr.DataArray | None = None
-        self._dataloader: Callable | None = None
+        self._data: Optional[xr.Dataset] = None
+        self._dataloader: Optional[Callable] = None
+        self.masks: Optional[xr.Dataset] = None
 
         if data is not None:
             self.set_data(data)
@@ -288,8 +379,6 @@ class DetImage:
             for out_id, out in self.outputs.items():
                 out.parent = self
 
-        self.masks: xr.Dataset | None = None
-
     def add_output(self, output: Output, overwrite: bool = True):
         output.parent = self
         if output.id in self.outputs:
@@ -299,21 +388,26 @@ class DetImage:
         else:
             self.outputs[output.id] = output
 
-    def set_data(self, data: xr.DataArray | np.ndarray | Callable):
-        if isinstance(data, Callable):
-            self._dataloader = data
-        elif isinstance(data, xr.DataArray) or isinstance(data, np.ndarray):
-            self._data = ensure_dataarray(data)
-        else:
-            raise TypeError(
-                "If provided, data must be an xr.DataArray or np.ndarray or Callable for loading on demand.")
-
-    def set_data_slice(self, slicedata, slicer):
-        temp = self._data.copy(deep=True)
-        slcr = decrease_slicer_stop_index(deepcopy(slicer))
-        temp.loc[slcr] = slicedata
-        self._data = temp
-        del temp
+    def set_data(self, data: XRDATA | np.ndarray | Callable):
+        """
+        If data is a callable, store it as _dataloader for on-demand loading. If data is an array, store it as _data.
+        """
+        match data:
+            case func if callable(func):
+                logger.debug("Callable provided for on-demand data loading.")
+                self._dataloader = data
+            case np.ndarray() | xr.DataArray():
+                logger.debug("np.ndarray provided, converting to xr.Dataset storing directly in _data.")
+                self._data = ensure_dataarray(data).to_dataset(name='data')
+            case xr.Dataset():
+                data = ensure_dataarray(data)
+                if 'data' not in data.data_vars:
+                    raise ValueError("xr.Dataset provided must contain a data_var named 'data'.")
+                else:
+                    self._data = data
+            case _:
+                raise TypeError(f"Unsupported data type: {type(data)}. "
+                                f"Must be xr.DataArray, xr.Dataset, np.ndarray, or Callable.")
 
     def _load_from_disk(self):
         """
@@ -321,11 +415,12 @@ class DetImage:
         """
         if self._dataloader is not None:
             idata, iheaders = self._dataloader(self.meta['filename'])
-            self._data = np.zeros(self.shape)
+            temp = np.zeros(self.shape)
             for out_id, output in self.outputs.items():
                 output.header = iheaders[output.input_array_axis]
-                self._data[*output.output_slice] = idata[output.input_array_axis][*output.input_slice]
-            self._data = ensure_dataarray(self._data)
+                temp[*output.output_slice] = idata[output.input_array_axis][*output.input_slice]
+            temp = ensure_dataarray(temp)
+            self._data = temp.to_dataset(name='data')
             del idata, iheaders
         else:
             raise ValueError("No dataloader function provided for this DetImage, cannot load data.")
@@ -337,11 +432,53 @@ class DetImage:
         del self._data
         self._data = None
 
-    @property
-    def data(self) -> xr.DataArray:
+    def get_data(self, data_var: Optional[str | Literal['all']] = 'data') -> XRDATA:
+        """
+        Return the data array or dataset from _data attribute. If _data is None, attempt to load from disk.
+        :param data_var: str or 'all', name of the data variable in _data to return. If 'all', returns the entire dataset.
+        """
         if self._data is None:
             self._load_from_disk()
-        return self._data
+        data_var = data_var if data_var is not None else 'data'
+        if data_var == 'all':
+            return self._data
+        else:
+            if data_var not in self._data.data_vars:
+                raise ValueError(f"Data variable '{data_var}' not found in DetImage data.")
+            return self._data[data_var]
+
+    @property
+    def data(self):
+        """ Return the main image array 'data' from the xr.Dataset stored in _data. If _data is None, attempt to load from disk. """
+        return self.get_data('data')
+
+    def set_data_slice(self,
+                       slicedata: XRDATA,
+                       slicer: dict[str, slice],
+                       data_var: Optional[str | Literal['all']] = 'data'):
+        """
+        Set a slice (specified by slicer) in the xr.Dataset in _data attribute to provided slicedata.
+        This is useful for updating specific regions of the detector image.
+        :param slicedata: Data to set in the specified slice
+        :param slicer: Dictionary of slices specifying the region in _data to update. Keys should match the dimensions of _data.
+        :param data_var: Name of the data variable in _data to update. If 'all', slicedata must be an xr.Dataset with matching data_vars.
+        :return:
+        """
+        if self._data is None:
+            raise ValueError("No data loaded in DetImage to set a slice.")
+        match (data_var, slicedata):
+            case ('all', xr.Dataset()):
+                self._data = set_slice_in_data(slicedata, self._data, slicer)
+            case ('all', _):
+                raise TypeError("When data_var is 'all', slicedata must be an xarray.Dataset.")
+            case (_, xr.DataArray()):
+                data = set_slice_in_data(slicedata, self._data[data_var], slicer)
+                self._data[data_var] = data
+            case (_, xr.Dataset()):
+                if data_var not in slicedata.data_vars:
+                    raise ValueError(f"Data variable '{data_var}' not found in provided slicedata xr.Dataset.")
+                data = set_slice_in_data(slicedata[data_var], self._data[data_var], slicer)
+                self._data[data_var] = data
 
     @property
     def num_outputs(self) -> int:
@@ -349,13 +486,17 @@ class DetImage:
 
     @property
     def shape(self) -> tuple[int, ...]:
+        """
+        Return the shape of the detector image. First check meta['properties'], then meta['shape'], then _data.shape,
+        then outputs' output_slices. If none of these are available, raise ValueError.
+        """
         if 'properties' in self.meta:
             if self.meta['properties'] and 'y_size' in self.meta['properties']:
                 return self.meta['properties']['y_size'], self.meta['properties']['x_size']
         if 'shape' in self.meta:
             return self.meta['shape']
         if self._data is not None:
-            return self._data.shape
+            return tuple(self._data.sizes[dim] for dim in ['y', 'x'])
         if len(self.outputs) > 0:
             imsize = [0] * self.ndim
             for _, output in self.outputs.items():
@@ -364,7 +505,11 @@ class DetImage:
             return tuple(imsize)
         raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")
 
-    def build_full_mask(self):
+    def build_full_mask(self) -> bool:
+        """
+        Build a full mask from the individual output masks.
+        :return: True if a full mask was built, False otherwise.
+        """
         if self.masks is not None:
             return True
         self.masks = xr.Dataset(coords=self.data.coords)
@@ -373,25 +518,36 @@ class DetImage:
                 # combine output mask dataset with maskset, output mask coords are a subset of maskset
                 self.masks = self.masks.merge(output.masks, join='outer', fill_value=np.nan, compat='no_conflicts')
         if len(self.masks.data_vars) == 0:
+            self.masks = None
             return False
         return True
 
-    def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', **imshow_kwargs):
-        if self.data is None:
-            raise ValueError("DetImage has no data to show.")
+    def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', data_var='data', **imshow_kwargs):
+        """
+        Plot the detector image data with optional mask overlay.
+        :param ax: Matplotlib Axes object to plot on. If None, a new figure and axes are created.
+        :param save: str, optional path to save the plot. If None, the plot is not saved.
+        :param with_mask: bool, if True, overlay the mask specified by mask_key on the image if available.
+        :param mask_key: str, key in self.masks to use for masking the image. Default is 'sigma_clip_mask'.
+        :param data_var: str, name of the data variable in the DetImage.data to plot. Default is 'data'.
+        :param imshow_kwargs: dict, additional keyword arguments to pass to the imshow function.
+        :return: Matplotlib Axes object containing the plot.
+        """
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
 
+        data = self.get_data(data_var)
         if with_mask:
             if self.build_full_mask() and mask_key in self.masks.data_vars:
-                mdata = np.ma.MaskedArray(self.data.values, mask=self.masks[mask_key].values)
-                im = ax.imshow(mdata, **imshow_kwargs)
-                plt.colorbar(im, ax=ax)
+                arr = np.ma.masked_array(data=data.values, mask=self.masks[mask_key].values)
+                arr = arr.filled(0)
+                temp = xr.DataArray(data=arr, coords=data.coords, dims=data.dims)
             else:
                 logger.warning(f"Mask key '{mask_key}' not found in DetImage masks. Showing unmasked data.")
-                im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
+                temp = data
         else:
-            im = self.data.plot.imshow(ax=ax, **imshow_kwargs)
+            temp = data
+        im = temp.plot.imshow(ax=ax, **imshow_kwargs)
 
         if save is not None:
             ax.figure.savefig(save)
@@ -403,9 +559,17 @@ class DetImage:
         the .meta and .outputs in attrs.
         :param filepath: str
         """
-        ds_to_save = self.data.to_dataset(name='data')
+        data = self.get_data('all')
+        if isinstance(data, xr.DataArray):
+            ds_to_save = data.to_dataset(name='data')
+        else:
+            ds_to_save = data
         # add masks if they exist
-        ds_to_save = ds_to_save.update(self.masks) if self.masks is not None else ds_to_save
+        if self.masks is not None:
+            ds_to_save.update(self.masks)
+            ds_to_save.attrs['mask_keys'] = json.dumps(list(self.masks.data_vars.keys()))
+        else:
+            ds_to_save.attrs['mask_keys'] = json.dumps([])
         # convert meta to dict to store in attrs
         ds_to_save.attrs['meta'] = self.meta.to_json()
         ds_to_save.attrs['image_type'] = json.dumps(self.image_type)
@@ -426,9 +590,15 @@ class DetImage:
 
     @classmethod
     def from_netcdf(cls, filepath):
+        """
+        Load a DetImage object from a netcdf file saved with to_netcdf().
+        :param filepath: str, path to the netcdf file.
+        :return: DetImage object.
+        """
         loaded_ds = xr.load_dataset(filepath)
-        data = loaded_ds['data']
-        masks = loaded_ds.drop_vars('data')
+        mask_keys = json.loads(loaded_ds.attrs['mask_keys'])
+        masks = loaded_ds[mask_keys] if len(mask_keys) > 0 else None
+        data = loaded_ds.drop_vars(mask_keys)
         meta = DetImageMeta.from_json(loaded_ds.attrs['meta'])
 
         outputs = {}
@@ -437,7 +607,7 @@ class DetImage:
         for out_id, output_dict in outputs_attr.items():
             output = outclass.from_json(output_dict)
             # extract subdataset for output masks
-            output.masks = slice_data(masks, output.output_slice)
+            output.masks = slice_data(masks, output.output_slice) if masks is not None else None
             outputs[out_id] = output
 
         detimg = cls(data=data, output_objects=outputs, meta=meta)
@@ -447,6 +617,7 @@ class DetImage:
 
 
 TImage = TypeVar("TImage")
+
 
 class ImageBundle(Generic[TImage]):
     """
@@ -540,7 +711,7 @@ class ImageBundle(Generic[TImage]):
         """
         return type(self)(self.filter(pd_query))
 
-    def filter(self, pd_query: str='') -> list[TImage]:
+    def filter(self, pd_query: str = '') -> list[TImage]:
         """
         Filters images based on the provided pandas query string. Returns a list of filtered images.
         :param pd_query: str
@@ -580,7 +751,7 @@ class ImageBundle(Generic[TImage]):
         if not os.path.exists(filepath):
             os.makedirs(filepath)
 
-        for i,image in enumerate(self.images):
+        for i, image in enumerate(self.images):
             image.to_netcdf(os.path.join(filepath, f'image_{i}.nc'), **kwargs)
 
     @classmethod
