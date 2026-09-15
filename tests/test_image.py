@@ -76,7 +76,7 @@ def test_output_data_slices_parent_data():
     )
     det.outputs = {"A": out}
     sub = out.data
-    assert sub.shape == (5, 6)
+    assert sub.sizes == {'y': 5, 'x': 6}
     assert np.all(sub.values == data.values[2:7, 3:9])
 
 
@@ -189,7 +189,7 @@ def test_focalplaneimage_construct_and_place_tiles():
         ),
     )
     fp = FocalPlaneImage(num_detectors=2, dim=(4, 10), det_images=[img1, img2])
-    assert fp.data.shape == (4, 10)
+    assert fp.data.sizes == {'y': 4, 'x': 10}
     # Ensure both tiles are placed
     assert np.count_nonzero(fp.data.values) > 0
 
