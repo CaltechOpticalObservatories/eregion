@@ -3,13 +3,16 @@ import importlib
 from types import ModuleType
 from typing import Optional, Type
 
+
 def configure_logger(name):
     """
     Configure a logger
     """
     logger = logging.getLogger(name)
     handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
@@ -36,11 +39,12 @@ def load_class(path: str, default_module: Optional[ModuleType] = None) -> Type:
     else:
         modulename, clsname = path.rsplit(".", 1)
     try:
-        #NOTE: add "eregion" here allows for relative imports if needed
+        # NOTE: add "eregion" here allows for relative imports if needed
         module = importlib.import_module(modulename, "eregion")
     except ModuleNotFoundError:
         modulename = f"{eregion}.{modulename}"
         return getattr(importlib.import_module(modulename), cls)
+
 
 # A yaml constructor for slice objects
 def slice_constructor(loader, node):
