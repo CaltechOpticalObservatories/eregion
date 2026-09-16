@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Any, Literal, Callable, Generic, TypeVar, Self
+from typing import Optional, Any, Literal, Callable, Generic, TypeVar, Self, Mapping
 from pydantic import Field, ConfigDict, field_serializer
 import numpy as np
 import pandas as pd
@@ -115,6 +115,8 @@ class Output(Mappable):
         return ax
 
 
+_TData  = TypeVar("TData")
+
 class CCDOutput(Output):
     """
     CCD-specific output region with prescan/overscan info.
@@ -213,6 +215,52 @@ class CCDOutput(Output):
             ax.figure.savefig(save)
         return ax
 
+
+    def _select_header_and_data(self, iheaders: Iterable[Mapping], idata: TData) -> tuple[Mapping, TData]:
+        """select which data represents this output in a collection of input headers and input data (big array).
+        This is intended for internal use only and eventual destruction in the righteous fire of refactoring because it too tightly couples Outputs to FITS files. For now, however, it solves a problm in a slightly cleaner way than duplicating this logic in several other places
+
+        parameters
+        ---------
+
+        :param iheaders
+            collection of header information, probably loaded from a FITS file (or HDF5 file in my wildest of happy dreams)
+
+        :param idata: TData
+            array type which can be indexed into using a numerical index, and then a slice. We don't care much beyond that
+
+        returns
+        -------
+
+        tuple[Mapping, TData]
+
+            the tuple of the selected header corresponding to this output, and the sliced data corresponding to this output
+
+        """
+
+        ext_idx: int = int()
+
+        match self.input_array_axis:
+            case int():
+                ext_idx = self.input_array_axis
+            case str():
+                #HIDEOUS: this is FITS specific, and not only that,
+                # but NASA Registry of FITS conventions (1977 I believe)  specific.
+                # You have absolutely no idea how much I want to ___redacted___ myself right now
+
+                try:
+                    ext_idx: int = next((i for i, v in enumerate(iheaders) if v.get("EXTNAME", "") == self.input_array_axis)    )
+                except StopIteration as err:
+                    raise ValueError(f"HDU with EXTNAME of {self.input_array_axis} not found in provided data") from err
+            case _:
+                raise TypeError("couldn't interpret input_array_axis or ext_id")
+
+        header = iheaders[ext_idx]
+        data = idata[ext_idx][*self.input_slice]
+
+        return header, data
+
+
 class CMOSOutput(Output):
     # CMOS specific output region can be added here if needed
     pass
@@ -242,6 +290,9 @@ class DetImage:
         _dataloader: Internal variable for storing data loader Callable for on-demand loading.
 
     """
+
+    ndim: int = 2
+
     def __init__(
         self,
         data: Optional[xr.DataArray | np.ndarray | Callable] = None,
@@ -250,7 +301,6 @@ class DetImage:
         **kwargs: Any,
     ):
 
-        self.ndim: int = 2
         self.outputs: dict[str, Output] = {}
         self.meta: DetImageMeta | dict[str, Any] = {}
         self._data: xr.DataArray | None = None
@@ -324,21 +374,9 @@ class DetImage:
             idata, iheaders = self._dataloader(self.meta['filename'])
             self._data = np.zeros(self.shape)
             for out_id, output in self.outputs.items():
+                hdr, seldata = output._select_header_and_data(iheadrers, idata)
+                self._data[*output.output_slice] = seldata
 
-                match output.input_array_axis:
-                    case int():
-                        output.header = iheaders[output.input_array_axis]
-                        self._data[*output.output_slice] = idata[output.input_array_axis][*output.input_slice]
-                    case str():
-                        #replicate functionality of astropy .index_of on an HDUList. But good enough I think
-                        ext_idx: int = next((i for i, v in enumerate(iheaders) if v.get("EXTNAME", "") == output.input_array_axis), -1)
-                        if ext_idx == -1:
-                            raise ValueError(f"HDU with EXTNAME of {output.input_array_axis} was not found in the file")
-                        output.header = iheaders[ext_idx]
-                        self._data[*output.output_slice] = idata[ext_idx][*output.input_slice]
-                    case _:
-                        raise TypeError("couldn't interpret input_array_axis or ext_id")
-                
             self._data = ensure_dataarray(self._data)
             del idata, iheaders
         else:
@@ -370,13 +408,42 @@ class DetImage:
             return self.meta['shape']
         if self._data is not None:
             return self._data.shape
+        if (opshape := self._shape_from_outputs) is not None:
+            return opshape
+        raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")
+
+    @property
+    def _shape_from_outputs(self) -> Optional[tuple[int, ...]]:
         if len(self.outputs) > 0:
             imsize = [0] * self.ndim
             for _, output in self.outputs.items():
                 imsize[0] = max(imsize[0], output.output_slice[0].stop)
                 imsize[1] = max(imsize[1], output.output_slice[1].stop)
-            return tuple(imsize)
-        raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")
+            return tuple(imsize )
+        return None
+
+    def validate_size_from_outputs(self) -> Optional[bool]:
+        """validate whether the size set in the image metadata matches with the size
+           set in the images' Output objects
+
+        returns
+        -------
+
+        bool
+           If both Output objects and metadata properties are present, returns whether
+           these agree on the total size of the image. If either of these are not present,
+           comparison is not possible, return None
+
+        """
+        if not ("properties" in self.meta and "y_size" in self.meta["properties"]):
+            return None
+        propsize = tuple([self.meta["properties"][_] for _ in ["y_size", "x_size"]])
+
+        if (opshape := self._shape_from_outputs) is not None:
+            logger.debug("both size attributes present, comparing")
+            return all(a == b for a, b in zip(propsize, opshape))
+        return None
+
 
     def build_full_mask(self):
         if self.masks is not None:
@@ -458,6 +525,7 @@ class DetImage:
         detimg.masks = masks
         detimg.image_type = json.loads(loaded_ds.attrs['image_type'])
         return detimg
+
 
 
 TImage = TypeVar("TImage")

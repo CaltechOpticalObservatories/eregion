@@ -5,13 +5,15 @@ import glob2
 import time
 import warnings
 import numpy as np
-from typing import Iterator, Generator, Callable, Iterable, Optional, Any
+from typing import Iterator, Generator, Callable, Iterable, Optional, Any, Mapping
 from pydantic import model_validator, ConfigDict
 from joblib import Parallel, delayed
 from itertools import batched
 
+
 from eregion.utils import load_image_fits, parse_list_of_files, guess_image_type_from_header, load_class
 from eregion.configs import DetectorConfig
+import eregion.datamodels
 from eregion.datamodels import TaskResult, ImageBundle, DetImage, FocalPlaneImage, FPImageBundle
 from eregion.tasks import LazyTask, Task
 
@@ -247,9 +249,9 @@ class ImageCreator(LazyTask):
 
     def _build_single_image_object(self,
                                    obj,
-                                   output_class,
+                                   output_class: str,
                                    input_data_array,
-                                   input_headers,
+                                   input_headers: Iterable[Mapping[str, Any]],
                                    filename=None):
         # If a filename is given, check if it matches the filename format
         if filename is not None:
@@ -259,44 +261,43 @@ class ImageCreator(LazyTask):
                 return None
 
         # Build outputs and image
+        obj = obj.copy()
+        print(obj)
         image_class = obj.pop('class')
-        if "datamodels" not in output_class:
-            output_class = "datamodels."+output_class
-        if "datamodels" not in image_class:
-            image_class = "datamodels."+image_class
-        OutputClass = load_class(output_class)
-        ImageClass = load_class(image_class)
+        OutputClass = load_class(output_class, default_module=eregion.datamodels)
+        ImageClass = load_class(image_class, default_module=eregion.datamodels)
 
         outputs = obj.pop('outputs')
         self.logger.info("Building object %s with %s %s outputs from file %s", image_class, len(outputs),
                          output_class, filename or 'array input')
 
+        prihdr = input_headers[obj["header_index"]] if len(input_headers) > 0 and "header_index" in obj else dict()
         # instantiate image object
-        image = ImageClass(**obj, filename=filename or 'none')
 
-        image_data_size = [0] * image.ndim
-        primary_hdr = input_headers[obj['header_index']] if len(input_headers) > 0 and 'header_index' in obj else {}
-        image.meta.update(primary_hdr)
-        headers = [primary_hdr]
+        headers = [prihdr]
 
-        for output in outputs:
-            output_obj = OutputClass(**output)
-            if len(input_headers) > 0:
-                output_obj.header = input_headers[output_obj.input_array_axis]
-                headers.append(output_obj.header)
-            # Determine full image size
-            for i in range(len(image_data_size)):
-                image_data_size[i] = max(image_data_size[i], output_obj.output_slice[i].stop)
-            image.add_output(output_obj)
+        if not hasattr(ImageClass, "ndim"):
+            raise AttributeError("image class must specify how many dimensions it has")
 
-        # verify that calculated image size is consistent with set size in obj properties (if given)
-        if 'properties' in obj and 'x_size' in obj['properties'] and 'y_size' in obj['properties']:
-            if image_data_size != [obj['properties']['y_size'], obj['properties']['x_size']]:
-                self.logger.error(f"Calculated image size {image_data_size} does not match specified size in config"
-                                  f" {obj['properties']['y_size'], obj['properties']['x_size']} for {obj['name']}")
-                raise ValueError("Calculated image size does not match specified size in config")
-        # add image size to meta
-        image.meta['shape'] = tuple(image_data_size)
+        image = ImageClass(**obj)
+        for op in outputs:
+            opobj = OutputClass(**op)
+            image.add_output(opobj)
+
+        if not image.validate_size_from_outputs():
+            raise ValueError("inconsistent image sizes from output objects and metadata")
+
+        # Assemble full image data from outputs if not data_on_demand
+        if len(input_data_array) > 0:
+            image_data = np.zeros(image.shape)
+            for output_id, output_obj in image.outputs.items():
+                hdr, dat = output_obj._select_header_and_data(input_headers, input_data_array)
+                image_data[*output_obj.output_slice] = dat
+                headers.append(hdr)
+        else:
+            image_data = self._fileloader_task
+        image.set_data(image_data)
+
 
         # Determine image meta (type, exptime, etc.) using identifier task
         sig = inspect.signature(self._identifier_task)
@@ -306,19 +307,11 @@ class ImageCreator(LazyTask):
         if 'headers' in sig.parameters.keys():
             args['headers'] = headers
         imtype = self._identifier_task(**args)
-        image.meta.update({'image_type': imtype})
+
+
+        image.meta["image_type"] = imtype
         image.image_type = imtype
         self.logger.debug("Identified image type as %s", imtype)
-
-        # Assemble full image data from outputs if not data_on_demand
-        if len(input_data_array) > 0:
-            image_data = np.zeros(image_data_size)
-            for output_id, output_obj in image.outputs.items():
-                image_data[*output_obj.output_slice] = (
-                    input_data_array)[output_obj.input_array_axis][*output_obj.input_slice]
-        else:
-            image_data = self._fileloader_task
-        image.set_data(image_data)
 
         return image
 
