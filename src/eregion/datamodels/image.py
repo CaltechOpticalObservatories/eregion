@@ -56,9 +56,10 @@ class Output(Mappable):
     One amplifier/output region within a detector image.
     """
     id: str = Field(..., alias="id")
-    input_array_axis: int = Field(..., alias="ext_id",
+    input_array_axis: int | str = Field(..., alias="ext_id",
                             description="Axis index in the input array, "
-                                        "or extension ID in FITS file which contains the data for this output.")
+                                        "or extension ID in FITS file which contains the data for this output."
+                                        "If a string, find the FITS HDU which has that stringas its EXTNAME")
     input_slice: tuple[slice, ...] = Field(..., alias="ext_slice",
                                             description="List of Slice objects defining the portion of the data array at input_array_axis "
                                                         "in input array or FITS that corresponds to this Detector Output.")
@@ -323,8 +324,21 @@ class DetImage:
             idata, iheaders = self._dataloader(self.meta['filename'])
             self._data = np.zeros(self.shape)
             for out_id, output in self.outputs.items():
-                output.header = iheaders[output.input_array_axis]
-                self._data[*output.output_slice] = idata[output.input_array_axis][*output.input_slice]
+
+                match output.input_array_axis:
+                    case int():
+                        output.header = iheaders[output.input_array_axis]
+                        self._data[*output.output_slice] = idata[output.input_array_axis][*output.input_slice]
+                    case str():
+                        #replicate functionality of astropy .index_of on an HDUList. But good enough I think
+                        ext_idx: int = next((i for i, v in enumerate(iheaders) if v.get("EXTNAME", "") == output.input_array_axis), -1)
+                        if ext_idx == -1:
+                            raise ValueError(f"HDU with EXTNAME of {output.input_array_axis} was not found in the file")
+                        output.header = iheaders[ext_idx]
+                        self._data[*output.output_slice] = idata[ext_idx][*output.input_slice]
+                    case _:
+                        raise TypeError("couldn't interpret input_array_axis or ext_id")
+                
             self._data = ensure_dataarray(self._data)
             del idata, iheaders
         else:
