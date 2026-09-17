@@ -317,7 +317,6 @@ class ImageCreator(LazyTask):
 
         # Build outputs and image
         obj = obj.copy()
-        print(obj)
         image_class = obj.pop("class")
         OutputClass = load_class(output_class, default_module=eregion.datamodels)
         ImageClass = load_class(image_class, default_module=eregion.datamodels)
@@ -433,13 +432,13 @@ class ImageCreator(LazyTask):
             return all(isinstance(_, tp) for _ in arr)
 
         match input_source:
-            case [*src] if alloftype(src, str) | str():
+            case [*src] if alloftype(src, str):
                 input_batches = self.from_files(input_source)
                 _file_input = True
             case str():
                 input_batches = self.from_files(input_source)
                 _file_input = True
-            case [*src] if alloftype(np.ndarray, src):
+            case [*src] if alloftype(src, np.ndarray):
                 input_batches = self.from_arrays(input_source)
             case _:
                 self.logger.error(f"type of input source is {type(input_source)}")

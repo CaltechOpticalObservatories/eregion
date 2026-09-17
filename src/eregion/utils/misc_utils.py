@@ -41,9 +41,10 @@ def load_class(path: str, default_module: Optional[ModuleType] = None) -> Type:
     try:
         # NOTE: add "eregion" here allows for relative imports if needed
         module = importlib.import_module(modulename, "eregion")
+        return getattr(module, clsname)
     except ModuleNotFoundError:
-        modulename = f"{eregion}.{modulename}"
-        return getattr(importlib.import_module(modulename), cls)
+        modulename = f"eregion.{modulename}"
+        return getattr(importlib.import_module(modulename), clsname)
 
 
 # A yaml constructor for slice objects
