@@ -343,6 +343,8 @@ class ImageCreator(LazyTask):
             raise AttributeError("image class must specify how many dimensions it has")
 
         image = ImageClass(**obj)
+        image.meta.update(prihdr)
+
         for op in outputs:
             opobj = OutputClass(**op)
             image.add_output(opobj)
@@ -365,6 +367,7 @@ class ImageCreator(LazyTask):
         else:
             image_data = self._fileloader_task
         image.set_data(image_data)
+        image.meta["shape"] = tuple(image.shape)
 
         # Determine image meta (type, exptime, etc.) using identifier task
         sig = inspect.signature(self._identifier_task)

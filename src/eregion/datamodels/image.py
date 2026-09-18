@@ -469,9 +469,9 @@ class DetImage:
             idata, iheaders = self._dataloader(self.meta["filename"])
             self._data = np.zeros(self.shape)
             for out_id, output in self.outputs.items():
-                hdr, seldata = output._select_header_and_data(iheadrers, idata)
+                hdr, seldata = output._select_header_and_data(iheaders, idata)
                 self._data[*output.output_slice] = seldata
-
+                output.header = hdr
             self._data = ensure_dataarray(self._data)
             del idata, iheaders
         else:
