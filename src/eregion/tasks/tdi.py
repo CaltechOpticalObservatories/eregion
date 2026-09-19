@@ -70,6 +70,9 @@ class TDIExtractPTC(LazyTask):
        
         """
 
+        if not isinstance(output, CCDOutput):
+            raise TypeError(f"can only do TDI stats specifically on CCD Ouptuts. The type of output passed was {type(output)}"
+
         im, masks = output.get_image_region(return_masks=True)
         stats = dict()
         stats["exptime"] =  np.arange(im.shape[output.parallel_axint])
