@@ -117,6 +117,23 @@ class TDIExtractPTC(LazyTask):
 
 
     def make_ptc_table(self, stats: Iterable[dict[Any, dict[str, np.ndarray]]]) -> pd.DataFrame:
+        """Take the collected statistics output from a TDI run and turn it into a pandas DataFrame
+
+        parameters
+        ----------
+
+        :param stats
+          statistics dictionary, keyed by the output ID of the detector output amplifier,
+          values are individual PTC statistics calculated for that amplifier
+
+        returns
+        -------
+
+        pandas DataFrame containing original columns plus some suitable averages:
+           ["mean"] - mean of the mean columns of individual images
+           ["median"] - mean of the median columns of individual images
+           ["std"] - mean of the std columns of  diff pair images divided by sqrt(2) to correct the sampling factor
+        """
         outdcts = []
         for opid, statdct in stats.items():
             minidf = pd.DataFrame(statdct)
