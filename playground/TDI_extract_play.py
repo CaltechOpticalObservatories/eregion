@@ -24,7 +24,7 @@ BASE_DIR = "/dettest_data/DTU_dettest"
 DATA_DIR = "DTU_fullfp_bringup/TDI/IPhisweep/SCI/20260915-104406"
 # DATA_DIR = "/dettest_data/DTU_dettest/DTU_fullfp_bringup/PTC/SCI/20260721-174626"
 
-bias_fls = os.path.join(BASE_DIR, DATA_DIR, "*_TDI900_VIPhi8.0*")
+bias_fls = os.path.join(BASE_DIR, DATA_DIR, "*_TDI900_*")
 # bias_fls = os.path.join(DATA_DIR, "*_bias_*.fits")
 
 with resources.as_file(deimos_cfg) as dcfg:
@@ -47,10 +47,7 @@ for frame in crtr.lazy_run(
 ):
 
     i+=1
-    ptc_result = extractor.lazy_run(frame.data)
-
-    if i > 1:
-        break
+    stats, diff_images = extractor.lazy_run(frame.data)
 
 
 
