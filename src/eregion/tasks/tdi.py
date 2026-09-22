@@ -52,12 +52,12 @@ class TDIExtractPTC(LazyTask):
             stats.append(stat)
             diff_images += difim
 
-        statsdf = self.make_ptc_table(stats)
+        statsdf = pd.concat(stats, ignore_index=True)
         yield self.task_result(ptc_table=statsdf, diff_images=diff_images)
 
     def _process_group(
         self, images: ImageBundle[DetImage]
-    ) -> tuple[dict[Any, _StatsDictT], list[DetImage]]:
+    ) -> tuple[pd.DataFrame, list[DetImage]]:
         """Process a group of TDI images.
         Perform row-wise statistics on each of the individual images,
         and also row-wise statistics on any diff pairs that are formable
@@ -102,7 +102,8 @@ class TDIExtractPTC(LazyTask):
             self.logger.warning(
                 "Only one image provided to _process_group. No diffpair stats will be done"
             )
-            return stats, []
+            statsdf = self.make_ptc_table(stats)
+            return statsdf, []
 
         diff_images = []
         for dpidx0, dpidx1 in combinations(range(len(images)), 2):
@@ -122,11 +123,11 @@ class TDIExtractPTC(LazyTask):
                 diff_images.append(internal_diffim)
                 diffstats = self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
                 stats[outputid] |= self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
-
-        return stats, diff_images
+        statsdf = self.make_ptc_table(stats)
+        return statsdf, diff_images
 
     def make_ptc_table(
-        self, stats: Iterable[dict[Any, dict[str, np.ndarray]]]
+        self, stats: dict[Any, dict[str, np.ndarray]]
     ) -> pd.DataFrame:
         """Take the collected statistics output from a TDI run and turn it into a pandas DataFrame
 
@@ -169,7 +170,6 @@ class TDIExtractPTC(LazyTask):
         # FUTURE complaint: maybe "std" should be averaging non-diffed, and have "diff_std" for diff
         # anyway, at the moment just have the sqrt(2) on "std" for the same behaviour as PTC task
         outdf["std"] = outdf[sfx_diff_filter("std")].mean(axis=1) / np.sqrt(2)
-
         return outdf
 
     def tdi_stats(self, output: CCDOutput, suffix: str = "") -> dict[str, np.ndarray]:
