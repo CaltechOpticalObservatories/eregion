@@ -148,12 +148,10 @@ class FocalPlaneImage:
         # Initialize DataArray
         coords = {"y": np.arange(frames_df["y_min"].min(), frames_df["y_max"].max(), 1),
                   "x": np.arange(frames_df["x_min"].min(), frames_df["x_max"].max(), 1)}
-        data_vars = list(self.det_images[0].get_data('all').data_vars)
-        mask_keys = list(self.det_images[0].masks.data_vars) if self.det_images[0].build_full_mask() else []
         dataarr = xr.DataArray(data=np.zeros(dim_pix, dtype=float), coords=coords, dims=["y", "x"])
-        self._data = xr.Dataset(data_vars={v: dataarr.copy(deep=True) for v in data_vars})
+        self._data = xr.Dataset(data_vars={'data': dataarr.copy(deep=True)})
         maskarr = xr.DataArray(data=np.zeros(dim_pix, dtype=bool), coords=coords, dims=["y", "x"])
-        self.masks = xr.Dataset(data_vars={m: maskarr.copy(deep=True) for m in mask_keys})
+        self.masks = xr.Dataset(data_vars={'sigma_clip_mask': maskarr.copy(deep=True)})
 
         # Place tiles
         for i in range(len(frames_df)):
@@ -161,14 +159,21 @@ class FocalPlaneImage:
             slc = {'y': slice(row['y_min'], row['y_max'] - 1), 'x': slice(row['x_min'], row['x_max'] - 1)}
             di = self.det_images[i]
             didataset = di.get_data('all')
-            dimasks = di.masks
-            if di is None:
+            if didataset is None:
                 raise ValueError(f"DetImage at index {i} has no data.")
             else:
+                data_vars = list(didataset.data_vars)
                 for v in data_vars:
+                    if v not in self._data.data_vars:
+                        self._data[v] = dataarr.copy(deep=True)
                     self._data[v].loc[slc] = flip_and_rotate(didataset[v].values, angle=row['angle'], flip_x=row['flip_x'],
                                                            flip_y=row['flip_y'])
+
+                mask_keys = list(di.masks.data_vars) if di.build_full_mask() else []
+                dimasks = di.masks
                 for m in mask_keys:
+                    if m not in self.masks.data_vars:
+                        self.masks[m] = maskarr.copy(deep=True)
                     self.masks[m].loc[slc] = flip_and_rotate(dimasks[m].values, angle=row['angle'], flip_x=row['flip_x'],
                                            flip_y=row['flip_y'])
 

@@ -688,8 +688,7 @@ class DetImage:
             if output.masks is not None:
                 # combine output mask dataset with maskset, output mask coords are a subset of maskset
                 self.masks = self.masks.merge(
-                    output.masks, join="outer", fill_value=np.nan, compat="no_conflicts"
-                )
+                    output.masks, join="outer", fill_value=0.0, compat="no_conflicts")
         if len(self.masks.data_vars) == 0:
             self.masks = None
             return False
