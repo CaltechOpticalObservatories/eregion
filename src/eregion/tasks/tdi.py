@@ -52,7 +52,8 @@ class TDIExtractPTC(LazyTask):
             stats.append(stat)
             diff_images += difim
 
-        return stats, diff_images
+        statsdf = self.make_ptc_table(stats)
+        yield self.task_result(ptc_table=statsdf, diff_images=diff_images)
 
     def _process_group(
         self, images: ImageBundle[DetImage]
@@ -122,9 +123,7 @@ class TDIExtractPTC(LazyTask):
                 diffstats = self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
                 stats[outputid] |= self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
 
-        statdf = self.make_ptc_table(stats)
-
-        return statdf, diff_images
+        return stats, diff_images
 
     def make_ptc_table(
         self, stats: Iterable[dict[Any, dict[str, np.ndarray]]]
