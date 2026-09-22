@@ -13,12 +13,34 @@ logger = configure_logger(__name__)
 class FocalPlaneImage:
     """
     Composite focal-plane image made by placing multiple DetImage tiles.
-    :param num_detectors: int
+
+    Parameters
+    ----------
+    num_detectors: int
         Number of detector tiles expected.
-    :param dim: tuple[float, float]
+    dim: tuple[float, float]
         Dimensions of the focal plane image (height, width) in mm.
-    :param det_images: Optional[List[DetImage]]
+    det_images: Optional[List[DetImage]]
         List of DetImage objects to place on the focal plane.
+
+    Attributes
+    ----------
+    meta: dict
+        Metadata dictionary for the focal plane image.
+    num_detectors: int
+        Number of detector tiles expected.
+    dim_mm: Optional[tuple[float, float]]
+        Dimensions of the focal plane image (height, width) in mm.
+    pixel_size: Optional[float]
+        Pixel size in mm, assumed to be the same for all DetImage tiles.
+    data: Optional[xr.Dataset]
+        xarray Dataset holding the composite focal-plane image data.
+    masks: Optional[xr.Dataset]
+        xarray Dataset holding the composite focal-plane image masks.
+    table: Optional[pd.DataFrame]
+        DataFrame keeping track of DetImage data positions within the focal-plane data array.
+    det_images: ImageBundle
+        Bundle of DetImage objects placed on the focal plane.
     """
 
     def __init__(
@@ -35,10 +57,10 @@ class FocalPlaneImage:
         self.num_detectors = int(num_detectors)
         self.dim_mm = tuple(dim) if dim is not None else None
         self.pixel_size = None
-        self.data: xr.DataArray | None = None   # To hold det image data in one array
-        self.masks: xr.Dataset | None = None  # To hold det image masks in one dataset
-        self.table: pd.DataFrame | None = None  # To keep track of det_image data position within focal-plane data array
-        self.det_images = ImageBundle()
+        self._data: Optional[xr.Dataset] = None   # To hold det image data in one array
+        self.masks: Optional[xr.Dataset] = None  # To hold det image masks in one dataset
+        self.table: Optional[pd.DataFrame] = None  # To keep track of det_image data position within focal-plane data array
+        self.det_images: ImageBundle = ImageBundle()  # To hold det images
 
         if det_images is not None:
             det_images = det_images if isinstance(det_images, ImageBundle) else ImageBundle(det_images)
@@ -78,7 +100,7 @@ class FocalPlaneImage:
 
         # check that masks have been built
         if det_image.masks is None:
-            maskbuilt = det_image.build_full_mask()
+            det_image.build_full_mask()
 
     def construct_focal_plane_image(self):
         if len(self.det_images) == 0:
@@ -126,44 +148,70 @@ class FocalPlaneImage:
         # Initialize DataArray
         coords = {"y": np.arange(frames_df["y_min"].min(), frames_df["y_max"].max(), 1),
                   "x": np.arange(frames_df["x_min"].min(), frames_df["x_max"].max(), 1)}
-        self.data = xr.DataArray(data=np.zeros(dim_pix, dtype=float), coords=coords, dims=["y", "x"])
-        # Initialize masks Dataset
-        mask_keys = self.det_images[0].masks.data_vars.keys() if self.det_images[0].build_full_mask() else []
+        dataarr = xr.DataArray(data=np.zeros(dim_pix, dtype=float), coords=coords, dims=["y", "x"])
+        self._data = xr.Dataset(data_vars={'data': dataarr.copy(deep=True)})
         maskarr = xr.DataArray(data=np.zeros(dim_pix, dtype=bool), coords=coords, dims=["y", "x"])
-        self.masks = xr.Dataset(coords=coords, data_vars={m: maskarr.copy() for m in mask_keys})
+        self.masks = xr.Dataset(data_vars={'sigma_clip_mask': maskarr.copy(deep=True)})
 
         # Place tiles
         for i in range(len(frames_df)):
             row = frames_df.iloc[i]
             slc = {'y': slice(row['y_min'], row['y_max'] - 1), 'x': slice(row['x_min'], row['x_max'] - 1)}
             di = self.det_images[i]
-            if di.data is None:
+            didataset = di.get_data('all')
+            if didataset is None:
                 raise ValueError(f"DetImage at index {i} has no data.")
             else:
-                self.data.loc[slc] = flip_and_rotate(di.data.values, angle=row['angle'], flip_x=row['flip_x'],
-                                         flip_y=row['flip_y'])
+                data_vars = list(didataset.data_vars)
+                for v in data_vars:
+                    if v not in self._data.data_vars:
+                        self._data[v] = dataarr.copy(deep=True)
+                    self._data[v].loc[slc] = flip_and_rotate(didataset[v].values, angle=row['angle'], flip_x=row['flip_x'],
+                                                           flip_y=row['flip_y'])
+
+                mask_keys = list(di.masks.data_vars) if di.build_full_mask() else []
+                dimasks = di.masks
                 for m in mask_keys:
-                    self.masks[m].loc[slc] = flip_and_rotate(di.masks[m].values, angle=row['angle'], flip_x=row['flip_x'],
+                    if m not in self.masks.data_vars:
+                        self.masks[m] = maskarr.copy(deep=True)
+                    self.masks[m].loc[slc] = flip_and_rotate(dimasks[m].values, angle=row['angle'], flip_x=row['flip_x'],
                                            flip_y=row['flip_y'])
 
         self.table = frames_df
 
+    @property
+    def data(self) -> xr.DataArray:
+        if self._data is None:
+            raise ValueError("Focal-plane image data has not been constructed yet.")
+        return self._data['data']
+
     def show(self, ax=None, save=None, show_det_id=False, with_mask=False, mask_key='sigma_clip_mask',
-             textcolor="yellow", **imshow_kwargs):
+             data_var:str = 'data', textcolor="yellow", **imshow_kwargs):
+        """
+        Plot the focal-plane image with optional detector boundaries and masks.
+        :param ax: Matplotlib Axes object to plot on. If None, a new figure and axes will be created.
+        :param save: Path to save the figure. If None, the figure will not be saved.
+        :param show_det_id: bool, whether to show detector IDs on the plot.
+        :param with_mask: bool, whether to overlay the mask on the image specified by mask_key.
+        :param mask_key: str, key of the mask to overlay on the image. Default is 'sigma_clip_mask'.
+        :param data_var: str, key of the data variable to plot. Default is 'data'.
+        :param textcolor: str, color of the text to display on the plot. Default is "yellow".
+        :param imshow_kwargs: Additional keyword arguments to pass to the xarray.DataArray.plot.imshow function.
+        :return: Matplotlib Axes object with the plot.
+        """
         if ax is None:
             _, ax = plt.subplots(1,1, figsize=(8, 8), tight_layout=True)
         # overlay mask if requested
+        temp = self._data[data_var]
         if with_mask:
             if self.masks is not None and mask_key in self.masks:
-                arr = np.ma.masked_array(data=self.data.values, mask=self.masks[mask_key].values)
+                arr = np.ma.masked_array(data=temp.values, mask=self.masks[mask_key].values)
                 arr = arr.filled(0)
-                temp = xr.DataArray(data=arr, coords=self.data.coords, dims=self.data.dims)
+                temp = xr.DataArray(data=arr, coords=temp.coords, dims=temp.dims)
             else:
                 logger.warning("Mask key '%s' not found in masks. Showing unmasked data.", mask_key)
-                temp = self.data
-        else:
-            temp = self.data
         im = temp.plot.imshow(ax=ax, **imshow_kwargs)
+
         # Draw detector boundaries
         if hasattr(self, "table"):
             for _, row in self.table.iterrows():
@@ -191,7 +239,7 @@ class FPImageBundle(ImageBundle[FocalPlaneImage]):
     """
     image_class = FocalPlaneImage
 
-    def _tabulate(self) -> pd.DataFrame:
+    def _tabulate(self):
         tab = []
         for fpimage in self.images:
             imtype = {'object': fpimage, 'filename': fpimage.meta.get('filename', None)}

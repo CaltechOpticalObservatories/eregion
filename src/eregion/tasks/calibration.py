@@ -1,6 +1,8 @@
 import pandas as pd
 from copy import deepcopy
 import numpy as np
+import xarray as xr
+from typing import Optional
 from pydantic import Field, ConfigDict
 import os
 
@@ -62,9 +64,12 @@ class MasterCombine(Task):
         Initialize the MasterCombine task with optional groupby keys for combining calibration frames.
         :param name: str
             Name of the task.
-        :param kwargs: dict, optional
         :keyword groupby_keys: list
             List of keys to group by when combining calibration frames. Defaults to ['det_id', 'type'] if not provided.
+        :keyword mask_key: str
+            Key to use for the mask in the .masks attribute when performing the combination. Defaults to 'sigma_clip_mask'.
+        :keyword method: str
+            Method to use for combining calibration frames. Choices are 'median' (default) or 'mean'.
         """
         if kwargs.get('groupby_keys', None) is None:
             kwargs['groupby_keys'] = ['det_id', 'type']
@@ -72,6 +77,7 @@ class MasterCombine(Task):
             groupby = kwargs['groupby_keys'] if isinstance(kwargs['groupby_keys'], list) else [kwargs['groupby_keys']]
             groupby = groupby + ['det_id'] # in case people forget that combining by det_id is obvious here
             kwargs['groupby_keys'] = list(dict.fromkeys(groupby)) # remove duplicates while preserving order
+        kwargs['method'] = kwargs.get('method', 'median')
         super().__init__(name=name, **kwargs)
 
     def run(self, images: ImageBundle | list, **kwargs) -> ImageResult:
@@ -101,26 +107,32 @@ class MasterCombine(Task):
             master_cal.meta['filename'] = ', '.join([img.meta['filename'] for img in imgs])
             master_cal.image_type.update({'type': f'master_{unique_id}'})
             # Combine calibration data
-            cal_data = [img.data.values for img in imgs]
-            mc = self._create_mastercal(cal_data, method=kwargs.get('method', 'median'))
-            master_cal.set_data(mc)
+            mask_key = kwargs.get('mask_key', 'sigma_clip_mask')
+            to_combine = []
+            for img in imgs:
+                if img.masks is not None and mask_key in img.masks:
+                    mask = img.masks[mask_key].values
+                    masked_data = np.ma.masked_array(img.data.values, mask=mask)
+                    to_combine.append(masked_data)
+                else:
+                    to_combine.append(img.data.values)
+            mcdict = self._create_mastercal(to_combine)
+            mcdataset = xr.Dataset(data_vars={key: xr.DataArray(coords=imgs[0].data.coords, dims=imgs[0].data.dims, data=val)
+                        for key, val in mcdict.items()})
+            master_cal.set_data(mcdataset)
             master_cals.append(master_cal)
             self.logger.info(f'Created master calibration frame for det_id: {master_cal.id}, type: {master_cal.image_type}')
 
         return self.task_result(data=master_cals)
 
-    def _create_mastercal(self, images: list[np.ndarray], method='median')-> np.ndarray:
+    def _create_mastercal(self, images: list[np.ndarray])-> dict[str, np.ndarray]:
         """
         Create a master calibration frame from a list of calibration frames using the specified method.
         :param images: list of numpy arrays
             List of detector images containing calibration frames.
-        :param method: str
-            Method to combine calibration frames. Currently only 'median' is implemented.
-        :return: master_cal: numpy array
+        :return: master_cal: tuple of numpy arrays
             The generated master calibration frame.
         """
-        if self.method_name != method:
-            self.set_method(method)
         return self.method(images)
 
     @property
@@ -132,23 +144,18 @@ class MasterCombine(Task):
         """
         return {
             'median': 'core.image_operations.median_combine',
+            'mean': 'core.image_operations.mean_combine'
         }
-
-    def __call__(self, images: list[np.ndarray],  method='median'):
-        return self._create_mastercal(images, method=method)
 
 
 # Task to generate master bias
 class MasterBias(MasterCombine):
-    """
-    Task to generate a master bias frame from a list of bias frames.
-    """
     task_result = CalibrationResult
 
     def __init__(self, name=None, **kwargs):
         super().__init__(name=name, **kwargs)
 
-    def run(self, images: ImageBundle | list, add_to: CalibrationResult = None, **kwargs) -> CalibrationResult:
+    def run(self, images: ImageBundle | list, add_to: Optional[CalibrationResult] = None, **kwargs) -> CalibrationResult:
         """
         Generate a master bias frame from a list of bias frames and optionally combine it with an existing CalibrationResult.
         :param images: list/bundle of images to combine
@@ -164,9 +171,6 @@ class MasterBias(MasterCombine):
 
 # Task to generate master dark
 class MasterDark(MasterCombine):
-    """
-    Task to generate a master dark frame from a list of dark frames.
-    """
     task_result = CalibrationResult
 
     def __init__(self, name=None, **kwargs):
