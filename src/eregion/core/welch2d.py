@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Callable, Any
-from scipy.signal.windows import boxcar
+from scipy.signal.windows import boxcar, get_window
+from scipy.signal import welch
 
 def split_trim_array_squares(array: np.ndarray, target_size: int) -> list[np.ndarray]:
     """
@@ -88,3 +89,37 @@ def spatial_to_temporal_freq(fx, fy, hz_x, hz_y):
     :return: Apparent temporal frequency (Hx)
     """
     return np.abs(fx * hz_x + fy * hz_y)
+
+
+def raveled_welch(array: np.ndarray,
+                  target_shape: int,
+                  window_func: str | Callable[..., Any] = 'boxcar',
+                  **kwargs) -> tuple[np.ndarray, ...]:
+    """
+    Ravel a 2D array into a 1D array and compute the PSD using scipy.signal.welch.
+    :param array: Input 2D array to analyze (typically image data).
+    :param target_shape: Segment length for Welch's method (in pixels), passes to `nperseg` kwarg.
+    :param window_func: string or callable, window function to use for Welch's method. If a string, it should be a
+                        valid window name from `scipy.signal.get_window`. If a callable, it should accept the segment
+                        length and return a 1D window array of that length. Default is 'boxcar'.
+    :param kwargs: Additional kwargs to pass to `scipy.signal.welch`, such as `fs` (sampling frequency), `nfft`, etc.
+    :return: Tuple `(f, Pxx)` where `f` is the array of sample frequencies and `Pxx` is the power spectral density of
+            the raveled array.
+    """
+    # Ravel the 2D array into a 1D array
+    raveled_array = array.ravel()
+
+    # Determine the window function
+    if isinstance(window_func, str):
+        window = get_window(window_func, target_shape)
+    elif callable(window_func):
+        window = window_func(target_shape)
+    else:
+        raise ValueError("window_func must be a string or a callable function.")
+
+    # Compute the PSD using scipy.signal.welch
+    kwargs['noverlap'] = kwargs.get('noverlap', 0)  # set to 0 if not provided
+    kwargs['return_onesided'] = kwargs.get('return_onesided', True)  # set to True if not provided
+    f, Pxx = welch(raveled_array, window=window, nperseg=target_shape, **kwargs)
+
+    return f, Pxx
