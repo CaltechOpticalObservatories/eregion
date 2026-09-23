@@ -1,5 +1,8 @@
 import logging
 import importlib
+from types import ModuleType
+from typing import Optional, Type
+
 
 def configure_logger(name):
     """
@@ -7,7 +10,9 @@ def configure_logger(name):
     """
     logger = logging.getLogger(name)
     handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
@@ -15,21 +20,32 @@ def configure_logger(name):
     return logger
 
 
-def load_class(path: str):
+def load_class(path: str, default_module: Optional[ModuleType] = None) -> Type:
     """
     Dynamically load a class from a given path. Has to be in eregion package, or importable from the current environment.
     :param path: str
         The full path to the class, e.g. "module.submodule.ClassName". Paths to eregion's own subpackages
-        (e.g. "tasks.imagegen.ImageCreator", "datamodels.CCDOutput") may be given without the "eregion." prefix,
-        for backwards compatibility with pipeline/detector config files that predate eregion's package structure.
+        (e.g. "tasks.imagegen.ImageCreator", "datamodels.CCDOutput") may be given without the "eregion." prefix, for backwards compatibility with pipeline/detector config files that predate eregion's package structure.        Alternatively, if default_module is also provided, the name of a class in that module
+
+    :param default_module: Optional[ModuleType]
+        If provided, the class will first be loaded from this module. If it is not found in that module, then the full search will be performed
+
     :return: class
         The loaded class call.
     """
-    module, cls = path.rsplit(".", 1)
+
+    if hasattr(default_module, path):
+        return getattr(default_module, path)
+    else:
+        modulename, clsname = path.rsplit(".", 1)
     try:
-        return getattr(importlib.import_module(module), cls)
+        # NOTE: add "eregion" here allows for relative imports if needed
+        module = importlib.import_module(modulename, "eregion")
+        return getattr(module, clsname)
     except ModuleNotFoundError:
-        return getattr(importlib.import_module(f"eregion.{module}"), cls)
+        modulename = f"eregion.{modulename}"
+        return getattr(importlib.import_module(modulename), clsname)
+
 
 # A yaml constructor for slice objects
 def slice_constructor(loader, node):
