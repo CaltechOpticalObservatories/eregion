@@ -75,3 +75,16 @@ def welch2d(array: np.ndarray,
     errpsds = stdev_func(outpsds, axis=0) / np.sqrt(len(outpsds))
 
     return avpsds, errpsds
+
+
+def spatial_to_temporal_freq(fx, fy, hz_x, hz_y):
+    """
+    Convert spatial frequency coordinates from PSD to temporal frequency.
+
+    :param fx: Spatial frequency along the x-axis (in cycles per pixel).
+    :param fy: Spatial frequency along the y-axis (in cycles per pixel).
+    :param hz_x: Temporal frequency corresponding to the x-axis (in Hz), e.g. pixel readout rate.
+    :param hz_y: Temporal frequency corresponding to the y-axis (in Hz),  e.g. 1/(line time).
+    :return: Apparent temporal frequency (Hx)
+    """
+    return np.abs(fx * hz_x + fy * hz_y)
