@@ -38,6 +38,7 @@ eregion = "eregion.cli.main:main"
 
 [tool.setuptools_scm]
 version_file = "src/eregion/_version.py"
+fallback_version = "0.0.0"
 
 [project.optional-dependencies]
 dev = [

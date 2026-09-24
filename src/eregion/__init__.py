@@ -1,10 +1,17 @@
-from importlib.metadata import version, PackageNotFoundError
+"""Eregion: a detector characterization framework."""
+
+__all__ = ["__version__"]
 
 try:
-    __version__ = version("eregion")
-except PackageNotFoundError:
+    # Written at build time by setuptools-scm; the source of truth for a
+    # built or editable install made from a git checkout.
+    from ._version import version as __version__
+except ModuleNotFoundError:
+    # No generated _version.py (e.g. installed from a wheel someone else
+    # built, or from a PyPI sdist), so fall back to installed metadata.
+    from importlib.metadata import PackageNotFoundError, version
+
     try:
-        from ._version import version as vstr
-        __version__ = vstr
-    except ModuleNotFoundError as err:
-        __version__ =  "unknown"
+        __version__ = version("eregion")
+    except PackageNotFoundError:
+        __version__ = "unknown"
