@@ -22,6 +22,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from tags and commit distance,
+          # so the default shallow, tagless checkout yields the wrong version.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5

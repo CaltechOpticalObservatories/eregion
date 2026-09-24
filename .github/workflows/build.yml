@@ -17,6 +17,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from tags and commit distance,
+          # so the default shallow, tagless checkout yields the wrong version.
+          fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -35,6 +39,18 @@ jobs:
       - name: Verify the package imports correctly
         working-directory: /tmp
         run: python -c "import eregion; import eregion.core, eregion.datamodels, eregion.pipeline, eregion.tasks, eregion.utils, eregion.configs; print('eregion imported OK from', eregion.__file__)"
+
+      - name: Verify the version was derived from git
+        working-directory: /tmp
+        run: |
+          python - <<'EOF'
+          import eregion
+          print("eregion version:", eregion.__version__)
+          assert eregion.__version__ not in ("unknown", "0.0.0"), (
+              "setuptools-scm did not derive a version from git; check that the "
+              "checkout is unshallow and that the repository has tags"
+          )
+          EOF
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

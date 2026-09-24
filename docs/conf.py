@@ -9,9 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 try:
     import eregion
-    release = getattr(eregion, "__version__", "0.1.0")
+
+    release = getattr(eregion, "__version__", "unknown")
 except ImportError:
-    release = "0.1.0"
+    release = "unknown"
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information

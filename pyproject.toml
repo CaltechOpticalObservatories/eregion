@@ -1,11 +1,11 @@
 # toml
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "wheel", "setuptools-scm>=9"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "eregion"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Detector characterization framework"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -34,6 +34,11 @@ dependencies = [
 
 [project.scripts]
 eregion = "eregion.cli.main:main"
+
+
+[tool.setuptools_scm]
+version_file = "src/eregion/_version.py"
+fallback_version = "0.0.0"
 
 [project.optional-dependencies]
 dev = [
