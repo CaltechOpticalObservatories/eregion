@@ -466,6 +466,8 @@ class DetImage:
         Load data from disk into _data attribute. self.data returns xarray _data when called.
         """
         if self._dataloader is not None:
+            assert self.meta["filename"] is not None
+            assert len(self.meta["filename"]) > 0
             idata, iheaders = self._dataloader(self.meta["filename"])
             self._data = np.zeros(self.shape)
             for out_id, output in self.outputs.items():
