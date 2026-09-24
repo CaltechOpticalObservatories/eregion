@@ -2,7 +2,7 @@
 Builds entropy-optimal histograms for a few example distributions 
     pytest tests/test_entropy_visualization.py -m viz -v
 
-Output PNGs are written to tests/output/ 
+Output PNGs are written to tests/output/
 """
 from pathlib import Path
 
@@ -10,28 +10,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pytest
 
-from eregion.core.entropy import entropy_optimal_histogram
+from eregion.tasks.histogram import HistogramTask
+from eregion.plotting import HistogramPlotter
 
 OUTPUT_DIR = Path(__file__).parent / "output"
 
 
 def _plot_and_save(data, title, filename):
-    result = entropy_optimal_histogram(data, M=2.5)
+    task = HistogramTask(method="entropy_optimal")
+    result = task.run(data, M=2.5)
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    fig, ax = plt.subplots(1, 1, figsize=(8, 5), tight_layout=True)
-    ax.stairs(result["counts"], result["bin_edges"], fill=True)
-    ax.set_xlabel("Value")
-    ax.set_ylabel("Counts")
-    ax.set_title(
+    diag = result.diagnostics
+    result.label = (
         f"{title}\n"
-        f"$\\Delta$={result['bin_width']:.4g}, H={result['entropy_bits']:.2f} bits, "
-        f"e={result['efficiency']:.2f}, M$_{{bin}}$={result['M_bin']:.2f}"
+        f"$\\Delta$={diag['bin_width']:.4g}, H={diag['entropy_bits']:.2f} bits, "
+        f"e={diag['efficiency']:.2f}, M$_{{bin}}$={diag['M_bin']:.2f}"
     )
 
+    OUTPUT_DIR.mkdir(exist_ok=True)
     out_path = OUTPUT_DIR / filename
-    fig.savefig(out_path)
-    plt.close(fig)
+    ax = HistogramPlotter(result).show(save=str(out_path))
+    plt.close(ax.figure)
     print(f"Saved {out_path}")
     return out_path
 
