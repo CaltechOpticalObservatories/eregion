@@ -40,7 +40,7 @@ def DEIMOS_imtype_header_identify(headers) -> dict[str, Any]:
     extra_kws = []
 
     if imtype["fptype"] not in _DEIMOS_FPTYPE_EXTRA_PRIKWS:
-        raise ValueError(f"unrecognised focal plane type {imtype[fptype]}")
+        raise ValueError(f"unrecognised focal plane type {imtype['fptype']}")
 
     extra_kws += _DEIMOS_FPTYPE_EXTRA_PRIKWS[imtype["fptype"]]
 

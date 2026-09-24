@@ -120,9 +120,10 @@ class TDIExtractPTC(LazyTask):
                 # don't do sigma clip masking on this for now.
                 # datapoints are cheap here, and any kind of vignetting will cause
                 # row wise sigma clipping to go wild. Possible future upgrade of TDI analysis
-                diff_images.append(internal_diffim)
                 diffstats = self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
-                stats[outputid] |= self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
+                stats[opid] |= self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
+            diff_images.append(internal_diffim)
+
         statsdf = self.make_ptc_table(stats)
         return statsdf, diff_images
 
