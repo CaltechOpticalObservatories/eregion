@@ -343,6 +343,7 @@ class ImageCreator(LazyTask):
             raise AttributeError("image class must specify how many dimensions it has")
 
         image = ImageClass(**obj)
+        image.meta["filename"] = filename
         image.meta.update(prihdr)
 
         for op in outputs:
