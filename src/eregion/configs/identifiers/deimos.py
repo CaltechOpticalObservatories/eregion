@@ -8,7 +8,8 @@ _DEIMOS_FPTYPE_EXTRA_PRIKWS: dict[str, list[str]] = {
 
 _DEIMOS_IMTYPE_EXTRA_PRIKWS : dict[str, list[str]] = {
     "TDIWithIPhi" : ["TDI_TIME", "IPHI", "LED"],
-    "TDIBiasWithIPhi" : ["TDI_TIME", "IPHI"]
+    "TDIBiasWithIPhi" : ["TDI_TIME", "IPHI"],
+    "TDIBias" : ["TDI_TIME"]
 }
 
 
@@ -43,8 +44,8 @@ def DEIMOS_imtype_header_identify(headers) -> dict[str, Any]:
 
     extra_kws += _DEIMOS_FPTYPE_EXTRA_PRIKWS[imtype["fptype"]]
 
-    if imtype["type"] not in _DEIMOS_IMTYPE_EXTRA_PRIKWS:
-        raise ValueError(f"unrecognised image type {imtype[type]}")
+    if (imtptp := imtype["type"]) not in _DEIMOS_IMTYPE_EXTRA_PRIKWS:
+        raise ValueError(f"unrecognised image type {imtptp}")
 
     extra_kws += _DEIMOS_IMTYPE_EXTRA_PRIKWS[imtype["type"]]
     imtype |= {k : headers[0].get(k, None) for k in extra_kws if k in headers[0]}
