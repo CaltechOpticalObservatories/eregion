@@ -25,7 +25,10 @@ def guess_image_type_from_filename_DEIMOS(filename: str) -> dict[str, Any]:
     newstr = '_'.join(f[3:-2]) if 'bias' not in fstr else '_'.join(f[3:-2]+['0.000'])
     if newstr != '':
         newf = newstr.split('_')
-        imtype['exptime'] = float(newf[-1])
+        try:
+            imtype['exptime'] = float(newf[-1])
+        except ValueError:
+            logger.warn(f"couldn't convert {newf[-1]} to float, can't guess exptime")
         if len(newf) > 1:
             for i,item in enumerate(newf[:-1]):
                 imtype[f'extra_{i}'] = item
