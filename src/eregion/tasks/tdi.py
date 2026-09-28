@@ -25,7 +25,7 @@ _StatsDictT = dict[str, np.ndarray]
 class TDIExtractPTC(LazyTask):
     task_result = PTCResult
 
-    def __init__(self, groupby_keys: Iterable[str], name: Optional[str] = None):
+    def __init__(self, groupby_keys: Iterable[str], name: Optional[str] = None, **kwargs):
 
         self.groupby_keys = groupby_keys
 
