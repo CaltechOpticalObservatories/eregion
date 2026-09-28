@@ -5,8 +5,14 @@ from scipy.optimize import curve_fit
 import uncertainties as unc
 from uncertainties import umath
 from numpy.polynomial import Polynomial, polynomial
+import logging
 
-def polynomial_fit_covariance_matrix(poly, xdat: np.ndarray, ydat: np.ndarray, deg: int) -> np.ndarray:
+_logger = logging.getLogger(__name__)
+
+
+def polynomial_fit_covariance_matrix(
+    poly, xdat: np.ndarray, ydat: np.ndarray, deg: int
+) -> np.ndarray:
     """calculate the covariance matrix of a polynomial fit by computing the design matrix"""
     coefs = poly.convert().coef
     vander = polynomial.polyvander(xdat, deg)
@@ -17,7 +23,10 @@ def polynomial_fit_covariance_matrix(poly, xdat: np.ndarray, ydat: np.ndarray, d
     cov = inv_v * (chi2 / dof)
     return cov
 
-def do_polynomial_fit(xdat: np.ndarray, ydat: np.ndarray, deg: int) -> tuple[np.ndarray, np.ndarray]:
+
+def do_polynomial_fit(
+    xdat: np.ndarray, ydat: np.ndarray, deg: int
+) -> tuple[np.ndarray, np.ndarray]:
     """fit a polynomial to the data and return the coefficients and covariance matrix"""
     poly = Polynomial.fit(xdat, ydat, deg)
     ft = poly.convert().coef
@@ -25,7 +34,10 @@ def do_polynomial_fit(xdat: np.ndarray, ydat: np.ndarray, deg: int) -> tuple[np.
     errs = np.sqrt(np.diag(cov))
     return ft, errs
 
-def find_adc_sat_index(flux: np.ndarray, mean: np.ndarray, sigma: float = 5.0, return_spline: bool = False) -> Optional[int]:
+
+def find_adc_sat_index(
+    flux: np.ndarray, mean: np.ndarray, sigma: float = 5.0, return_spline: bool = False
+) -> Optional[int]:
     """Find the location of an ADC saturation point in a flux vs mean graph.
     The method is to fit an interpolating spline, get the analytic 2nd derivative of that,
     then find the most negative point of the 2nd derivative.
@@ -53,30 +65,59 @@ def find_adc_sat_index(flux: np.ndarray, mean: np.ndarray, sigma: float = 5.0, r
         return out, spl
     return out
 
-def find_rough_full_well(mean: np.ndarray, noise: np.ndarray, fwfact: float = 0.9) -> tuple[int, int]:
+
+def find_rough_full_well(
+    mean: np.ndarray, noise: np.ndarray, fwfact: float = 0.9, n_candidates: int = 1
+) -> tuple[int, int]:
     """
-    Find index and mean value of full well point, by simple location of the maximum in the mean vs variance graph
+    Find index and mean value of full well point, by simple location of the maximum in the mean vs variance graph.
     :param mean: np.ndarray
         array of mean counts in the flat images
     :param noise: np.ndarray
         array of standard deviation values of the differenced images
     :param fwfact: float
         factor to multiply the full well value by. Default is 0.9
+    :param n_candidates: int
+        number of FW candidates to consider. If the maximum results in a pathological full well array,
+        choose the 2nd maximum etc until reaching n_candidates. Useful for messy PTC data e.g. from a TDI curve.
+        The success criteria is very basic, being that there actually exists data after the cut. This may be too simplistic
+        in cases where there is "real" PTC scatter.
     :return: tuple[int, int]
         index of the full well point and the full well value
     """
 
-    #TODO: check that there's an actual maximum here
-    am = np.argmax(noise)
-    fwloc = fwfact * mean[am]
+    # TODO: check that there's an actual maximum here
+    if n_candidates < 1:
+        raise ValueError("n_candidates must be >=1 for FW finding")
 
-    #find nearest index to full well fact times that
-    fwfactloc = np.argmin(np.abs(fwloc - mean))
+    amcands = np.argpartition(noise, -n_candidates)
+    for i in range(n_candidates):
+        # get the n-th largest item in the array
+        am = amcands[-i]
+        if am == 0:
+            # the ultimate pathological case, first value is the biggest
+            continue
+        fwguess = fwfact * mean[am]
+
+        # find nearest index to full well fact times selected value
+        # ensure that this isn't above full well by trimming the mean array upto that FW location
+        fwfactloc = np.argmin(np.abs(fwguess - mean[:am]))
+        if fwfactloc == 0:
+            # pathological case, value leaves no data behind
+            continue
+
+        break
+    else:
+        raise ValueError(
+            f"couldn't find a valid full well location with {n_candidates} candidates considered"
+        )
+
     return fwfactloc, am
 
 
-def trad_ptc_shot_noise_fit(mean: np.ndarray, noise: np.ndarray, fitlim: int, brighterfatter: bool=True
-                            ) -> tuple[unc.ufloat, unc.ufloat] | tuple[unc.ufloat, unc.ufloat, unc.ufloat]:
+def trad_ptc_shot_noise_fit(
+    mean: np.ndarray, noise: np.ndarray, fitlim: int, brighterfatter: bool = True
+) -> tuple[unc.ufloat, unc.ufloat] | tuple[unc.ufloat, unc.ufloat, unc.ufloat]:
     """fit a PTC by the traditional (Janesick) method, with optional brighter-fatter modifications
 
     Parameters
@@ -108,7 +149,7 @@ def trad_ptc_shot_noise_fit(mean: np.ndarray, noise: np.ndarray, fitlim: int, br
 
     deg: int = 2 if brighterfatter else 1
     xdat = mean[:fitlim]
-    ydat = noise[:fitlim]**2 # variance
+    ydat = noise[:fitlim] ** 2  # variance
 
     ft, errs = do_polynomial_fit(xdat, ydat, deg)
 
@@ -121,23 +162,32 @@ def trad_ptc_shot_noise_fit(mean: np.ndarray, noise: np.ndarray, fitlim: int, br
 
     return Kest, noiseest
 
+
 def astier_approx_fun(mu, g, a00, n):
     """Astier's approximate PTC shape function. Equation (15) in Astier et al (2019)"""
-    return  (np.exp(2* a00 * mu * g) - 1) / (2*g**2*a00) + n / g**2
+    return (np.exp(2 * a00 * mu * g) - 1) / (2 * g**2 * a00) + n / g**2
+
 
 def astier_approx_eval_std(mu, K, a00, noise):
     """evaluate Astier's function but with gain and noise in Janesick scaling
-       In Astier, gain g is the gain between mean and variance. This is the same as Janesick's K constant
-       Likewise in Astier the noise term is given in electrons**2, in Janesick it's in electrons
-       Our PTC classes return Janesick's quantities, even when fitting with Astier method, to avoid confusion
-       since Janesick's definitions are much more common in the community
+    In Astier, gain g is the gain between mean and variance. This is the same as Janesick's K constant
+    Likewise in Astier the noise term is given in electrons**2, in Janesick it's in electrons
+    Our PTC classes return Janesick's quantities, even when fitting with Astier method, to avoid confusion
+    since Janesick's definitions are much more common in the community
     """
-    g =  K
-    n = (noise*K)**2
+    g = K
+    n = (noise * K) ** 2
     return astier_approx_fun(mu, g, a00, n)
 
-def astier_approx_one_param_fit(mean: np.ndarray, noise: np.ndarray, Kguess: float, aguess: float, noiseguess: float,
-                                fitlim: Optional[int] = None) -> tuple[unc.ufloat, unc.ufloat, unc.ufloat]:
+
+def astier_approx_one_param_fit(
+    mean: np.ndarray,
+    noise: np.ndarray,
+    Kguess: float,
+    aguess: float,
+    noiseguess: float,
+    fitlim: Optional[int] = None,
+) -> tuple[unc.ufloat, unc.ufloat, unc.ufloat]:
     """Fit photon transfer curve data with Astier's approximate one parameter function
 
     Parameters
@@ -160,21 +210,22 @@ def astier_approx_one_param_fit(mean: np.ndarray, noise: np.ndarray, Kguess: flo
     """
 
     xdat = mean[:fitlim]
-    ydat = noise[:fitlim]**2 # variance
+    ydat = noise[:fitlim] ** 2  # variance
 
-    p0 = [Kguess, aguess, (noiseguess/Kguess)**2]
+    p0 = [Kguess, aguess, (noiseguess / Kguess) ** 2]
     bounds = ([-np.inf, -np.inf, 0], [np.inf, 0, np.inf])
 
-    popt, pcov = curve_fit(astier_approx_fun, xdat, ydat,  p0=p0, bounds=bounds)
+    popt, pcov = curve_fit(astier_approx_fun, xdat, ydat, p0=p0, bounds=bounds)
     errs = np.sqrt(np.diag(pcov))
 
-    print(f"astier popt: {popt}, pcov: {pcov}")
+    _logger.debug(f"astier popt: {popt}, pcov: {pcov}")
     K = unc.ufloat(popt[0], errs[0])
     a00 = unc.ufloat(popt[1], errs[1])
     n = umath.sqrt(unc.ufloat(abs(popt[2]), errs[2]))
-    print(f"Astier popt noise number: {popt[2]}, errn: {errs[2]}")
-    print(f"Astier noise term: {n}")
+    _logger.debug(f"Astier popt noise number: {popt[2]}, errn: {errs[2]}")
+    _logger.debug(f"Astier noise term: {n}")
     return K, a00, n
+
 
 def linearity_fit(flux: np.ndarray, mean: np.ndarray, fitlim: Optional[int]):
     """Fit the linearity curve (mean vs exposure time) with a linear curve
