@@ -56,17 +56,22 @@ def test_heterogeneous_units_columns():
     assert round(outcol.array[1],1) == round(vval,1)
 
 
-    
-    
+
 def test_np_dtype_promotion():
     t1 = _choose_minimal_numpy_dtype([65534])
     t2 = _choose_minimal_numpy_dtype([65536])
     
-    assert t1 == np.dtypes.UInt16DType
-    assert t2 == np.dtypes.UInt32DType
+    assert t1 == np.dtypes.UInt16DType()
+    assert t2 == np.dtypes.UInt32DType()
 
     t3 = _choose_minimal_numpy_dtype([12, 1287])
-    assert t3 == np.dtypes.UInt16DType
+    assert t3 == np.dtypes.UInt16DType()
+
+    t4 = _choose_minimal_numpy_dtype([-1, 2556])
+    assert t4 == np.dtypes.Int32DType()
+
+    #could do hundreds more cases but we'd just be testing the
+    #functionality of np.promote_type and np.min_scalar_type at that point
 
 
     
