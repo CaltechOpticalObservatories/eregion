@@ -1,13 +1,14 @@
 import os
 import glob2
 import re
-from typing import Any
+from typing import Any, Type, Iterable
 from astropy.io import fits
 from astropy import units as astropy_units
 import shutil
 import numpy as np
 import pandas as pd
 import uncertainties as unc
+import uncertainties.unumpy as unpy
 import pint
 
 from .misc_utils import configure_logger
@@ -115,7 +116,7 @@ def guess_image_type_from_header(headers: list[fits.Header | dict], keywords=Non
 
 ######################### Saving and loading pandas dataframe table to/from FITS ######################################
 
-def save_dataframe_to_fits(table: pd.DataFrame, filepath: str) -> None:
+def save_dataframe_to_fits(table: pd.DataFrame, filepath: str):
     """
     Save a pandas DataFrame table to a FITS binary table.
 
@@ -149,29 +150,66 @@ def load_dataframe_from_fits(filepath: str) -> pd.DataFrame:
     return pd.DataFrame(columns)
 
 
-def _quantity_column_to_fits_column(name: str, series: list[pint.Quantity | None]) -> fits.Column:
-    quantities = [value for value in series if value is not None]
+def _choose_minimal_numpy_dtype(vals: Iterable[float | int]) -> Type[np.dtype]:
+    mintp = None
+    for v in vals:
+        ot = np.min_scalar_type(v)
+        if mintp is None:
+            mintp = ot
+        else:
+            mintp = np.promote_types(mintp, ot)
+    return mintp
 
-    #if it's an uncertainties ufloat, split into two columns
-    if isinstance(quantities[0].magnitude, unc.UFloat):
-        raise NotImplementedError("Splitting uncertainties.UFloat columns into FITS columns is not yet implemented.")
 
-    unit_the_first = quantities[0].units
-    has_null = len(quantities) != len(series)
-    outcol = np.asarray(
-        [
-            np.nan if value is None else value.to(unit_the_first).magnitude
-            for value in series
-        ],
-        dtype=float if has_null else None,
-    )
+def _quantity_column_to_fits_column(name: str, series: list[pint.Quantity | None]) -> fits.Column | list[fits.Column]:
+    assert len(series) > 0, "require non-zero length of series"
 
-    fmt = _fits_format_code(outcol.dtype)
-    return fits.Column(name=name, array=outcol, format=fmt, unit=_pint_unit_to_fits_unit(unit_the_first))
+    outunit: pint.Unit = None
+    def _generate_qvals(series):
+        nonlocal outunit
+        for v in series:
+            if v is None:
+                yield np.nan, None
+            elif outunit is None:
+                outunit = v.units
+                
+            assert outunit is not None
+            qout = v.to(outunit)
+            if isinstance(qout.magnitude, unc.UFloat):
+                yield qout.magnitude.nominal_value, qout.magnitude.std_dev
+            else:
+                yield qout.magnitude, None
 
-def _pint_unit_to_fits_unit(unit: object) -> str:
+    outqtups = list(_generate_qvals(series))
+    nomvals, errvals = zip(*outqtups)
+    nomvals = list(nomvals)
+    nomdtp = _choose_minimal_numpy_dtype(nomvals)
+    fmt = _fits_format_code(nomdtp)
+    nomvals = np.array(nomvals, dtype=nomdtp)
+    unt = _pint_unit_to_fits_unit(outunit)
+    
+    outcols = []
+    outcols.append(fits.Column(name=name, array=nomvals, format=fmt,
+                               unit=unt))
+
+    if all(_ is None for _ in errvals):
+        #one column case, same as before
+        return outcols[0]
+    
+    #we have error column
+    #note the above procedure ensured it's in the correct units already
+    errname = f"{name}_err"
+    errvals = list(errvals)
+    errdtp = _choose_minimal_numpy_dtype(errvals)
+    errvals = np.array(errvals, dtype=errdtp)
+    
+    outcols.append(fits.Column(name=errname, array=errvals, format=fmt,
+                               unit=unt))
+    return outcols
+    
+def _pint_unit_to_fits_unit(unit: pint.Unit | str) -> str:
     """Convert a Pint unit to the FITS-standard unit representation."""
-    unit_string = str(unit)
+    unit_string: str = str(unit)
     for pint_name, fits_name in _PINT_TO_FITS_UNITS.items():
         unit_string = re.sub(rf"\b{re.escape(pint_name)}\b", fits_name, unit_string)
 
@@ -180,7 +218,7 @@ def _pint_unit_to_fits_unit(unit: object) -> str:
     except ValueError as exc:
         raise ValueError(f"Pint unit '{unit}' cannot be represented as a FITS unit.") from exc
 
-def _dataframe_column_to_fits_column(name: str, series: pd.Series) -> fits.Column:
+def _dataframe_column_to_fits_column(name: str, series: pd.Series) -> fits.Column | list[fits.Column]:
     values = series.to_list()
     non_null = [value for value in values if value is not None]
     if not non_null:
