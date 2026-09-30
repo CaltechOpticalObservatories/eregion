@@ -12,6 +12,7 @@ import uncertainties.unumpy as unpy
 import pint
 
 from .misc_utils import configure_logger
+
 logger = configure_logger(__name__)
 
 _PINT_TO_FITS_UNITS = {
@@ -20,24 +21,41 @@ _PINT_TO_FITS_UNITS = {
     "elementary_charge": "count",
 }
 
+
 def search_directory_for_fits_files(directory: str) -> list[str]:
-    fits_files = sorted(glob2.glob(os.path.join(directory, '**/*.fits*'), recursive=True))
-    logger.info(f"Found {len(fits_files)} FITS files in directory {directory} and its sub-directories.")
+    fits_files = sorted(
+        glob2.glob(os.path.join(directory, "**/*.fits*"), recursive=True)
+    )
+    logger.info(
+        f"Found {len(fits_files)} FITS files in directory {directory} and its sub-directories."
+    )
     return fits_files
 
 
 def is_fits_file(path: str) -> bool:
     if os.path.exists(path):
-        return True if (os.path.isfile(path) and '.fits' in path) else False
+        return True if (os.path.isfile(path) and ".fits" in path) else False
     else:
         raise FileNotFoundError(f"Path {path} does not exist.")
 
 
 def is_archive_file(path: str) -> bool:
     if os.path.exists(path):
-        return True if (os.path.isfile(path)
-                        and ('.zip' in path or '.tar' in path or '.gz' in path or '.bz2' in path or '.xz' in path)
-                        and not is_fits_file(path)) else False
+        return (
+            True
+            if (
+                os.path.isfile(path)
+                and (
+                    ".zip" in path
+                    or ".tar" in path
+                    or ".gz" in path
+                    or ".bz2" in path
+                    or ".xz" in path
+                )
+                and not is_fits_file(path)
+            )
+            else False
+        )
     else:
         raise FileNotFoundError(f"Path {path} does not exist.")
 
@@ -54,9 +72,13 @@ def parse_list_of_files(items: list[str]) -> list[str]:
     for item in items:
         # if item is a compressed archive, unpack it and search for fits files within
         if is_archive_file(item):
-            logger.info(f"Found archive file {item}, unpacking and searching for FITS files within.")
+            logger.info(
+                f"Found archive file {item}, unpacking and searching for FITS files within."
+            )
             # unpack archive to parent directory and search for fits files within
-            extraction_dir = os.path.join(os.path.dirname(item), str(os.path.basename(item).split('.')[0]))
+            extraction_dir = os.path.join(
+                os.path.dirname(item), str(os.path.basename(item).split(".")[0])
+            )
             shutil.unpack_archive(item, extraction_dir)
             new_items.extend(search_directory_for_fits_files(extraction_dir))
         elif is_fits_file(item):
@@ -65,11 +87,15 @@ def parse_list_of_files(items: list[str]) -> list[str]:
         elif is_directory(item):
             new_items.extend(search_directory_for_fits_files(item))
         else:
-            logger.warning(f"Unrecognized item: {item}, not a FITS file, archive or directory, skipping.")
+            logger.warning(
+                f"Unrecognized item: {item}, not a FITS file, archive or directory, skipping."
+            )
     return sorted(new_items)
 
 
-def load_image_fits(filename: str | None, **kwargs) -> tuple[list[Any], list[fits.Header]]:
+def load_image_fits(
+    filename: str | None, **kwargs
+) -> tuple[list[Any], list[fits.Header]]:
     """
     Load FITS file and return the data as a list with hdu extensions as the first axis.
     :param filename: str | None
@@ -79,7 +105,9 @@ def load_image_fits(filename: str | None, **kwargs) -> tuple[list[Any], list[fit
     """
     if filename:
         if ".fits.fz" in filename:
-            logger.info(f"Loading compressed FITS file {filename} using fits.open() with in-memory decompression enabled.")
+            logger.info(
+                f"Loading compressed FITS file {filename} using fits.open() with in-memory decompression enabled."
+            )
         input_data_array, input_headers = [], []
         try:
             with fits.open(filename, decompress_in_memory=True) as hdulist:
@@ -92,7 +120,10 @@ def load_image_fits(filename: str | None, **kwargs) -> tuple[list[Any], list[fit
         return input_data_array, input_headers
     return [], []
 
-def guess_image_type_from_header(headers: list[fits.Header | dict], keywords=None) -> dict[str, Any]:
+
+def guess_image_type_from_header(
+    headers: list[fits.Header | dict], keywords=None
+) -> dict[str, Any]:
     """
     Default image type guessing logic based on FITS header.
     Parameters
@@ -102,11 +133,14 @@ def guess_image_type_from_header(headers: list[fits.Header | dict], keywords=Non
     keywords : dict[str, list[str]] optional
         Dictionary specifying keywords to check for different image identifiers
     """
-    imtype = {'type': 'unknown', 'exptime': None}
+    imtype = {"type": "unknown", "exptime": None}
     for header in headers:
         # Check given keywords first
         if keywords is None:
-            keywords = {'type':['IMAGETYP', 'OBSTYPE', 'OBJECT'], 'exptime': ['EXPTIME', 'EXPOSURE']}
+            keywords = {
+                "type": ["IMAGETYP", "OBSTYPE", "OBJECT"],
+                "exptime": ["EXPTIME", "EXPOSURE"],
+            }
         for key, hkeys in keywords.items():
             for hkey in hkeys:
                 if hkey in header:
@@ -114,9 +148,11 @@ def guess_image_type_from_header(headers: list[fits.Header | dict], keywords=Non
                     break
     return imtype
 
+
 ######################### Saving and loading pandas dataframe table to/from FITS ######################################
 
-def save_dataframe_to_fits(table: pd.DataFrame, filepath: str):
+
+def save_dataframe_to_fits(table: pd.DataFrame, filepath: str) -> None:
     """
     Save a pandas DataFrame table to a FITS binary table.
 
@@ -131,6 +167,7 @@ def save_dataframe_to_fits(table: pd.DataFrame, filepath: str):
     hdul = fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)])
     hdul.writeto(filepath, overwrite=True)
 
+
 def load_dataframe_from_fits(filepath: str) -> pd.DataFrame:
     """
     Load a pandas DataFrame table previously written by ``save_dataframe_to_fits``.
@@ -142,9 +179,12 @@ def load_dataframe_from_fits(filepath: str) -> pd.DataFrame:
             fits_col = data[name]
             if fits_col.ndim == 1:
                 columns[name] = pd.Series(fits_col).map(
-                    lambda value: value.decode("utf-8").rstrip()
-                    if isinstance(value, (bytes, np.bytes_))
-                    else value)
+                    lambda value: (
+                        value.decode("utf-8").rstrip()
+                        if isinstance(value, (bytes, np.bytes_))
+                        else value
+                    )
+                )
             else:
                 columns[name] = pd.Series(list(fits_col), dtype=object).map(np.asarray)
     return pd.DataFrame(columns)
@@ -161,19 +201,26 @@ def _choose_minimal_numpy_dtype(vals: Iterable[float | int]) -> Type[np.dtype]:
     return mintp
 
 
-def _quantity_column_to_fits_column(name: str, series: list[pint.Quantity | None]) -> fits.Column | list[fits.Column]:
-    assert len(series) > 0, "require non-zero length of series"
+def _quantity_column_to_fits_column(
+    name: str, series: list[pint.Quantity | None]
+) -> fits.Column | list[fits.Column]:
+    if len(series) == 0:
+        raise ValueError("require non-zero length series")
 
     outunit: pint.Unit = None
+
     def _generate_qvals(series):
         nonlocal outunit
         for v in series:
             if v is None:
                 yield np.nan, None
+                continue
             elif outunit is None:
                 outunit = v.units
-                
-            assert outunit is not None
+            if outunit is None:
+                raise ValueError(
+                    "outunit should not be None here, fix the eregion code"
+                )
             qout = v.to(outunit)
             if isinstance(qout.magnitude, unc.UFloat):
                 yield qout.magnitude.nominal_value, qout.magnitude.std_dev
@@ -184,29 +231,29 @@ def _quantity_column_to_fits_column(name: str, series: list[pint.Quantity | None
     nomvals, errvals = zip(*outqtups)
     nomvals = list(nomvals)
     nomdtp = _choose_minimal_numpy_dtype(nomvals)
-    fmt = _fits_format_code(nomdtp)
+    nomfmt = _fits_format_code(nomdtp)
     nomvals = np.array(nomvals, dtype=nomdtp)
     unt = _pint_unit_to_fits_unit(outunit)
-    
+
     outcols = []
-    outcols.append(fits.Column(name=name, array=nomvals, format=fmt,
-                               unit=unt))
+    outcols.append(fits.Column(name=name, array=nomvals, format=nomfmt, unit=unt))
 
     if all(_ is None for _ in errvals):
-        #one column case, same as before
+        # one column case, same as before
         return outcols[0]
-    
-    #we have error column
-    #note the above procedure ensured it's in the correct units already
+
+    # we have error column
+    # note the above procedure ensured it's in the correct units already
     errname = f"{name}_err"
     errvals = list(errvals)
     errdtp = _choose_minimal_numpy_dtype(errvals)
     errvals = np.array(errvals, dtype=errdtp)
-    
-    outcols.append(fits.Column(name=errname, array=errvals, format=fmt,
-                               unit=unt))
+    errfmt = _fits_format_code(errdtp)
+
+    outcols.append(fits.Column(name=errname, array=errvals, format=errfmt, unit=unt))
     return outcols
-    
+
+
 def _pint_unit_to_fits_unit(unit: pint.Unit | str) -> str:
     """Convert a Pint unit to the FITS-standard unit representation."""
     unit_string: str = str(unit)
@@ -216,9 +263,14 @@ def _pint_unit_to_fits_unit(unit: pint.Unit | str) -> str:
     try:
         return astropy_units.Unit(unit_string).to_string("fits")
     except ValueError as exc:
-        raise ValueError(f"Pint unit '{unit}' cannot be represented as a FITS unit.") from exc
+        raise ValueError(
+            f"Pint unit '{unit}' cannot be represented as a FITS unit."
+        ) from exc
 
-def _dataframe_column_to_fits_column(name: str, series: pd.Series) -> fits.Column | list[fits.Column]:
+
+def _dataframe_column_to_fits_column(
+    name: str, series: pd.Series
+) -> fits.Column | list[fits.Column]:
     values = series.to_list()
     non_null = [value for value in values if value is not None]
     if not non_null:
@@ -243,26 +295,42 @@ def _dataframe_column_to_fits_column(name: str, series: pd.Series) -> fits.Colum
         dim = None
         if stacked.ndim > 1:
             dim = "(" + ",".join(str(size) for size in stacked.shape[1:]) + ")"
-        return fits.Column(name=name, array=stacked, format=f"{flat_size}{code}", dim=dim)
+        return fits.Column(
+            name=name, array=stacked, format=f"{flat_size}{code}", dim=dim
+        )
 
     if all(isinstance(value, (str, bytes, np.str_, np.bytes_)) for value in non_null):
         strings = ["" if value is None else str(value) for value in values]
         width = max(1, max(len(value) for value in strings))
-        return fits.Column(name=name, array=np.array(strings, dtype=f"U{width}"), format=f"{width}A")
+        return fits.Column(
+            name=name, array=np.array(strings, dtype=f"U{width}"), format=f"{width}A"
+        )
 
     if all(isinstance(value, (bool, np.bool_)) for value in non_null):
-        return fits.Column(name=name, array=np.asarray(values, dtype=np.bool_), format="L")
+        return fits.Column(
+            name=name, array=np.asarray(values, dtype=np.bool_), format="L"
+        )
 
     if all(isinstance(value, (int, np.integer, bool, np.bool_)) for value in non_null):
-        return fits.Column(name=name, array=np.asarray(values, dtype=np.int64), format="K")
+        return fits.Column(
+            name=name, array=np.asarray(values, dtype=np.int64), format="K"
+        )
 
-    if all(isinstance(value, (float, np.floating, int, np.integer, bool, np.bool_)) for value in non_null):
-        return fits.Column(name=name, array=np.asarray(values, dtype=np.float64), format="D")
+    if all(
+        isinstance(value, (float, np.floating, int, np.integer, bool, np.bool_))
+        for value in non_null
+    ):
+        return fits.Column(
+            name=name, array=np.asarray(values, dtype=np.float64), format="D"
+        )
 
     if all(isinstance(value, (pint.Quantity)) for value in non_null):
         return _quantity_column_to_fits_column(name, values)
 
-    raise TypeError(f"Unsupported dataframe column '{name}' with values of type {type(non_null[0]).__name__}.")
+    raise TypeError(
+        f"Unsupported dataframe column '{name}' with values of type {type(non_null[0]).__name__}."
+    )
+
 
 def _fits_format_code(dtype: np.dtype) -> str:
     dtype = np.dtype(dtype)
