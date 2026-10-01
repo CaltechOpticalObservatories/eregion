@@ -1,19 +1,19 @@
 """
-`eregion validate`: parse a pipeline flow config and print its DAG execution order.
+`eregion validate`: parse a detector config and print the structure it describes.
 """
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-from eregion.pipeline import PipelineEngine
+from eregion.configs import DetectorConfig
 from eregion.cli._common import parse_var_options, fail
 
 
 def validate(
     config: Path = typer.Argument(
         ..., exists=True, readable=True, dir_okay=False,
-        help="Path to a pipeline flow YAML config.",
+        help="Path to a detector YAML config.",
     ),
     var: Optional[list[str]] = typer.Option(
         None, "--var", "-v",
@@ -25,23 +25,33 @@ def validate(
     ),
 ):
     """
-    Build the pipeline DAG from a config and print the resulting execution plan, 
-    without executing any task. Useful for sanity-checking a config.
+    Load a detector config and print the detector structure it describes.
+
+    No image data is read, so this is a cheap sanity check on a config.
     """
     runtime_variables = parse_var_options(var)
 
     try:
-        engine = PipelineEngine(str(config), runtime_variables=runtime_variables, enable_env_vars=env)
+        detector_config = DetectorConfig(
+            str(config), runtime_variables=runtime_variables, enable_env_vars=env,
+        )
     except Exception as e:
-        fail(f"Failed to build pipeline from '{config}': {e}")
+        fail(f"Failed to load detector config from '{config}': {e}")
 
-    pipe_order, node_orders = engine.execution_orders
-    typer.secho(f"Config OK: {len(engine.pipelines)} pipeline(s) defined.\n", fg=typer.colors.GREEN)
+    cfg = detector_config.config
+    objects = cfg["objects"]
+    typer.secho(f"Config OK: {len(objects)} detector object(s) defined.\n", fg=typer.colors.GREEN)
 
-    for gen_idx, pipe_names in enumerate(pipe_order):
-        typer.echo(f"pipeline generation {gen_idx}: {sorted(pipe_names)}")
-        for pipe_name in sorted(pipe_names):
-            for step_idx, node_names in enumerate(node_orders[pipe_name]):
-                typer.echo(f"    [{pipe_name}] step {step_idx}: {sorted(node_names)}")
+    typer.echo(f"detector_type: {cfg['detector_type']}")
+    typer.echo(f"detector_output_class: {cfg['detector_output_class']}")
+    if cfg.get("description"):
+        typer.echo(f"description: {cfg['description']}")
 
-    typer.echo("\nNo tasks were executed.")
+    for obj in objects:
+        props = obj["properties"]
+        typer.echo(f"\n{obj['name']} ({obj['class']})")
+        typer.echo(f"    size: {props['x_size']} x {props['y_size']} px, pixel_size: {props['pixel_size']}")
+        outputs = obj["outputs"]
+        typer.echo(f"    outputs ({len(outputs)}): {[out.get('id') for out in outputs]}")
+
+    typer.echo("\nNo image data was read.")

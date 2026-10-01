@@ -38,7 +38,7 @@ jobs:
 
       - name: Verify the package imports correctly
         working-directory: /tmp
-        run: python -c "import eregion; import eregion.core, eregion.datamodels, eregion.pipeline, eregion.tasks, eregion.utils, eregion.configs; print('eregion imported OK from', eregion.__file__)"
+        run: python -c "import eregion; import eregion.cli, eregion.core, eregion.datamodels, eregion.tasks, eregion.utils, eregion.configs; print('eregion imported OK from', eregion.__file__)"
 
       - name: Verify the version was derived from git
         working-directory: /tmp
