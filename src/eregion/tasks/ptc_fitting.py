@@ -20,6 +20,7 @@ from pydantic_pint import PydanticPintQuantity, set_registry
 from enum import Enum
 from pydantic import field_serializer, field_validator
 import os
+import pandas as pd
 
 # unit stuff setup
 _ureg = pint.get_application_registry()
@@ -103,9 +104,23 @@ class CCDPTCFitResultCollection(TaskResult):
             f.write(jsondat)
 
         super().save(filepath)
-        
+
+    def as_dataframe(self) -> pd.DataFrame:
+        """convert the tuple oriented dict to a DataFrame, for handier processing etc"""
+        # implicitly splits the named tuple key values into separate columns
+        keysdf = pd.DataFrame(data=iter(self.fits.keys()))
+
+        # this will  be an (unserializable) dataframe with single index column
+        # containing the (now normal) tuples
+        valsdf = pd.DataFrame.from_dict(data=self.fits, orient="index")
+
+        # outer join on the split named tuple columns and the values
+        outdf = keysdf.join(valsdf)
+
+        return outdf
+
     @field_validator("fits")
-    @classmethod 
+    @classmethod
     def check_is_named_tuple(cls, v: dict[Any, CCDPTCFitResult]) -> Any:
         if len(v) > 0:
             # more efficient than converting v.keys() to a list or similar, don't @ me
@@ -238,8 +253,7 @@ class CCDPTCFit(Task):
 
         results = dict()
         groups = ptcdf.groupby(self.selection_columns, sort=False)
-        nttp = NamedTuple("selection_key", [ (_, Any) for _ in self.selection_columns])
-
+        nttp = NamedTuple("selection_key", [(_, Any) for _ in self.selection_columns])
 
         for selection_key, dat in groups:
             skvs = (
