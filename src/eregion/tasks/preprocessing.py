@@ -136,7 +136,7 @@ class BiasSubtraction(BasePreprocessingTask):
     @staticmethod
     def _subtract(image: np.ndarray | xr.DataArray, master_bias: np.ndarray | xr.DataArray) -> np.ndarray:
         """
-        Convenience non-Prefect path for raw arrays.
+        Convenience path for raw arrays.
         """
         if master_bias.shape != image.shape:
             raise ValueError(

@@ -401,11 +401,11 @@ class ImageCreator(LazyTask):
         :param input_source: str or list of str or Iterable of np.ndarray
             Input source can be a path to FITS files (file, directory, glob pattern),
             a list of FITS file paths, or an iterable of numpy arrays.
-        :param identifier_func: str (from pipeline config) or Callable (if using directly), optional
+        :param identifier_func: str (dotted import path) or Callable, optional
             Custom image type identification function.
         :param identifier_kwargs: dict, optional
             Additional keyword arguments for the identifier function.
-        :param fileloader_func: str (from pipeline config) or Callable (if using directly), optional
+        :param fileloader_func: str (dotted import path) or Callable, optional
             Custom FITS loading function.
         :param fileloader_kwargs: dict, optional
             Additional keyword arguments for the FITS loader function.

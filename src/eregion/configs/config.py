@@ -105,35 +105,6 @@ class DetectorConfig(ConfigLoader):
 
         super().validate_config()
 
-### Pipeline Configuration Class ###
-class PipelineConfig(ConfigLoader):
-    required_keys = ['pipelines']
-    required_pipeline_keys = ['name', 'lazy', 'nodes']
-
-    def __init__(self, config_input, runtime_variables: Mapping | None = None, enable_env_vars: bool = False):
-        """
-        Initialize the PipelineConfig either from a YAML config file path or config data in string or dict format.
-        :param config_input: str or dict
-            Path to a YAML config file or config data as a string or dictionary.
-        """
-        super().__init__(config_input, runtime_variables=runtime_variables, enable_env_vars=enable_env_vars)
-
-    def validate_config(self):
-        for key in self.required_keys:
-            if key not in self.config:
-                raise KeyError(f"Missing required config key: {key}")
-
-        for pipeline in self.config['pipelines']:
-            for key in self.required_pipeline_keys:
-                if key not in pipeline:
-                    raise KeyError(f"Missing required pipeline key: {key} in pipeline {pipeline.get('name', 'unknown')}")
-
-            if pipeline['lazy']:
-                assert 'source' in pipeline, f"Missing required key 'source' for lazy pipeline {pipeline.get('name', 'unknown')}"
-
-        super().validate_config()
-
-
 #################### Config variable resolver for interpolation ####################
 _ESCAPED_INTERPOLATION = "\u0000REGION_ESCAPED_INTERPOLATION\u0000"
 
