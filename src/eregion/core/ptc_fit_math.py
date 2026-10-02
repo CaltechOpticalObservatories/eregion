@@ -91,7 +91,7 @@ def find_rough_full_well(
         raise ValueError("n_candidates must be >=1 for FW finding")
 
     amcands = np.argpartition(noise, -n_candidates)
-    for i in range(n_candidates):
+    for i in range(1, n_candidates+1):
         # get the n-th largest item in the array
         am = amcands[-i]
         if am == 0:
