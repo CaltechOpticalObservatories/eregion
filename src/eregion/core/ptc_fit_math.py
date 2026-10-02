@@ -105,7 +105,6 @@ def find_rough_full_well(
         # find nearest index to full well fact times selected value
         # ensure that this isn't above full well by trimming the mean array upto that FW location
         # (but including that location, in case the user chose fwfact=1.0)
-        breakpoint()
         fwfactloc = np.argmin(np.abs(fwguess - mean[:am+1]))
         if fwfactloc == 0:
             # pathological case, value leaves no data behind
