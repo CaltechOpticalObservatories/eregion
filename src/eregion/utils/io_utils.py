@@ -159,10 +159,14 @@ def save_dataframe_to_fits(table: pd.DataFrame, filepath: str) -> None:
     Array-valued cells are stored as fixed-shape vector columns so they round-trip
     as homogeneous NumPy arrays per cell.
     """
-    columns = [
-        _dataframe_column_to_fits_column(str(name), series)
-        for name, series in table.items()
-    ]
+    columns = []
+
+    for name, val in table.items():
+        thiscol = _dataframe_column_to_fits_column(str(name), val)
+        if isinstance(thiscol, list):
+            columns.extend(thiscol)
+        else:
+            columns.append(thiscol)
 
     hdul = fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(columns)])
     hdul.writeto(filepath, overwrite=True)
