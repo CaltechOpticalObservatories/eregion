@@ -107,8 +107,11 @@ class CCDPTCFitResultCollection(TaskResult):
 
     def as_dataframe(self) -> pd.DataFrame:
         """convert the tuple oriented dict to a DataFrame, for handier processing etc"""
+
+        lkeys = list(self.fits.keys())
+
         # implicitly splits the named tuple key values into separate columns
-        keysdf = pd.DataFrame(data=iter(self.fits.keys()))
+        keysdf = pd.DataFrame(data=lkeys, index=lkeys)
 
         # this will  be an (unserializable) dataframe with single index column
         # containing the (now normal) tuples
@@ -116,6 +119,7 @@ class CCDPTCFitResultCollection(TaskResult):
 
         # outer join on the split named tuple columns and the values
         outdf = keysdf.join(valsdf)
+        outdf.reset_index(drop=True)
 
         return outdf
 
