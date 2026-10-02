@@ -119,7 +119,7 @@ class CCDPTCFitResultCollection(TaskResult):
 
         # outer join on the split named tuple columns and the values
         outdf = keysdf.join(valsdf)
-        outdf.reset_index(drop=True)
+        outdf.reset_index(drop=True, inplace=True)
 
         return outdf
 
