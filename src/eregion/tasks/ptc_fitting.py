@@ -166,7 +166,8 @@ class CCDPTCFit(Task):
         lincoff: float = 0.2,
         n_fw_candidates: int = 1,
         fluxcol: str = "mean",
-        noisecol: str = "std" ** kwargs,
+        noisecol: str = "std",
+        **kwargs,
     ):
         """Fit results of a PTC reduction in a CCD specific manner.
 
