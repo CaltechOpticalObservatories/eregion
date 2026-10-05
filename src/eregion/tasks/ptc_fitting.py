@@ -10,7 +10,7 @@ from eregion.core.ptc_fit_math import (
     astier_approx_one_param_fit,
     linearity_fit,
 )
-from typing import Optional, Annotated, Any
+from typing import Optional, Annotated, Any, NamedTuple
 from pydantic import Field, ConfigDict
 import numpy as np
 import uncertainties as unc
@@ -18,8 +18,9 @@ from uncertainties.core import Variable as uVar
 import pint
 from pydantic_pint import PydanticPintQuantity, set_registry
 from enum import Enum
-from pydantic import field_serializer
+from pydantic import field_serializer, field_validator
 import os
+import pandas as pd
 
 # unit stuff setup
 _ureg = pint.get_application_registry()
@@ -90,7 +91,7 @@ class CCDPTCFitResult(TaskResult):
 
 
 class CCDPTCFitResultCollection(TaskResult):
-    fits: dict[tuple[str, ...], CCDPTCFitResult] = Field(
+    fits: dict[Any, CCDPTCFitResult] = Field(
         description="dictionary mapping detector channel identifiers to PTC results"
     )
 
@@ -103,6 +104,36 @@ class CCDPTCFitResultCollection(TaskResult):
             f.write(jsondat)
 
         super().save(filepath)
+
+    def as_dataframe(self) -> pd.DataFrame:
+        """convert the tuple oriented dict to a DataFrame, for handier processing etc"""
+
+        lkeys = list(self.fits.keys())
+
+        # implicitly splits the named tuple key values into separate columns
+        keysdf = pd.DataFrame(data=lkeys, index=lkeys)
+
+        # this will  be an (unserializable) dataframe with single index column
+        # containing the (now normal) tuples
+        valsdf = pd.DataFrame.from_dict(data=self.fits, orient="index")
+
+        # outer join on the split named tuple columns and the values
+        outdf = keysdf.join(valsdf)
+        outdf.reset_index(drop=True, inplace=True)
+
+        return outdf
+
+    @field_validator("fits")
+    @classmethod
+    def check_is_named_tuple(cls, v: dict[Any, CCDPTCFitResult]) -> Any:
+        if len(v) > 0:
+            # more efficient than converting v.keys() to a list or similar, don't @ me
+            keyval = next(iter(v.keys()))
+            if not all(isinstance(_, type(keyval)) for _ in v.keys()):
+                raise TypeError("mixture of tuple types for key not allowed")
+            if not isinstance(keyval, tuple) and hasattr(keyval, "_fields"):
+                raise TypeError("require dict key type to be named tuple")
+        return v
 
 
 _idxfld = Field(description="detector output ID")
@@ -226,12 +257,13 @@ class CCDPTCFit(Task):
 
         results = dict()
         groups = ptcdf.groupby(self.selection_columns, sort=False)
+        nttp = NamedTuple("selection_key", [(_, Any) for _ in self.selection_columns])
 
         for selection_key, dat in groups:
             skvs = (
                 selection_key if isinstance(selection_key, tuple) else (selection_key,)
             )
-
+            skvs = nttp(*skvs)
             if len(dat) == 0:
                 self.logger.warning(
                     f"No data found for selection key {selection_key}. Returning empty result for this selection."
@@ -296,9 +328,7 @@ class CCDPTCFit(Task):
                 unc.ufloat(linfit[1], linerr[1]) * _ureg.DN / _ureg.s
             )
             fitres["linearity_offset"] = _Q(unc.ufloat(linfit[0], linerr[0]) * _ureg.DN)
-
             results[skvs] = fitres
-
         return CCDPTCFitResultCollection(fits=results)
 
     def astier_fit_bootstrap(self, mean, std, fwfactloc, fwloc) -> tuple[uVar]:
@@ -323,7 +353,6 @@ class CCDPTCFitTabular(CCDPTCFit):
     def run(self, inp: PTCResult) -> TabularCCDPTCFitResultCollection:
         self.logger.debug("running base class task")
         base_results = super().run(inp)
-
         # make an empty tabular result
         tabular_results = self.task_result.model_construct()
 

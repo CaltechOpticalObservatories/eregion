@@ -103,3 +103,19 @@ def test_rough_fw_finding_hideous_but_commonly_occurring_messed_up_data_case():
     assert fwlocguess == 3
     assert fw == 3
 
+def test_get_df_from_results(gen_sample_PTC_fit_table):
+    result = gen_sample_PTC_fit_table
+
+    df = result.as_dataframe()
+    print(result)
+
+    #if the join happened correctly, then the column for e.g. camera-gain_classic is identical between before and after
+    # dataframe transformation
+
+    for k, v in result.fits.items():
+        row = df[ (df[k._fields[0]] == k[0]) & ( df[k._fields[1]] == k[1]) ]
+        #should only find one, keys were unique after all
+        assert len(row) == 1
+        for kk, vv in v.items():
+            assert row[kk].iloc[0] == vv
+
