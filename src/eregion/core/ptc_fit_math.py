@@ -90,18 +90,22 @@ def find_rough_full_well(
     if n_candidates < 1:
         raise ValueError("n_candidates must be >=1 for FW finding")
 
+    if fwfact > 1.0:
+        raise ValueError("cannot attempt to find a point higher than full-well, use fwfact <= 1.0 please")
+    
+
     amcands = np.argpartition(noise, -n_candidates)
-    for i in range(n_candidates):
+    for i in range(1, n_candidates+1):
         # get the n-th largest item in the array
         am = amcands[-i]
         if am == 0:
             # the ultimate pathological case, first value is the biggest
             continue
         fwguess = fwfact * mean[am]
-
         # find nearest index to full well fact times selected value
         # ensure that this isn't above full well by trimming the mean array upto that FW location
-        fwfactloc = np.argmin(np.abs(fwguess - mean[:am]))
+        # (but including that location, in case the user chose fwfact=1.0)
+        fwfactloc = np.argmin(np.abs(fwguess - mean[:am+1]))
         if fwfactloc == 0:
             # pathological case, value leaves no data behind
             continue
@@ -112,7 +116,7 @@ def find_rough_full_well(
             f"couldn't find a valid full well location with {n_candidates} candidates considered"
         )
 
-    return fwfactloc, am
+    return fwfactloc, mean[fwfactloc]
 
 
 def trad_ptc_shot_noise_fit(
