@@ -1,7 +1,8 @@
 import numpy as np
-from typing import Optional
+from typing import Optional, Callable, Generator
 from scipy.interpolate import make_interp_spline
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, least_squares
+from scipy.signal import fftconvolve, convolve2d
 import uncertainties as unc
 from uncertainties import umath
 from numpy.polynomial import Polynomial, polynomial
@@ -255,3 +256,68 @@ def linearity_fit(flux: np.ndarray, mean: np.ndarray, fitlim: Optional[int]):
     """
     ft, errs = do_polynomial_fit(xdat=flux[:fitlim], ydat=mean[:fitlim], deg=1)
     return ft, errs
+
+def _ast_broadcast(arr: np.ndarray) -> np.ndarray:
+    """broadcast a 1D array into a 3D array.
+       Needed in Astier fitting function, when we have e.g. means array of 1D with length,
+       and at each point we then want to fit on top a coefficient array in 2D. Total dimension
+       then becomes 3D"""
+    return arr[:, np.newaxis, np.newaxis]
+
+
+def _Astier_fitfun_common(mu: np.ndarray, g: float, aij: np.ndarray, nij: np.ndarray) -> np.ndarray:
+
+    # Apologies about the asserts here. This will be called thousands of times per fit loop,
+    # and so we want to eek out some performance here in optimised mode. This is an internal function also,
+    # so hopefully it's ok
+    assert len(aij.shape) == 2, "programming error, aij matrix should be of dimension 2"
+    assert nij.shape == aij.shape, "a_ij and n_ij coefficient matrices should have same shape"
+
+
+    deltaij0 = np.zeros_like(aij)
+    deltaij0[0,0] = 1
+
+    term1 = _ast_broadcast(mu) / g * deltaij0
+    term2 = _ast_broadcast(mu**2) * aij
+    term3 = nij / g**2
+
+    return term 1 + term2 + term3
+
+
+def _multiconv(*arrs):
+    assert len(arrs) >= 2, "need at least 2 arrays to multiconvolve"
+    it = iter(arrs)
+    out = convolve2d(next(it), next(it), mode="same")            
+
+    
+def _powconvolve(arr: np.ndarray, N: int) -> Generator[np.ndarray]:
+    """compute (arr X arr X ....) N times, where X represents convolution, yielding at each step
+       This avoids expensive recomputation of the same power convolution many times when each term is needed.
+        Designed according to Astier's fitting requirements, so not exactly generic.
+        First term yielded is equivalent of a delta function at 0
+
+
+       parameters
+       ----------
+
+      :param arr: np.ndarray
+         array to computer power convolution on
+       : param N : int
+       power to raise array to
+    
+    """
+
+    out = np.zeros_
+
+
+def Astier_fitfun_aonly(mu: np.ndarray, g: gloat, aij: np.ndarray, nij: np.ndarray) -> np.ndarray:
+    """The Astier fitting function when we only want to fit the aij matrix (leading order brighter-fatter correction)"""
+    _common_term = _Astier_fitfun_common(mu, g, aij, nij)
+
+    # a_ij ** 2
+    aacov = convolve2d(aij, aij, mode="same")
+
+    # a_ij **3
+    aaacov = convolve2d(aacov, aij, mode="same")
+    
+
