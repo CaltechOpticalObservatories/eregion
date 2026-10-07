@@ -149,6 +149,16 @@ class LazyTask(Task):
         """
         self._stop_event.set()
 
+    def __getstate__(self):
+        # threading.Event holds a lock, which can't be pickled when joblib sends the task to worker processes
+        state = self.__dict__.copy()
+        state.pop("_stop_event", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._stop_event = threading.Event()
+
     @abstractmethod
     def lazy_run(self, *args, **kwargs) -> Generator[TaskResult, None, None]:
         """Run the task lazily, yielding results (which should be in dict format)."""
