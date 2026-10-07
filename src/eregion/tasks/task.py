@@ -3,6 +3,7 @@ from typing import Callable, Generator
 import os
 import multiprocessing
 import inspect
+import threading
 
 from eregion.utils import configure_logger, load_class
 from eregion.datamodels import TaskResult
@@ -139,6 +140,14 @@ class LazyTask(Task):
         self.watch_mode = watch_mode
         self.poll_interval = poll_interval
         self.max_batch_size = max_batch_size
+        self._stop_event = threading.Event()
+
+    def stop(self) -> None:
+        """
+        Request a running lazy_run to stop. Safe to call from another thread, takes effect at the next
+        batch boundary or immediately if waiting between polls.
+        """
+        self._stop_event.set()
 
     @abstractmethod
     def lazy_run(self, *args, **kwargs) -> Generator[TaskResult, None, None]:

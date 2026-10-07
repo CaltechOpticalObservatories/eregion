@@ -99,9 +99,11 @@ class ImageCreator(LazyTask):
         watch_mode=False,
         poll_interval=0,
         max_batch_size=10,
+        settle_time: float = 0.0,
         **kwargs,
     ):
         super().__init__(name, watch_mode, poll_interval, max_batch_size, **kwargs)
+        self.settle_time = settle_time
 
         # Load detector configuration
         self.det_config = DetectorConfig(config_input=detector_config)
@@ -190,34 +192,38 @@ class ImageCreator(LazyTask):
                     else:
                         self.logger.info(f"Item {ipath} is a regular path string")
                         list_to_process.append(ipath)
-                return parse_list_of_files(list_to_process)
+                found_files = parse_list_of_files(list_to_process)
 
             elif isinstance(input_path, str):
                 if "*" in input_path:
                     self.logger.info(f"Item {input_path} is a glob pattern")
-                    return parse_list_of_files(glob2.glob(input_path, recursive=True))
+                    found_files = parse_list_of_files(glob2.glob(input_path, recursive=True))
                 else:
                     self.logger.info(f"Item {input_path} is a regular path string")
-                    return parse_list_of_files([input_path])
+                    found_files = parse_list_of_files([input_path])
 
             else:
                 self.logger.error(f"Invalid input")
                 raise ValueError(
                     "input_path must be a string or list of strings representing file paths, directories, or glob patterns."
                 )
+            if self.watch_mode:
+                now = time.time()
+                found_files = [f for f in found_files if now-os.path.getmtime(f) >= self.settle_time]
+            return found_files
 
         if not self.watch_mode:
             batch = _discover_once()
             yield batch
             return
         # Watch mode
-        while True:
+        while not self._stop_event.is_set():
             batch = _discover_once()
             new_files = [f for f in batch if f not in self._seen_files]
             if new_files:
-                self._seen_files.update(new_files)
                 yield new_files
-            time.sleep(self.poll_interval)
+            if self._stop_event.wait(self.poll_interval):
+                return
 
     def from_arrays(
         self, input_arrays: Iterable[np.ndarray]
@@ -416,6 +422,7 @@ class ImageCreator(LazyTask):
         :return: {"images": list of DetImage}
             Generator yielding lists of DetImage objects, stored under the key 'images' in the yielded dict.
         """
+        self._stop_event.clear()
         if self.watch_mode:
             self.logger.info(
                 "Running in watch mode, will monitor input source for new data, setting require_data=False"
@@ -462,6 +469,8 @@ class ImageCreator(LazyTask):
 
             ## split batch into smaller batches of max_batch_size
             for batch in batched(input_batch, self.max_batch_size):
+                if self._stop_event.is_set():
+                    return
                 images_batch = []
                 for inp in batch:
                     if _file_input:
@@ -471,6 +480,8 @@ class ImageCreator(LazyTask):
                         inp, data_on_demand=data_on_demand
                     )
                     images_batch.extend(images)
+                if _file_input and self.watch_mode:
+                    self._seen_files.update(batch)
                 yield self.task_result(data=images_batch)
 
     @wraps(lazy_run)
