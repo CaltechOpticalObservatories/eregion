@@ -16,12 +16,11 @@ imgentask = ImageCreator(detector_config=CONFIG)
 
 imgen_ser = imgentask.lazy_run(os.path.join(DATA_DIR,SER_GLOB))
 imbundle_ser = next(imgen_ser).data
-
-ser_extractor = CTIEPERExtractor(
-
-
+ser_dim = imbundle_ser[0]
 
 imgen_llel = imgentask.lazy_run(os.path.join(DATA_DIR,LLEL_GLOB))
 imbundle_llel = next(imgen_llel).data
+llel_dim = imbundle_llel[0]
+
 
 
