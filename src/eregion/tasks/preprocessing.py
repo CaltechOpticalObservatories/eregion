@@ -276,7 +276,7 @@ class SigmaClipMasking(BasePreprocessingTask):
         """
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self.method(output)
-        img.image_type.update({"bad_pixel_masked": img.build_full_mask()})
+        img.image_type.update({"bad_pixel_masked": img._build_full_mask()})
         return img
 
     @property

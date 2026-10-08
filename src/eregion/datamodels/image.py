@@ -120,9 +120,30 @@ class Output(Mappable):
             Name of the data variable in the DetImage.data (xr.Dataset) to slice. If 'all', slices the entire dataset.
         :return: xr.DataArray or xr.Dataset corresponding to this output.
         """
-        if self.parent is None or getattr(self.parent, "data", None) is None:
-            raise ValueError("Attach this Output to a DetImage with valid data.")
         return slice_data(self.parent.get_data(data_var), self.output_slice)
+
+    def get_output_mask(self, mask_key: str | Literal['combined', 'all'] = 'combined') -> XRDATA | None:
+        if self.masks:
+            match mask_key:
+                case 'combined':
+                    return np.any(self.masks.to_array().to_numpy(), axis=0)
+                case k if k in self.masks:
+                    return self.masks[k]
+                case 'all':
+                    return self.masks
+                case _:
+                    logger.error(f"Unknown mask key {mask_key}")
+                    return None
+        else:
+            return None
+
+    def get_masked_output_data(self, data_var: str = 'data', mask_key: str = 'combined', fill_value=np.nan):
+        mask = self.get_output_mask(mask_key)
+        datarr = self.get_output_data(data_var)
+        if mask:
+            return datarr.where(mask.to_numpy(), other=fill_value)
+        else:
+            datarr
 
     @property
     def data(self):
@@ -139,6 +160,7 @@ class Output(Mappable):
 
     def get_image_region(self,
                          return_masks: bool = False,
+                         mask_key: str = 'combined',
                          data_var: Optional[str | Literal['all']] = 'data') -> tuple[XRDATA, Optional[XRDATA]]:
         """
         Return the image region data and optionally the corresponding masks for this output from the parent DetImage.
@@ -150,12 +172,12 @@ class Output(Mappable):
         """
         imslc = self.image_region
         imdata = slice_data(self.parent.get_data(data_var), imslc)
-        immask = (
-            slice_data(self.masks, imslc)
-            if (return_masks and self.masks is not None)
-            else None
-        )
-        return imdata, immask
+        if return_masks:
+            mask = self.get_output_mask(mask_key)
+            immask = slice_data(mask, imslc) if mask else None
+            return imdata, immask
+        else:
+            return imdata, None
 
     def set_data_in_parent(self,
                            new_data: XRDATA,
@@ -192,14 +214,11 @@ class Output(Mappable):
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
 
-        data = slice_data(self.parent.get_data(data_var), self.output_slice)
-
-        if with_mask and self.masks is not None and mask_key in self.masks:
-            arr = np.ma.masked_array(data=data.values, mask=self.masks[mask_key].values)
-            arr = arr.filled(0)
-            temp = xr.DataArray(data=arr, coords=data.coords, dims=data.dims)
+        if with_mask:
+            temp = self.parent.get_masked_data(data_var, mask_key, fill_value=0)
         else:
-            temp = data
+            temp = self.parent.get_data(data_var)
+        temp = slice_data(temp, self.output_slice)
 
         im = temp.plot.imshow(ax=ax, **imshow_kwargs)
 
@@ -676,7 +695,7 @@ class DetImage:
             return all(a == b for a, b in zip(propsize, opshape))
         return None
 
-    def build_full_mask(self) -> bool:
+    def _build_full_mask(self) -> bool:
         """
         Build a full mask from the individual output masks.
         :return: True if a full mask was built, False otherwise.
@@ -694,15 +713,36 @@ class DetImage:
             return False
         return True
 
-    def show(
-        self,
-        ax=None,
-        save=None,
-        with_mask=True,
-        mask_key='sigma_clip_mask',
-        data_var='data',
-        **imshow_kwargs
-    ):
+    def get_mask(self, mask_key: str | Literal['all', 'combined'] = 'combined') -> XRDATA | None:
+        """
+        Return the mask array or dataset. Build masks from outputs if self.masks is empty.
+        :param mask_key: str or 'all' or 'combined'. Returns dataset if 'all'. Returns DataArray if key is specified. Returns OR combined mask from all keys if 'combined'.
+        :return: xr.DataArray or xr.Dataset
+        """
+        if self._build_full_mask():
+            match mask_key:
+                case 'all':
+                    return self.masks
+                case 'combined':
+                    return np.any(self.masks.to_array().to_numpy(), axis=0)
+                case k if k in self.masks:
+                    return self.masks[k]
+                case k:
+                    logger.error(f"{k} is not present in the masks dataset. Available keys are {list(self.masks.data_vars)}")
+                    return None
+        else:
+            logger.error(f"No masks found in any of the outputs to build the full mask from.")
+            return None
+
+    def get_masked_data(self, data_var: str = 'data',  mask_key: str = 'combined', fill_value = np.nan) -> xr.DataArray:
+        mask = self.get_mask(mask_key)
+        datarr: xr.DataArray = self.get_data(data_var)
+        if mask is not None:
+            return datarr.where(mask.to_numpy(), other=fill_value)
+        else:
+            return datarr
+
+    def show(self, ax=None, save=None, with_mask=True, mask_key='combined', data_var='data', **imshow_kwargs):
         """
         Plot the detector image data with optional mask overlay.
         :param ax: Matplotlib Axes object to plot on. If None, a new figure and axes are created.
@@ -728,18 +768,11 @@ class DetImage:
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
 
-        data = self.get_data(data_var)
         if with_mask:
-            if self.build_full_mask() and mask_key in self.masks.data_vars:
-                arr = np.ma.masked_array(data=data.values, mask=self.masks[mask_key].values)
-                arr = arr.filled(0)
-                temp = xr.DataArray(data=arr, coords=data.coords, dims=data.dims)
-            else:
-                logger.warning(f"Mask key '{mask_key}' not found in DetImage masks. Showing unmasked data.")
-                temp = data
+            data = self.get_masked_data(data_var, mask_key, fill_value=0)
         else:
-            temp = data
-        im = temp.plot.imshow(ax=ax, **imshow_kwargs)
+            data = self.get_data(data_var)
+        im = data.plot.imshow(ax=ax, **imshow_kwargs)
 
         if save is not None:
             ax.figure.savefig(save)

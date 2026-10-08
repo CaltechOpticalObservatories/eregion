@@ -1,8 +1,11 @@
 ### Collection of utility functions for image processing tasks.
+from collections.abc import Sequence
 import numpy as np
 from astropy.stats import sigma_clip
+from eregion.core.image_stats import do_statistics
 
-def median_combine(images: list[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
+
+def median_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
     """
     Combine a list of images by computing the median across them. If a masked array is passed, median is computed
     only on the unmasked pixels.
@@ -18,12 +21,13 @@ def median_combine(images: list[np.ndarray | np.ma.MaskedArray]) -> dict[str, np
         A dictionary containing the median-combined image, standard deviation, and count of pixels used in the combination.
     """
     stacked_images = np.ma.stack(images, axis=0)
-    median = np.ma.median(stacked_images, axis=0)
-    stddev = np.ma.std(stacked_images, axis=0)
-    count = np.ma.count(stacked_images, axis=0)
-    return {'data': median.filled(np.nan), 'std': stddev.filled(np.nan), 'count': count}
+    stats = do_statistics(data=stacked_images, which={'data': np.ma.median, 'std': np.ma.std, 'count': np.ma.count},
+                          axis=0)
+    stats['data'] = stats['data'].filled(np.nan)
+    stats['std'] = stats['std'].filled(np.nan)
+    return stats
 
-def mean_combine(images: list[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
+def mean_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
     """
     Combine a list of images by computing the mean across them. If a masked array is passed, mean is computed only on
     the unmasked pixels.
@@ -39,10 +43,11 @@ def mean_combine(images: list[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.n
         A dictionary containing the mean-combined image, standard deviation, and count of pixels used in the combination.
     """
     stacked_images = np.ma.stack(images, axis=0)
-    mean = np.ma.mean(stacked_images, axis=0)
-    stddev = np.ma.std(stacked_images, axis=0)
-    count = np.ma.count(stacked_images, axis=0)
-    return {'data': mean.filled(np.nan), 'std': stddev.filled(np.nan), 'count': count}
+    stats = do_statistics(data=stacked_images, which={'data': np.ma.mean, 'std': np.ma.std, 'count': np.ma.count},
+                          axis=0)
+    stats['data'] = stats['data'].filled(np.nan)
+    stats['std'] = stats['std'].filled(np.nan)
+    return stats
 
 
 def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray,
@@ -97,7 +102,7 @@ def flip_and_rotate(image: np.ndarray, angle: float, flip_x: bool=False, flip_y:
     return image
 
 
-def do_digital_binning(data: np.ndarray, binsizes: list[int], binaxis: int = 0) -> np.ndarray:
+def do_digital_binning(data: np.ndarray, binsizes: Sequence[int], binaxis: int = 0) -> np.ndarray:
     """
     Perform digital binning on the provided data. Assumes that readout is towards the 0th index of the binning axis,
     i.e. the first row of the data is the first row read out from the CCD. If that's not true, pre-flip your data in

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Literal
 import pandas as pd
 import numpy as np
 import xarray as xr
@@ -100,7 +100,7 @@ class FocalPlaneImage:
 
         # check that masks have been built
         if det_image.masks is None:
-            det_image.build_full_mask()
+            det_image._build_full_mask()
 
     def construct_focal_plane_image(self):
         if len(self.det_images) == 0:
@@ -169,7 +169,7 @@ class FocalPlaneImage:
                     self._data[v].loc[slc] = flip_and_rotate(didataset[v].values, angle=row['angle'], flip_x=row['flip_x'],
                                                            flip_y=row['flip_y'])
 
-                mask_keys = list(di.masks.data_vars) if di.build_full_mask() else []
+                mask_keys = list(di.masks.data_vars) if di.masks else []
                 dimasks = di.masks
                 for m in mask_keys:
                     if m not in self.masks.data_vars:
@@ -185,7 +185,35 @@ class FocalPlaneImage:
             raise ValueError("Focal-plane image data has not been constructed yet.")
         return self._data['data']
 
-    def show(self, ax=None, save=None, show_det_id=False, with_mask=False, mask_key='sigma_clip_mask',
+    def get_mask(self, mask_key: str | Literal['combined'] = 'combined') -> xr.DataArray | None:
+        """
+        Return the mask array.
+        :param mask_key: str or 'combined'. Returns DataArray if key is specified. Returns OR combined mask from all keys if 'combined'.
+        :return: xr.DataArray
+        """
+        if self.masks:
+            match mask_key:
+                case 'combined':
+                    return np.any(self.masks.to_array().to_numpy(), axis=0)
+                case k if k in self.masks:
+                    return self.masks[k]
+                case k:
+                    logger.error(
+                        f"{k} is not present in the masks dataset. Available keys are {list(self.masks.data_vars)}")
+                    return None
+        else:
+            logger.error(f"No masks found in any of the outputs to build the full mask from.")
+            return None
+
+    def get_masked_data(self, data_var: str = 'data', mask_key: str = 'combined', fill_value = np.nan) -> xr.DataArray:
+        mask = self.get_mask(mask_key)
+        datarr: xr.DataArray = self._data[data_var]
+        if mask is not None:
+            return datarr.where(mask.to_numpy(), other=fill_value)
+        else:
+            return datarr
+
+    def show(self, ax=None, save=None, show_det_id=False, with_mask=False, mask_key='combined',
              data_var:str = 'data', textcolor="yellow", **imshow_kwargs):
         """
         Plot the focal-plane image with optional detector boundaries and masks.
@@ -202,15 +230,12 @@ class FocalPlaneImage:
         if ax is None:
             _, ax = plt.subplots(1,1, figsize=(8, 8), tight_layout=True)
         # overlay mask if requested
-        temp = self._data[data_var]
         if with_mask:
-            if self.masks is not None and mask_key in self.masks:
-                arr = np.ma.masked_array(data=temp.values, mask=self.masks[mask_key].values)
-                arr = arr.filled(0)
-                temp = xr.DataArray(data=arr, coords=temp.coords, dims=temp.dims)
-            else:
-                logger.warning("Mask key '%s' not found in masks. Showing unmasked data.", mask_key)
+            temp = self.get_masked_data(data_var, mask_key, fill_value=0)
+        else:
+            temp = self._data[data_var]
         im = temp.plot.imshow(ax=ax, **imshow_kwargs)
+        del temp
 
         # Draw detector boundaries
         if hasattr(self, "table"):
