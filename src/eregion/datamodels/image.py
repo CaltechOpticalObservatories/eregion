@@ -199,6 +199,56 @@ class Output(Mappable):
         slicer = {new_data.dims[i]: slc for i, slc in enumerate(self.output_slice)} if slicer is None else slicer
         self.parent.set_data_slice(new_data, slicer, data_var=data_var)
 
+    def _select_header_and_data(
+        self, iheaders: Iterable[Mapping], idata: TData
+    ) -> tuple[Mapping, TData]:
+        """select which data represents this output in a collection of input headers and input data (big array).
+        This is intended for internal use only and eventual destruction in the righteous fire of refactoring because it
+        too tightly couples Outputs to FITS files. For now, however, it solves a problm in a slightly cleaner way than
+        duplicating this logic in several other places
+
+        parameters
+        ---------
+        :param iheaders
+            collection of header information, probably loaded from a FITS file (or HDF5 file in my wildest of happy dreams)
+        :param idata: TData
+            array type which can be indexed into using a numerical index, and then a slice. We don't care much beyond that
+
+        returns
+        -------
+        tuple[Mapping, TData]
+            the tuple of the selected header corresponding to this output, and the sliced data corresponding to this output
+        """
+
+        ext_idx: int = int()
+
+        match self.input_array_axis:
+            case int():
+                ext_idx = self.input_array_axis
+            case str():
+                # HIDEOUS: this is FITS specific, and not only that,
+                # but NASA Registry of FITS conventions (1977 I believe)  specific.
+                # You have absolutely no idea how much I want to ___redacted___ myself right now
+                try:
+                    ext_idx: int = next(
+                        (
+                            i
+                            for i, v in enumerate(iheaders)
+                            if v.get("EXTNAME", "") == self.input_array_axis
+                        )
+                    )
+                except StopIteration as err:
+                    raise ValueError(
+                        f"HDU with EXTNAME of {self.input_array_axis} not found in provided data"
+                    ) from err
+            case _:
+                raise TypeError("couldn't interpret input_array_axis or ext_id")
+
+        header = iheaders[ext_idx]
+        data = idata[ext_idx][*self.input_slice]
+
+        return header, data
+
     def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', data_var='data', **imshow_kwargs):
         """
         Plot this output's image.
@@ -384,60 +434,6 @@ class CCDOutput(Output):
         if save is not None:
             ax.figure.savefig(save)
         return ax
-
-    def _select_header_and_data(
-        self, iheaders: Iterable[Mapping], idata: TData
-    ) -> tuple[Mapping, TData]:
-        """select which data represents this output in a collection of input headers and input data (big array).
-        This is intended for internal use only and eventual destruction in the righteous fire of refactoring because it too tightly couples Outputs to FITS files. For now, however, it solves a problm in a slightly cleaner way than duplicating this logic in several other places
-
-        parameters
-        ---------
-
-        :param iheaders
-            collection of header information, probably loaded from a FITS file (or HDF5 file in my wildest of happy dreams)
-
-        :param idata: TData
-            array type which can be indexed into using a numerical index, and then a slice. We don't care much beyond that
-
-        returns
-        -------
-
-        tuple[Mapping, TData]
-
-            the tuple of the selected header corresponding to this output, and the sliced data corresponding to this output
-
-        """
-
-        ext_idx: int = int()
-
-        match self.input_array_axis:
-            case int():
-                ext_idx = self.input_array_axis
-            case str():
-                # HIDEOUS: this is FITS specific, and not only that,
-                # but NASA Registry of FITS conventions (1977 I believe)  specific.
-                # You have absolutely no idea how much I want to ___redacted___ myself right now
-
-                try:
-                    ext_idx: int = next(
-                        (
-                            i
-                            for i, v in enumerate(iheaders)
-                            if v.get("EXTNAME", "") == self.input_array_axis
-                        )
-                    )
-                except StopIteration as err:
-                    raise ValueError(
-                        f"HDU with EXTNAME of {self.input_array_axis} not found in provided data"
-                    ) from err
-            case _:
-                raise TypeError("couldn't interpret input_array_axis or ext_id")
-
-        header = iheaders[ext_idx]
-        data = idata[ext_idx][*self.input_slice]
-
-        return header, data
 
 
 class CMOSOutput(Output):
@@ -658,7 +654,7 @@ class DetImage:
         if "shape" in self.meta:
             return self.meta["shape"]
         if self._data is not None:
-            return self._data.shape
+            return self._data.sizes
         if (opshape := self._shape_from_outputs) is not None:
             return opshape
         raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")
