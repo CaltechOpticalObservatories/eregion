@@ -13,7 +13,7 @@ objects:
       pixel_size: 0.015  # mm
     outputs:
       - id: 'amp1'
-        ext_id: 1 # FITS extension ID
+        ext_id: "GREEN_AMP1" # FITS extension ID
         ext_slice: [!slice [0, 4110], !slice [0, 2094]]
         data_slice: [!slice [0, 4110], !slice [0, 2094]]
         serial_prescan: !slice [0, 4] # 4 pix
@@ -24,7 +24,7 @@ objects:
         parallel_axis: 'y'
         gain: 5.2 # from header
       - id: 'amp2'
-        ext_id: 2
+        ext_id: "GREEN_AMP2"
         ext_slice: [!slice [0, 4110], !slice [0, 2094]]
         data_slice: [ !slice [0, 4110], !slice [2094, 4188]]
         serial_prescan: !slice [4187, 4183] # 4 pix
@@ -51,7 +51,7 @@ objects:
       pixel_size: 0.015  # mm
     outputs:
       - id: 'amp1'
-        ext_id: 3 # FITS extension ID
+        ext_id: "RED_AMP1" # FITS extension ID
         ext_slice: [!slice [0, 4110], !slice [0, 2094]]
         data_slice: [!slice [0, 4110], !slice [0, 2094]]
         serial_prescan: !slice [0, 4] # 4 pix
@@ -62,7 +62,7 @@ objects:
         parallel_axis: 'y'
         gain: 5.0 # from header
       - id: 'amp2'
-        ext_id: 4
+        ext_id: "RED_AMP2"
         ext_slice: [!slice [0, 4110], !slice [0, 2094]]
         data_slice: [ !slice [0, 4110], !slice [2094, 4188]]
         serial_prescan: !slice [4187, 4183] # 4 pix
@@ -89,7 +89,7 @@ objects:
       pixel_size: 0.026  # mm
     outputs:
       - id: 'amp1'
-        ext_id: 5 # FITS extension ID
+        ext_id: "CA_HK" # FITS extension ID
         ext_slice: [!slice [0, 255], !slice [0, 1024]]
         data_slice: [!slice [0, 255], !slice [0, 1024]]
         serial_prescan: !slice [0, 0]
