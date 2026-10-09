@@ -194,7 +194,7 @@ class FocalPlaneImage:
         if self.masks:
             match mask_key:
                 case 'combined':
-                    return np.any(self.masks.to_array().to_numpy(), axis=0)
+                    return self.combined_mask
                 case k if k in self.masks:
                     return self.masks[k]
                 case k:
@@ -205,11 +205,20 @@ class FocalPlaneImage:
             logger.error(f"No masks found in any of the outputs to build the full mask from.")
             return None
 
+    @property
+    def combined_mask(self):
+        if self.masks:
+            combmask = np.any(self.masks.to_array().to_numpy(), axis=0)
+            return xr.DataArray(combmask, dims=self.masks.dims, coords=self.masks.coords)
+        else:
+            logger.error("No masks to combine.")
+            return None
+
     def get_masked_data(self, data_var: str = 'data', mask_key: str = 'combined', fill_value = np.nan) -> xr.DataArray:
         mask = self.get_mask(mask_key)
         datarr: xr.DataArray = self._data[data_var]
         if mask is not None:
-            return datarr.where(mask.to_numpy(), other=fill_value)
+            return datarr.where(~mask.to_numpy(), other=fill_value)
         else:
             return datarr
 
@@ -231,7 +240,7 @@ class FocalPlaneImage:
             _, ax = plt.subplots(1,1, figsize=(8, 8), tight_layout=True)
         # overlay mask if requested
         if with_mask:
-            temp = self.get_masked_data(data_var, mask_key, fill_value=0)
+            temp = self.get_masked_data(data_var, mask_key, fill_value=np.nan)
         else:
             temp = self._data[data_var]
         im = temp.plot.imshow(ax=ax, **imshow_kwargs)

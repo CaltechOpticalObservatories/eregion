@@ -35,7 +35,9 @@ def ensure_dataarray(data: XRDATA | np.ndarray) -> XRDATA:
                     data = data.transpose(..., *target)
                 except ValueError:  # dims are not named 'y'/'x'(/'t'); rename them positionally first
                     data = data.rename(dict(zip(list(data.sizes), target))).transpose(*target)
-            return data
+            # dims without coords make .sel/.loc fall back to (stop-exclusive) positions, so add integer coords
+            missing = {d: np.arange(data.sizes[d]) for d in target if d not in data.coords}
+            return data.assign_coords(missing) if missing else data
         case (np.ndarray(), 2):
             y_size, x_size = data.shape
             return xr.DataArray(data, dims=("y", "x"), coords={"y": np.arange(y_size), "x": np.arange(x_size),})
@@ -94,12 +96,12 @@ def set_slice_in_data(slicedata: XRDATA,
 
     match (targetdata, slicedata):
         case (xr.DataArray(), xr.DataArray()):
-            targetdata.loc[slcr] = ensure_numpy(slicedata)
+            targetdata.loc[slcr] = slicedata.to_numpy()
         case (xr.Dataset(), xr.Dataset()):
             if set(targetdata.data_vars) != set(slicedata.data_vars):
                 raise ValueError("targetdata and slicedata must have the same data_vars.")
             for var in targetdata.data_vars:
-                targetdata[var].loc[slcr] = ensure_numpy(slicedata[var])
+                targetdata[var].loc[slcr] = slicedata[var].to_numpy()
         case _:
             raise TypeError("targetdata and slicedata must be both xarray.DataArray or xarray.Dataset")
     return targetdata

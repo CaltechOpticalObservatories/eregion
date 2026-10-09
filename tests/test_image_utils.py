@@ -117,6 +117,24 @@ def test_ensure_dataarray_renames_unknown_2d_dataset_dims():
     assert out["data"].dims == ("y", "x")
 
 
+def test_ensure_dataarray_adds_missing_coords_and_keeps_existing():
+    ds = xr.Dataset({"data": (("a", "b"), np.zeros((4, 5)))}, coords={"b": np.arange(10, 15)})
+    out = ensure_dataarray(ds)
+
+    assert np.array_equal(out["y"].values, np.arange(4))
+    assert np.array_equal(out["x"].values, np.arange(10, 15))
+
+
+def test_set_slice_in_data_on_coordless_input_uses_label_slices():
+    target = ensure_dataarray(xr.DataArray(np.zeros((4, 5)), dims=("a", "b")))
+    slicedata = xr.DataArray(np.ones((2, 2)), dims=("y", "x"))
+
+    out = set_slice_in_data(slicedata, target, (slice(0, 2), slice(0, 2)))
+
+    assert np.all(out.values[0:2, 0:2] == 1.0)
+    assert out.values.sum() == 4.0
+
+
 def test_ensure_numpy_rejects_dataset():
     with pytest.raises(TypeError, match="data must be an xarray.DataArray, or numpy.ndarray"):
         ensure_numpy(make_dataset())
@@ -207,4 +225,3 @@ def test_set_slice_in_data_dataset_subregion():
 def test_set_slice_in_data_rejects_mixed_types():
     with pytest.raises(TypeError, match="must be both xarray.DataArray or xarray.Dataset"):
         set_slice_in_data(make_dataset(fill=1.0), make_dataset()["data"].copy(), (slice(0, 4), slice(0, 5)))
-

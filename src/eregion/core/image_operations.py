@@ -23,8 +23,6 @@ def median_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str
     stacked_images = np.ma.stack(images, axis=0)
     stats = do_statistics(data=stacked_images, which={'data': np.ma.median, 'std': np.ma.std, 'count': np.ma.count},
                           axis=0)
-    stats['data'] = stats['data'].filled(np.nan)
-    stats['std'] = stats['std'].filled(np.nan)
     return stats
 
 def mean_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
@@ -45,8 +43,6 @@ def mean_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str, 
     stacked_images = np.ma.stack(images, axis=0)
     stats = do_statistics(data=stacked_images, which={'data': np.ma.mean, 'std': np.ma.std, 'count': np.ma.count},
                           axis=0)
-    stats['data'] = stats['data'].filled(np.nan)
-    stats['std'] = stats['std'].filled(np.nan)
     return stats
 
 

@@ -47,7 +47,10 @@ class BasePreprocessingTask(LazyTask):
         image_list = images.images if isinstance(images, ImageBundle) else images
         batch_size = kwargs.get("batch_size", len(image_list))
         for batch in batched(image_list, batch_size):
-            results = Parallel(n_jobs=self.n_jobs)(delayed(self._process_single_image)(i) for i in batch)
+            # joblib memmaps large arrays read-only by default ('r'); copy-on-write ('c') lets workers set slices in
+            # place, copying only the touched pages instead of the whole image
+            results = Parallel(n_jobs=self.n_jobs, mmap_mode="c")(
+                delayed(self._process_single_image)(i) for i in batch)
             yield self.task_result(data=results)
 
     @wraps(lazy_run)
@@ -102,7 +105,7 @@ class BiasSubtraction(BasePreprocessingTask):
                         imslc = output.image_region
                         sub_output = self._subtract(slice_data(output.data, imslc),
                                                    slice_data(mb_output.data, imslc))
-                        img.set_data_slice(sub_output, imslc)
+                        output.set_data_in_parent(sub_output, slicer=imslc)
                     else:
                         raise ValueError(f"No image_region attribute found for Output '{output.id}' of DetImage {img.id}.")
                 else:
@@ -134,14 +137,18 @@ class BiasSubtraction(BasePreprocessingTask):
         return super().run(*args, **kwargs)
 
     @staticmethod
-    def _subtract(image: np.ndarray | xr.DataArray, master_bias: np.ndarray | xr.DataArray) -> np.ndarray:
+    def _subtract(image: np.ndarray | xr.DataArray, master_bias: np.ndarray | xr.DataArray
+                  ) -> np.ndarray | xr.DataArray:
         """
-        Convenience non-Prefect path for raw arrays.
+        Convenience non-task path for raw arrays.
         """
         if master_bias.shape != image.shape:
             raise ValueError(
                 f"Master bias array shape {master_bias.shape} does not match image shape {image.shape}.")
-        return ensure_numpy(image) - ensure_numpy(master_bias)
+        if type(image) == type(master_bias):
+            return image - master_bias
+        else:
+            return ensure_numpy(image) - ensure_numpy(master_bias)
 
     def __call__(self, image, master_bias):
         return self._subtract(image, master_bias)

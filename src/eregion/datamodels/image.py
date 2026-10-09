@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Any, Literal, Callable, Generic, TypeVar, Self, Mapping
+from typing import Optional, Any, Literal, Callable, Generic, TypeVar, Self, Mapping, Iterable
 from pydantic import Field, ConfigDict, field_serializer
 import numpy as np
 import pandas as pd
@@ -23,7 +23,7 @@ from eregion.utils import (
 )
 
 logger = configure_logger(__name__)
-
+TData = TypeVar("TData")
 
 ############################################### META CLASSES FOR DETIMAGE #############################################
 class DetectorProperties(Mappable):
@@ -126,7 +126,7 @@ class Output(Mappable):
         if self.masks:
             match mask_key:
                 case 'combined':
-                    return np.any(self.masks.to_array().to_numpy(), axis=0)
+                    return self.combined_mask
                 case k if k in self.masks:
                     return self.masks[k]
                 case 'all':
@@ -141,9 +141,9 @@ class Output(Mappable):
         mask = self.get_output_mask(mask_key)
         datarr = self.get_output_data(data_var)
         if mask:
-            return datarr.where(mask.to_numpy(), other=fill_value)
+            return datarr.where(~mask.to_numpy(), other=fill_value)
         else:
-            datarr
+            return datarr
 
     @property
     def data(self):
@@ -152,6 +152,15 @@ class Output(Mappable):
         DetImage.data is expected to be a xr.Dataset with a data_var named 'data'.
         """
         return slice_data(self.parent.data, self.output_slice)
+
+    @property
+    def combined_mask(self):
+        if self.masks:
+            combmask = np.any(self.masks.to_array().to_numpy(), axis=0)
+            return xr.DataArray(combmask, dims=self.masks.dims, coords=self.masks.coords)
+        else:
+            logger.error("No masks to combine.")
+            return None
 
     @property
     def image_region(self) -> dict[str, slice]:
@@ -172,12 +181,12 @@ class Output(Mappable):
         """
         imslc = self.image_region
         imdata = slice_data(self.parent.get_data(data_var), imslc)
+        immask = None
         if return_masks:
             mask = self.get_output_mask(mask_key)
-            immask = slice_data(mask, imslc) if mask else None
-            return imdata, immask
-        else:
-            return imdata, None
+            immask = slice_data(mask, imslc) if mask is not None else None
+
+        return imdata, immask
 
     def set_data_in_parent(self,
                            new_data: XRDATA,
@@ -192,8 +201,6 @@ class Output(Mappable):
         :param data_var: str or 'all'
             Name of the data variable in the DetImage.data (xr.Dataset) to update. If 'all', updates the entire dataset.
         """
-        if self.parent is None or getattr(self.parent, "data", None) is None:
-            raise ValueError("Attach this Output to a DetImage with valid data.")
         new_data = ensure_dataarray(new_data)
         # Assign new data to the appropriate slice in the parent DetImage
         slicer = {new_data.dims[i]: slc for i, slc in enumerate(self.output_slice)} if slicer is None else slicer
@@ -275,10 +282,6 @@ class Output(Mappable):
         if save is not None:
             ax.figure.savefig(save)
         return ax
-
-
-_TData = TypeVar("TData")
-
 
 class CCDOutput(Output):
     """
@@ -622,13 +625,11 @@ class DetImage:
             case ('all', _):
                 raise TypeError("When data_var is 'all', slicedata must be an xarray.Dataset.")
             case (_, xr.DataArray()):
-                data = set_slice_in_data(slicedata, self._data[data_var], slicer)
-                self._data[data_var] = data
+                self._data[data_var] = set_slice_in_data(slicedata, self._data[data_var], slicer)
             case (_, xr.Dataset()):
                 if data_var not in slicedata.data_vars:
                     raise ValueError(f"Data variable '{data_var}' not found in provided slicedata xr.Dataset.")
-                data = set_slice_in_data(slicedata[data_var], self._data[data_var], slicer)
-                self._data[data_var] = data
+                self._data[data_var] = set_slice_in_data(slicedata[data_var], self._data[data_var], slicer)
 
     @property
     def num_outputs(self) -> int:
@@ -701,9 +702,15 @@ class DetImage:
         self.masks = xr.Dataset(coords=self.data.coords)
         for out_id, output in self.outputs.items():
             if output.masks is not None:
-                # combine output mask dataset with maskset, output mask coords are a subset of maskset
+                # merge output mask dataset with masks, output mask coords are a subset of img masks
+                # Using fill_value=np.nan so the merge doesn't raise conflict error (compat="override" picks the first dataset's value so can't use that)
                 self.masks = self.masks.merge(
-                    output.masks, join="outer", fill_value=0.0, compat="no_conflicts")
+                    output.masks, join="outer", fill_value=np.nan, compat="no_conflicts")
+        # After masks are merged, replace NaNs with zeros (since this is an explicit masks array it should have 1/0 for mask/not-mask and Nan does not imply masked.
+        for dvar in self.masks.data_vars:
+            da = self.masks[dvar]
+            self.masks[dvar] = da.where(da.notnull(), other=False)
+
         if len(self.masks.data_vars) == 0:
             self.masks = None
             return False
@@ -720,25 +727,42 @@ class DetImage:
                 case 'all':
                     return self.masks
                 case 'combined':
-                    return np.any(self.masks.to_array().to_numpy(), axis=0)
+                    return self.combined_mask
                 case k if k in self.masks:
                     return self.masks[k]
                 case k:
                     logger.error(f"{k} is not present in the masks dataset. Available keys are {list(self.masks.data_vars)}")
                     return None
         else:
-            logger.error(f"No masks found in any of the outputs to build the full mask from.")
+            logger.warning(f"No masks found in any of the outputs to build the full mask from.")
+            return None
+
+    @property
+    def combined_mask(self):
+        if self._build_full_mask():
+            combmask = np.any(self.masks.to_array().to_numpy(), axis=0)
+            return xr.DataArray(combmask, dims=self.masks.dims, coords=self.masks.coords)
+        else:
+            logger.error("No masks to combine.")
             return None
 
     def get_masked_data(self, data_var: str = 'data',  mask_key: str = 'combined', fill_value = np.nan) -> xr.DataArray:
         mask = self.get_mask(mask_key)
         datarr: xr.DataArray = self.get_data(data_var)
         if mask is not None:
-            return datarr.where(mask.to_numpy(), other=fill_value)
+            return datarr.where(~mask.to_numpy(), other=fill_value)
         else:
             return datarr
 
-    def show(self, ax=None, save=None, with_mask=True, mask_key='combined', data_var='data', **imshow_kwargs):
+    def show(
+            self,
+            ax=None,
+            save=None,
+            with_mask=True,
+            mask_key='combined',
+            data_var='data',
+            **imshow_kwargs
+    ):
         """
         Plot the detector image data with optional mask overlay.
         :param ax: Matplotlib Axes object to plot on. If None, a new figure and axes are created.
@@ -751,21 +775,11 @@ class DetImage:
         """
         if self.data is None:
             raise ValueError("DetImage has no data to show.")
-    def show(
-        self,
-        ax=None,
-        save=None,
-        with_mask=True,
-        mask_key="sigma_clip_mask",
-        **imshow_kwargs,
-    ):
-        if self.data is None:
-            raise ValueError("DetImage has no data to show.")
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
 
         if with_mask:
-            data = self.get_masked_data(data_var, mask_key, fill_value=0)
+            data = self.get_masked_data(data_var, mask_key, fill_value=np.nan)
         else:
             data = self.get_data(data_var)
         im = data.plot.imshow(ax=ax, **imshow_kwargs)

@@ -107,18 +107,16 @@ class MasterCombine(Task):
             master_cal.meta['filename'] = ', '.join([img.meta['filename'] for img in imgs])
             master_cal.image_type.update({'type': f'master_{unique_id}'})
             # Combine calibration data
-            mask_key = kwargs.get('mask_key', 'sigma_clip_mask')
+            mask_key = kwargs.get('mask_key', 'combined')
             to_combine = []
             for img in imgs:
-                if img.masks is not None and mask_key in img.masks:
-                    mask = img.masks[mask_key].values
-                    masked_data = np.ma.masked_array(img.data.values, mask=mask)
-                    to_combine.append(masked_data)
-                else:
-                    to_combine.append(img.data.values)
+                masked_img = img.get_masked_data(mask_key=mask_key)
+                to_combine.append(masked_img.values)
+
             mcdict = self._create_mastercal(to_combine)
-            mcdataset = xr.Dataset(data_vars={key: xr.DataArray(coords=imgs[0].data.coords, dims=imgs[0].data.dims, data=val)
-                        for key, val in mcdict.items()})
+            mcdataset = xr.Dataset(
+                data_vars={key: xr.DataArray(coords=imgs[0].data.coords, dims=imgs[0].data.dims, data=val)
+                           for key, val in mcdict.items()})
             master_cal.set_data(mcdataset)
             master_cals.append(master_cal)
             self.logger.info(f'Created master calibration frame for det_id: {master_cal.id}, type: {master_cal.image_type}')
@@ -176,7 +174,7 @@ class MasterDark(MasterCombine):
     def __init__(self, name=None, **kwargs):
         super().__init__(name=name, **kwargs)
 
-    def run(self, images: ImageBundle | list, add_to: CalibrationResult = None, mask_key='sigma_clip_mask', **kwargs) -> CalibrationResult:
+    def run(self, images: ImageBundle | list, add_to: CalibrationResult = None, mask_key='combined', **kwargs) -> CalibrationResult:
         """
         Generate a master dark frame from a list of dark frames, calculate statistics for each output, and optionally combine it with an existing CalibrationResult.
         :param images: list/bundle of images to combine
@@ -203,11 +201,11 @@ class MasterDark(MasterCombine):
         calres = add_to.combine(calres) if add_to is not None else calres
         return calres
 
-    def do_stats_per_output(self, output, mask_key='sigma_clip_mask'):
+    def do_stats_per_output(self, output, mask_key='combined'):
         stats = {"output": output.id}
-        imarr, immask = output.get_image_region(return_masks=True)
-        if immask is not None and mask_key in immask:
-            mask = immask[mask_key].values
+        imarr, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
+        if immask is not None:
+            mask = immask.values
             stats["n_masked"] = int(np.count_nonzero(mask))
         else:
             mask = np.zeros_like(imarr)
