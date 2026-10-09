@@ -1,16 +1,18 @@
 # Detector Characterization Framework
 
 A modular Python framework for processing and analysis of imaging detector data (CCD/CMOS).  
-Supports direct task usage in scripts and orchestration in config‑driven DAG workflows.
+Eregion provides the building blocks — tasks, data models, and core algorithms — and you compose
+them into whatever workflow you need, in a script, a notebook, or your own orchestrator.
 
 ---
 
 ## Key Features
 
 - Modular tasks — preprocessing, calibration, analysis, and image generation.
-- Dual usage — call tasks directly in scripts or chain them in a pipeline.
+- Bring your own orchestration — tasks are plain Python objects you call directly, so they drop
+  into a script, a notebook, or any workflow engine you already run.
 - Reusable image ops — shared combine/stack core functionalities in `core`.
-- Config‑driven orchestration — Prefect‑ready flows kept in `pipeline`.
+- Traceable results — every task returns a typed `TaskResult` carrying its data and provenance.
 - Optional lazy execution — support for generator‑style tasks.
 
 ---
@@ -20,18 +22,16 @@ Supports direct task usage in scripts and orchestration in config‑driven DAG w
 ```text
 src/eregion/
 ├── cli/                       # `eregion` command-line interface
-│   ├── commands/              # one module per subcommand (run, validate, ...)
+│   ├── commands/              # one module per subcommand (validate, ...)
 │   └── main.py                # Typer app / entry point
 ├── configs/                  # YAML configuration files and code
 │   ├── detectors/            # YAML configs for different detectors (e.g., DEIMOS, LRIS)
-│   ├── pipeline_flows/       # YAML configs defining flows for different processing pipelines
 │   └── config.py             # Config loading and validation classes/functions
 ├── core/                     # Reusable core algorithms
 │   └── image_operations.py   # image combine/stack ops
 ├── datamodels/
 │   ├── image.py              # Flexible DetImage data class to hold image data, outputs and metadata
-├── pipeline/                 # Engine for YAML-defined DAG workflows, uses Prefect to wrap tasks and flows
-│   └── engine.py             
+│   └── results.py            # TaskResult classes wrapping task outputs with their provenance
 ├── tasks/                    # Modular processing/analysis tasks with defined inputs/outputs
 │   ├── analysis.py           # analysis tasks (e.g., ptc, linearity)
 │   ├── calibration.py        # calibration tasks (e.g., masterbias, masterflat)
@@ -51,34 +51,75 @@ tests/                         # unit tests
 All internal code imports the package as `eregion.<subpackage>` (e.g. `from eregion.utils import configure_logger`), and installed usage is `import eregion`, `from eregion.tasks import ...`, etc.
 
 ### Usage
-Scripted: import task classes from tasks/* and call run(...) or __call__(...).
 
-Orchestrated: define a pipeline flow YAML (see `configs/pipeline_flows/example.yaml`) describing a
-DAG of tasks, then run it either from Python:
+Import task classes from `eregion.tasks`, call `run(...)` (or `__call__(...)` for the raw-array
+convenience path), and feed each result into the next task. You own the control flow, so ordering,
+branching, parallelism, and retries are whatever your script or orchestrator does:
 
 ```python
-from eregion.pipeline import PipelineEngine
+from eregion.tasks import ImageCreator
+from eregion.tasks.calibration import MasterBias
+from eregion.tasks.preprocessing import BiasSubtraction, ScanSubtraction
 
-engine = PipelineEngine("path/to/pipeline.yaml")
-engine.run()
+detector_config = "src/eregion/configs/detectors/deimos_singledet.yaml"
+
+# Build a master bias out of the bias frames
+bias_res = ImageCreator(detector_config=detector_config).run(
+    input_source="/path/to/data/*_bias_*.fits",
+)
+oscan_sub = ScanSubtraction(which_scan="serial_overscan", method="median_by_axis")
+bias_res = oscan_sub.run(images=bias_res.data)
+master_bias = MasterBias(method="median").run(images=bias_res.data).master_bias
+
+# Apply it to the science frames
+flat_res = ImageCreator(detector_config=detector_config).run(
+    input_source="/path/to/data/*_flat_*.fits",
+)
+flat_res = oscan_sub.run(images=flat_res.data)
+corrected = BiasSubtraction(only_image_area=True).run(
+    images=flat_res.data, master_bias=master_bias,
+)
 ```
 
-or from the command line, without writing a notebook/script for each run:
+Each task returns a `TaskResult` (see `datamodels/results.py`) holding the output data alongside
+the parameters and upstream references used to produce it, so provenance survives however you
+wire the steps together.
+
+For large or streaming datasets, tasks that subclass `LazyTask` also expose `lazy_run(...)`, which
+yields results batch by batch instead of materializing everything at once:
+
+```python
+creator = ImageCreator(detector_config=detector_config, max_batch_size=10)
+for batch in creator.lazy_run(input_source="/path/to/data/*_flat_*.fits"):
+    batch = oscan_sub.run(images=batch.data)
+    batch = BiasSubtraction(only_image_area=True).run(
+        images=batch.data, master_bias=master_bias,
+    )
+```
+
+See `playground/` for complete, runnable end-to-end examples.
+
+### Command line
+
+The `eregion` CLI covers the parts of the framework that do not need a workflow, so a detector
+config can be sanity-checked without writing a script:
 
 ```bash
-  eregion validate path/to/pipeline.yaml   # build the DAG and print the execution plan, no tasks run
-  eregion run path/to/pipeline.yaml        # build the DAG and execute it end-to-end
+  eregion validate path/to/detector.yaml   # load the config and print the detector it describes
 
   # Override ${...} placeholders in the config, and allow ${VAR} to fall back to env vars
-  eregion run path/to/pipeline.yaml --var data_dir=/data/raw --env
+  eregion validate path/to/detector.yaml --var width=2048 --env
+
+  eregion --version
 ```
 
-Run `eregion --help` for the full list of commands and options. The CLI is intentionally minimal
-for now (`run`/`validate`); new subcommands live as one module per command under
-`src/eregion/cli/commands/` so the surface can grow without touching existing commands.
+Run `eregion --help` for the full list of commands and options. The CLI is intentionally minimal;
+new subcommands live as one module per command under `src/eregion/cli/commands/` so the surface
+can grow without touching existing commands. Note that it does not execute workflows — composing
+and running tasks is done in Python, as above.
 
 ### Status
-Early development. More tasks and flows to be added.
+Early development. More tasks to be added.
 
 ## Installation
 

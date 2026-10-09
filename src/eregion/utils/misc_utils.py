@@ -25,7 +25,7 @@ def load_class(path: str, default_module: Optional[ModuleType] = None) -> Type:
     Dynamically load a class from a given path. Has to be in eregion package, or importable from the current environment.
     :param path: str
         The full path to the class, e.g. "module.submodule.ClassName". Paths to eregion's own subpackages
-        (e.g. "tasks.imagegen.ImageCreator", "datamodels.CCDOutput") may be given without the "eregion." prefix, for backwards compatibility with pipeline/detector config files that predate eregion's package structure.        Alternatively, if default_module is also provided, the name of a class in that module
+        (e.g. "tasks.imagegen.ImageCreator", "datamodels.CCDOutput") may be given without the "eregion." prefix, for backwards compatibility with detector config files that predate eregion's package structure.        Alternatively, if default_module is also provided, the name of a class in that module
 
     :param default_module: Optional[ModuleType]
         If provided, the class will first be loaded from this module. If it is not found in that module, then the full search will be performed
