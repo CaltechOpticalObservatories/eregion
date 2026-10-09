@@ -1,43 +1,55 @@
 ### Collection of utility functions for image processing tasks.
-from typing import Callable
+from collections.abc import Sequence
 import numpy as np
 from astropy.stats import sigma_clip
+from eregion.core.image_stats import do_statistics
 
-def median_combine(images: list[np.ndarray]) -> np.ndarray:
+
+def median_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
     """
-    Combine a list of images by computing the median across them.
+    Combine a list of images by computing the median across them. If a masked array is passed, median is computed
+    only on the unmasked pixels.
 
     Parameters
     ----------
-    images : list of np.ndarray
+    images : list of np.ndarray or np.ma.MaskedArray
         List of 2D numpy arrays representing images to be combined.
 
     Returns
     -------
-    np.ndarray
-        A 2D numpy array representing the median-combined image.
+    dict
+        A dictionary containing the median-combined image, standard deviation, and count of pixels used in the combination.
     """
-    stacked_images = np.stack(images, axis=0)
-    return np.median(stacked_images, axis=0)
+    stacked_images = np.ma.stack(images, axis=0)
+    stats = do_statistics(data=stacked_images, which={'data': np.ma.median, 'std': np.ma.std, 'count': np.ma.count},
+                          axis=0)
+    return stats
 
-def mean_combine(images: list[np.ndarray]) -> np.ndarray:
+def mean_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str, np.ndarray]:
     """
-    Combine a list of images by computing the mean across them.
+    Combine a list of images by computing the mean across them. If a masked array is passed, mean is computed only on
+    the unmasked pixels.
 
     Parameters
     ----------
-    images : list of np.ndarray
+    images : list of np.ndarray or np.ma.MaskedArray
         List of 2D numpy arrays representing images to be combined.
 
     Returns
     -------
-    np.ndarray
-        A 2D numpy array representing the mean-combined image.
+    dict
+        A dictionary containing the mean-combined image, standard deviation, and count of pixels used in the combination.
     """
-    stacked_images = np.stack(images, axis=0)
-    return np.mean(stacked_images, axis=0)
+    stacked_images = np.ma.stack(images, axis=0)
+    stats = do_statistics(data=stacked_images, which={'data': np.ma.mean, 'std': np.ma.std, 'count': np.ma.count},
+                          axis=0)
+    return stats
 
-def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray, sigma: float, axis: int | None=None, **kwargs) -> np.ma.MaskedArray:
+
+def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray,
+                     sigma: float,
+                     axis: int | None=None,
+                     **kwargs) -> np.ma.MaskedArray:
     """
     Apply sigma clipping (astropy.stats.sigma_clip) to an image.
 
@@ -86,7 +98,7 @@ def flip_and_rotate(image: np.ndarray, angle: float, flip_x: bool=False, flip_y:
     return image
 
 
-def do_digital_binning(data: np.ndarray, binsizes: list[int], binaxis: int = 0) -> np.ndarray:
+def do_digital_binning(data: np.ndarray, binsizes: Sequence[int], binaxis: int = 0) -> np.ndarray:
     """
     Perform digital binning on the provided data. Assumes that readout is towards the 0th index of the binning axis,
     i.e. the first row of the data is the first row read out from the CCD. If that's not true, pre-flip your data in

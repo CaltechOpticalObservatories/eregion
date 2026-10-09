@@ -98,7 +98,7 @@ class PTC(LazyTask):
         images = images if isinstance(images, ImageBundle) else ImageBundle(images)
         groups = images.groupby(by=self.groupby_keys, sort=False)
 
-        results = Parallel(n_jobs=self.n_jobs)(
+        results = Parallel(n_jobs=self.n_jobs, mmap_mode="c")(
                     delayed(self._process_flat_group)(ImageBundle.from_dataframe(group)) for unique_key, group in groups
         )
 
@@ -116,7 +116,7 @@ class PTC(LazyTask):
         if len(flats) == 0:
             return [], []
 
-        mask_key = self.meta.get("mask_key", "sigma_clip_mask")
+        mask_key = self.meta.get("mask_key", "combined")
         unique_info = {key: flats.list[key][0] for key in self.groupby_keys}
         exptime = unique_info[self.exptime_key]
         det_id = unique_info['det_id']
@@ -161,24 +161,27 @@ class PTC(LazyTask):
                     ma_diffdat = sigma_clip_image(slice_data(diffdat, imslc).values, **sigma_clip_args)
                     output.set_data_in_parent(ma_diffdat.filled(np.nan), imslc) # set nan filled data in parent
                     diffmask.loc[decrease_slicer_stop_index(imslc)] |= ma_diffdat.mask # set in diff mask
-                output.masks = diffmask.to_dataset(name='sigma_clip_mask')  # set in output attr
+                if output.masks:
+                    output.masks['sigma_clip_mask'] = diffmask
+                else:
+                    output.masks = diffmask.to_dataset(name='sigma_clip_mask')  # set in output attr
 
                 diffstat = (unique_info | # Add unique keys identifying flat group
                            {"output": out_id, "diff": True, "seqnum":'-'.join([str(i) for i in diffpairidx])} |
-                           self.do_stats_per_output(output, mask_key='sigma_clip_mask'))  # Add statistics for this output
+                           self.do_stats_per_output(output, mask_key=mask_key))  # Add statistics for this output
                 stats.append(diffstat)
             diff_images.append(diff_img)
 
         return stats, diff_images
 
-    def do_stats_per_output(self, output: Output, mask_key: str = 'sigma_clip_mask'):
+    def do_stats_per_output(self, output: Output, mask_key: str = 'combined'):
         stats = {}
 
-        imarr, immask = output.get_image_region(return_masks=True)
+        imarr, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
 
         # basic and extra stats on masked image region, should work for all type of outputs
-        if immask is not None and mask_key in immask:
-            mask = immask[mask_key].values
+        if immask is not None:
+            mask = immask.values
             stats["n_masked"] = int(np.count_nonzero(mask))
         else:
             mask = np.zeros_like(imarr)

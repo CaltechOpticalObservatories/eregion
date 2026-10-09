@@ -276,7 +276,7 @@ class ImageCreator(LazyTask):
         cfg = self.det_config.config
         ## use joblib to parallelize building image objects
         images = []
-        results = Parallel(n_jobs=self.n_jobs)(
+        results = Parallel(n_jobs=self.n_jobs, mmap_mode="c")(
             delayed(self._build_single_image_object)(
                 obj,
                 cfg["detector_output_class"],

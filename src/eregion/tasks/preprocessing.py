@@ -7,7 +7,7 @@ from joblib import Parallel, delayed
 from itertools import batched
 from functools import wraps
 
-from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
+from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index, set_slice_in_data, ensure_dataarray
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
 from eregion.core.image_operations import sigma_clip_image
 from eregion.core.image_stats import do_statistics, STATFUNCS
@@ -47,7 +47,10 @@ class BasePreprocessingTask(LazyTask):
         image_list = images.images if isinstance(images, ImageBundle) else images
         batch_size = kwargs.get("batch_size", len(image_list))
         for batch in batched(image_list, batch_size):
-            results = Parallel(n_jobs=self.n_jobs)(delayed(self._process_single_image)(i) for i in batch)
+            # joblib memmaps large arrays read-only by default ('r'); copy-on-write ('c') lets workers set slices in
+            # place, copying only the touched pages instead of the whole image
+            results = Parallel(n_jobs=self.n_jobs, mmap_mode="c")(
+                delayed(self._process_single_image)(i) for i in batch)
             yield self.task_result(data=results)
 
     @wraps(lazy_run)
@@ -102,7 +105,7 @@ class BiasSubtraction(BasePreprocessingTask):
                         imslc = output.image_region
                         sub_output = self._subtract(slice_data(output.data, imslc),
                                                    slice_data(mb_output.data, imslc))
-                        img.set_data_slice(sub_output, imslc)
+                        output.set_data_in_parent(sub_output, slicer=imslc)
                     else:
                         raise ValueError(f"No image_region attribute found for Output '{output.id}' of DetImage {img.id}.")
                 else:
@@ -134,14 +137,18 @@ class BiasSubtraction(BasePreprocessingTask):
         return super().run(*args, **kwargs)
 
     @staticmethod
-    def _subtract(image: np.ndarray | xr.DataArray, master_bias: np.ndarray | xr.DataArray) -> np.ndarray:
+    def _subtract(image: np.ndarray | xr.DataArray, master_bias: np.ndarray | xr.DataArray
+                  ) -> np.ndarray | xr.DataArray:
         """
-        Convenience non-Prefect path for raw arrays.
+        Convenience non-task path for raw arrays.
         """
         if master_bias.shape != image.shape:
             raise ValueError(
                 f"Master bias array shape {master_bias.shape} does not match image shape {image.shape}.")
-        return ensure_numpy(image) - ensure_numpy(master_bias)
+        if type(image) == type(master_bias):
+            return image - master_bias
+        else:
+            return ensure_numpy(image) - ensure_numpy(master_bias)
 
     def __call__(self, image, master_bias):
         return self._subtract(image, master_bias)
@@ -276,7 +283,7 @@ class SigmaClipMasking(BasePreprocessingTask):
         """
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self.method(output)
-        img.image_type.update({"bad_pixel_masked": True})
+        img.image_type.update({"bad_pixel_masked": img._build_full_mask()})
         return img
 
     @property
@@ -304,26 +311,23 @@ class SigmaClipMasking(BasePreprocessingTask):
         sigma_clip_args_overscan = deepcopy(self.sigma_clip_args)
         sigma_clip_args_overscan.pop("grow")
 
+        output_data = output.data
+        combined_mask = xr.zeros_like(output_data).astype(bool)
+
         # clip serial overscan
-        soc_slcs = decrease_slicer_stop_index({output.serial_axis: output.serial_overscan})
-        serial_overscan_data = output.get_overscan("serial", corner=True).values
-        serial_overscan_clipped = sigma_clip_image(serial_overscan_data, **sigma_clip_args_overscan)
+        serial_overscan_data = slice_data(output_data, {output.serial_axis: output.serial_overscan})
+        serial_overscan_clipped = sigma_clip_image(serial_overscan_data.values, **sigma_clip_args_overscan)
+        combined_mask.loc[serial_overscan_data.coords] = serial_overscan_clipped.mask
 
         # clip parallel overscan
-        poc_slcs = decrease_slicer_stop_index({output.parallel_axis: output.parallel_overscan})
-        parallel_overscan_data = output.get_overscan("parallel", corner=True).values
-        parallel_overscan_clipped = sigma_clip_image(parallel_overscan_data, **sigma_clip_args_overscan)
+        parallel_overscan_data = slice_data(output_data, {output.parallel_axis: output.parallel_overscan})
+        parallel_overscan_clipped = sigma_clip_image(parallel_overscan_data.values, **sigma_clip_args_overscan)
+        combined_mask.loc[parallel_overscan_data.coords] = parallel_overscan_clipped.mask
 
         # clip image data region
-        im_slcs = decrease_slicer_stop_index(output.image_region)
-        image_data, _ = output.get_image_region()
+        image_data = slice_data(output_data,  output.image_region)
         image_data_clipped = sigma_clip_image(image_data.values, **self.sigma_clip_args)
-
-        # combine masks
-        combined_mask = xr.zeros_like(output.data).astype(bool)
-        combined_mask.sel(**im_slcs).values |= image_data_clipped.mask
-        combined_mask.sel(**soc_slcs).values |= serial_overscan_clipped.mask
-        combined_mask.sel(**poc_slcs).values |= parallel_overscan_clipped.mask
+        combined_mask.loc[image_data.coords] = image_data_clipped.mask
 
         if output.masks is None:
             output.masks = combined_mask.to_dataset(name="sigma_clip_mask")

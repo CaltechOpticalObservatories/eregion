@@ -42,7 +42,7 @@ class TDIExtractPTC(LazyTask):
         groups = images.groupby(by=self.groupby_keys, sort=False)
 
         # TODO: implement parallel or not needed? Wait for new Task design and don't bother?
-        results = Parallel(n_jobs=self.n_jobs)(
+        results = Parallel(n_jobs=self.n_jobs, mmap_mode="c")(
             delayed(self._process_group)(ImageBundle.from_dataframe(g))
             for k, g in groups
         )
@@ -202,22 +202,15 @@ class TDIExtractPTC(LazyTask):
                 f"can only do TDI stats specifically on CCD Ouptuts. The type of output passed was {type(output)}"
             )
 
-        im, masks = output.get_image_region(return_masks=True)
+        im, mask = output.get_image_region(return_masks=True, mask_key="combined")
         stats = dict()
 
-        # TODO: consider convenience function in DetImage that combines masks properly
-        if masks is not None:
-            totmask = xarray.zeros_like(masks[0])
-            for mask in masks:
-                totmask |= mask
-        else:
-            totmask = None
-        ma = np.ma.MaskedArray(data=im, mask=totmask)
+        ma = np.ma.MaskedArray(data=im.values, mask=mask.values)
         stats |= do_statistics(ma, axis=output.serial_axint, which=_TDISTATS)
 
-        if totmask is not None:
+        if mask is not None:
             stats["n_masked"] = int(
-                np.sum(totmask, axis=output.serial_axint, dtype=np.uint32)
+                np.sum(mask.values, axis=output.serial_axint, dtype=np.uint32)
             )
         else:
             axslc = output.image_region[output.parallel_axis]
