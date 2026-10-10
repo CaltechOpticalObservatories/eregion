@@ -547,9 +547,9 @@ class DetImage:
         return None
 
     def build_full_mask(self):
-        if self.masks is not None:
-            return True
-        self.masks = xr.Dataset(coords=self.data.coords)
+        if self.masks is None:
+            self.masks = xr.Dataset(coords=self.data.coords)
+
         for out_id, output in self.outputs.items():
             if output.masks is not None:
                 # combine output mask dataset with maskset, output mask coords are a subset of maskset
@@ -557,6 +557,7 @@ class DetImage:
                     output.masks, join="outer", fill_value=np.nan, compat="no_conflicts"
                 )
         if len(self.masks.data_vars) == 0:
+            self.masks = None
             return False
         return True
 

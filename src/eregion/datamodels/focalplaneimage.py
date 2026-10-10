@@ -76,9 +76,8 @@ class FocalPlaneImage:
         elif pixsize != self.pixel_size:
             raise ValueError("All DetImage objects must have the same pixel_size for focal-plane assembly.")
 
-        # check that masks have been built
-        if det_image.masks is None:
-            maskbuilt = det_image.build_full_mask()
+        # verify that all masks have been built
+        det_image.build_full_mask()
 
     def construct_focal_plane_image(self):
         if len(self.det_images) == 0:

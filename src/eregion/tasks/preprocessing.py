@@ -7,9 +7,9 @@ from joblib import Parallel, delayed
 from itertools import batched
 from functools import wraps
 
-from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
+from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index, ensure_dataarray
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
-from eregion.core.image_operations import sigma_clip_image
+from eregion.core.image_operations import sigma_clip_image, find_vignetted_region
 from eregion.core.image_stats import do_statistics, STATFUNCS
 from eregion.tasks import LazyTask, ImageResult
 
@@ -230,7 +230,8 @@ class ScanSubtraction(BasePreprocessingTask):
         }
 
 
-########### Cosmic Ray/Bad Pixel Masking ###########
+############################ Bad pixel Masking ###################################
+
 class SigmaClipMasking(BasePreprocessingTask):
     task_result = ImageResult
 
@@ -338,8 +339,9 @@ class SigmaClipMasking(BasePreprocessingTask):
         """
         Apply sigma clipping to a single output to create a mask. Masks are saved as attributes of the output for later use.
         """
-        clipped = sigma_clip_image(output.data.values, **self.sigma_clip_args)
-        mask = clipped.mask
+        data = output.data
+        clipped = sigma_clip_image(data.values, **self.sigma_clip_args)
+        mask = xr.DataArray(data=clipped.mask, coords=data.coords, dims=data.dims)
 
         if output.masks is None:
             output.masks = mask.to_dataset(name="sigma_clip_mask")
@@ -351,3 +353,61 @@ class SigmaClipMasking(BasePreprocessingTask):
         return output
 
 
+class VignetteMasking(BasePreprocessingTask):
+    task_result = ImageResult
+
+    def __init__(self,
+                 name: Optional[str] = "vignette_masking",
+                 vignette_args: Optional[dict[str, Any]] = None,
+                 **kwargs
+    ):
+        """
+        Create a vignetting mask per output from an illuminated (e.g. flat), bias/overscan subtracted image.
+        Only the image region of each output is searched, prescan/overscan pixels are never masked.
+        Masks are saved in output.masks["vignette_mask"] for later use.
+
+        :param name: Optional[str]
+        :param vignette_args: Optional[dict[str, Any]]
+            Arguments to pass to eregion.core.image_operations.find_vignetted_region, e.g. threshold, smooth_size,
+            reference_percentile, morph_radius, min_area, edge_connected.
+        """
+        super().__init__(name=name, **kwargs)
+        self.vignette_args = dict(vignette_args or {})
+
+    def _process_single_image(self, img: DetImage) -> DetImage:
+        """
+        Process a single DetImage by finding vignetted regions in each output's image region.
+        :param img: DetImage
+            The image to be processed.
+        :return: DetImage
+            The processed image with updated masks.
+        """
+        if not any(v for k, v in img.image_type.items() if str(k).endswith("_subtracted")):
+            self.logger.warning(f"DetImage {img.id} is not flagged as bias/scan subtracted. Vignetting threshold is "
+                                f"relative to the illumination level and assumes a zero-level corrected image.")
+        for out_id, output in img.outputs.items():
+            img.outputs[out_id] = self._mask_output(output)
+        img.image_type.update({"vignette_masked": True})
+        return img
+
+    def _mask_output(self, output: Output) -> Output:
+        """
+        Find vignetted region in the image region of a single output and save it in output.masks["vignette_mask"].
+        """
+        image_data, _ = output.get_image_region()
+        vignette_mask = find_vignetted_region(image_data.values, **self.vignette_args)
+
+        im_slcs = decrease_slicer_stop_index(output.image_region)
+        full_mask = xr.zeros_like(output.data).astype(bool)
+        full_mask.sel(**im_slcs).values[...] = vignette_mask
+
+        if output.masks is None:
+            output.masks = full_mask.to_dataset(name="vignette_mask")
+        elif "vignette_mask" in output.masks:
+            output.masks["vignette_mask"] = (output.masks["vignette_mask"] | full_mask)
+        else:
+            output.masks["vignette_mask"] = full_mask
+        return output
+
+    # def __call__(self, image: np.ndarray) -> np.ndarray:
+    #     return find_vignetted_region(ensure_numpy(image), **self.vignette_args)

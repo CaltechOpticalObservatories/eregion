@@ -2,6 +2,7 @@
 from typing import Callable
 import numpy as np
 from astropy.stats import sigma_clip
+from scipy import ndimage
 
 def median_combine(images: list[np.ndarray]) -> np.ndarray:
     """
@@ -59,6 +60,89 @@ def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray, sigma: float, axis: 
     """
     masked = sigma_clip(image, sigma=sigma, axis=axis, **kwargs)
     return masked
+
+def _disk_structure(radius: int) -> np.ndarray:
+    """
+    Boolean disk-shaped structuring element for binary morphology.
+    :param radius: disk radius in pixels
+    :return: 2D boolean array of shape (2*radius+1, 2*radius+1)
+    """
+    yy, xx = np.ogrid[-radius:radius + 1, -radius:radius + 1]
+    return (yy ** 2 + xx ** 2) <= radius ** 2
+
+
+def find_vignetted_region(
+        image: np.ndarray,
+        threshold: float = 0.8,
+        smooth_size: int = 15,
+        reference_percentile: float = 90.0,
+        morph_radius: int = 5,
+        min_area: int = 100,
+        edge_connected: bool = True,
+) -> np.ndarray:
+    """
+    Find vignetted (under-illuminated) regions in an illuminated, zero-level corrected (bias/overscan subtracted) image.
+    Pixels whose median-smoothed value is below threshold * reference level are flagged, where the reference level is
+    a high percentile of the image (the fully illuminated level). Mask borders are smoothed with binary opening, closing
+    and hole filling using a disk structuring element.
+
+    :param image: 2D numpy array of the illuminated image region (no prescan/overscan).
+    :param threshold: fraction of the reference level below which a pixel is vignetted. Must be in (0, 1).
+    :param smooth_size: median filter size used to suppress noise, cosmics and bad pixels before thresholding.
+    :param reference_percentile: percentile of finite pixels used as the fully illuminated reference level.
+    :param morph_radius: radius in pixels of the disk used for opening/closing. 0 disables opening/closing.
+    :param min_area: connected regions with fewer pixels than this are dropped.
+    :param edge_connected: if True, keep only regions touching the image border (vignetting comes in from the edges).
+    :return: 2D boolean array, True where vignetted.
+    """
+    image = np.asarray(image)
+    if image.ndim != 2:
+        raise ValueError(f"image must be 2D, got {image.ndim}D.")
+    if not 0 < threshold < 1:
+        raise ValueError(f"threshold must be in (0, 1), got {threshold}.")
+    if not 0 < reference_percentile <= 100:
+        raise ValueError(f"reference_percentile must be in (0, 100], got {reference_percentile}.")
+    if smooth_size < 1:
+        raise ValueError(f"smooth_size must be >= 1, got {smooth_size}.")
+    if morph_radius < 0:
+        raise ValueError(f"morph_radius must be >= 0, got {morph_radius}.")
+    if min_area < 0:
+        raise ValueError(f"min_area must be >= 0, got {min_area}.")
+
+    finite = np.isfinite(image)
+    if not finite.any():
+        raise ValueError("image has no finite pixels.")
+    reference = np.percentile(image[finite], reference_percentile)
+    if reference <= 0:
+        raise ValueError(f"Reference illumination level is {reference} (<= 0). "
+                         f"Input must be an illuminated, bias/overscan subtracted image.")
+
+    # non-finite pixels are set to the reference level so they are never flagged
+    filled = np.where(finite, image, reference)
+    smoothed = ndimage.median_filter(filled, size=smooth_size, mode="nearest")
+    mask = smoothed < threshold * reference
+
+    if morph_radius > 0:
+        # pad by edge replication so regions touching the border are not eroded by the array boundary
+        structure = _disk_structure(morph_radius)
+        padded = np.pad(mask, morph_radius, mode="edge")
+        padded = ndimage.binary_opening(padded, structure=structure)
+        padded = ndimage.binary_closing(padded, structure=structure)
+        mask = padded[morph_radius:-morph_radius, morph_radius:-morph_radius]
+    mask = ndimage.binary_fill_holes(mask)
+
+    labels, nlabels = ndimage.label(mask)
+    if nlabels == 0:
+        return mask
+    areas = np.bincount(labels.ravel(), minlength=nlabels + 1)
+    keep = areas >= min_area
+    if edge_connected:
+        on_edge = np.zeros(nlabels + 1, dtype=bool)
+        on_edge[np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))] = True
+        keep &= on_edge
+    keep[0] = False  # background label
+    return keep[labels]
+
 
 def flip_and_rotate(image: np.ndarray, angle: float, flip_x: bool=False, flip_y: bool=False) -> np.ndarray:
     """

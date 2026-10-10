@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pytest
 
-from eregion.core.image_operations import do_digital_binning
+from eregion.core.image_operations import do_digital_binning, find_vignetted_region
 
 
 def test_do_digital_binning_sums_correctly_default_axis():
@@ -110,3 +110,57 @@ def test_do_digital_binning_performance_on_large_image():
 
     assert binned.shape == data.shape
     assert elapsed < 2.0, f"do_digital_binning took too long: {elapsed:.3f}s for {len(binsizes)} bins"
+
+
+def _vignetted_flat(shape=(200, 200), seed=0):
+    rng = np.random.default_rng(seed)
+    yy, xx = np.indices(shape)
+    flat = 1000.0 + rng.normal(0, 10, shape)
+    # dark corner: illumination falls off with distance inside a 60 px radius around (0, 0)
+    r = np.hypot(yy, xx)
+    flat[r < 60] *= 0.3 + 0.7 * (r[r < 60] / 60) ** 2
+    # hot/cold pixels which must not create mask islands
+    flat[100, 100] = 0.0
+    flat[150, 50] = 1e5
+    return flat
+
+
+def test_find_vignetted_region_masks_corner_not_center():
+    mask = find_vignetted_region(_vignetted_flat())
+    assert mask.dtype == bool and mask.shape == (200, 200)
+    assert mask[:20, :20].all()
+    assert not mask[80:, 80:].any()
+    assert not mask[100, 100]
+
+
+def test_find_vignetted_region_edge_connected_drops_interior_blob():
+    flat = _vignetted_flat()
+    yy, xx = np.indices(flat.shape)
+    blob = np.hypot(yy - 120, xx - 120) < 15
+    flat[blob] *= 0.2
+    assert not find_vignetted_region(flat, edge_connected=True)[blob].any()
+    assert find_vignetted_region(flat, edge_connected=False)[120, 120]
+
+
+def test_find_vignetted_region_ignores_nonfinite():
+    flat = _vignetted_flat()
+    flat[150:160, 150:160] = np.nan
+    assert not find_vignetted_region(flat)[150:160, 150:160].any()
+
+
+@pytest.mark.parametrize(
+    "image, kwargs",
+    [
+        (np.ones(10), {}),
+        (np.ones((10, 10)), {"threshold": 1.5}),
+        (np.ones((10, 10)), {"reference_percentile": 0}),
+        (np.ones((10, 10)), {"smooth_size": 0}),
+        (np.ones((10, 10)), {"morph_radius": -1}),
+        (np.ones((10, 10)), {"min_area": -1}),
+        (np.full((10, 10), np.nan), {}),
+        (np.zeros((10, 10)), {}),
+    ],
+)
+def test_find_vignetted_region_bad_input_raises(image, kwargs):
+    with pytest.raises(ValueError):
+        find_vignetted_region(image, **kwargs)
