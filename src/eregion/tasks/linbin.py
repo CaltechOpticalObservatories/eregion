@@ -7,18 +7,23 @@ Linearity analysis following the method in:
 
 """
 from functools import wraps
-
-from eregion.tasks import LazyTask
-from eregion.datamodels import TaskResult, ImageBundle, DetImage, CCDOutput
-from eregion.core.image_operations import do_digital_binning
-from eregion.core.image_stats import do_statistics, STATFUNCS
-from eregion.utils import slice_data, decrease_slicer_stop_index, save_dataframe_to_fits, load_dataframe_from_fits
-
 import os
 from pydantic import Field
 from typing import Callable, Generator, Literal
 import numpy as np
 import pandas as pd
+
+from eregion.tasks import LazyTask
+from eregion.datamodels import TaskResult, ImageBundle, DetImage, CCDOutput
+from eregion.core.image_operations import do_digital_binning
+from eregion.core.image_stats import do_statistics, STATFUNCS
+from eregion.utils import (
+    slice_data,
+    save_dataframe_to_fits,
+    load_dataframe_from_fits,
+    set_slice_in_data,
+    ensure_dataarray
+)
 
 class LinBinResult(TaskResult):
     stats: pd.DataFrame = Field(default_factory=pd.DataFrame)
@@ -138,7 +143,7 @@ class LinBin(LazyTask):
         if not all(isinstance(output, CCDOutput) for output in img.outputs.values()):
             raise ValueError("Outputs must be of type CCDOutput")
 
-        mask_key = self.meta.get("mask_key", "sigma_clip_mask")
+        mask_key = self.meta.get("mask_key", "combined")
 
         for output in img.outputs.values():
             binaxint = getattr(output, f"{self.binaxis}_axint")
@@ -148,7 +153,8 @@ class LinBin(LazyTask):
             imslc[getattr(output, otheraxis)] = output.output_slice[1-binaxint]
             # Slice the data and mask for the current output, slice direction is from prescan to overscan, so that the first row is the first row read out from the CCD
             imdata = slice_data(output.data, imslc).values
-            immask = slice_data(output.masks[mask_key], imslc).values if (output.masks is not None and mask_key in output.masks) else None
+            mask = output.get_output_mask(mask_key)
+            immask = slice_data(mask, imslc).values if mask is not None else None
             # get bins
 
             self._get_binsizes(imdata.shape[binaxint])
@@ -158,8 +164,7 @@ class LinBin(LazyTask):
             # bin mask if it exists
             if immask is not None:
                 binned_mask = do_digital_binning(immask.astype(int), binsizes=self.bins, binaxis=binaxint).astype(bool)
-                _imslc = decrease_slicer_stop_index(imslc)
-                output.masks[mask_key].loc[_imslc] = binned_mask
+                output.masks[mask_key] = set_slice_in_data(ensure_dataarray(binned_mask), output.masks[mask_key], imslc)
 
         return img
 
@@ -174,16 +179,16 @@ class LinBin(LazyTask):
                 bins[-1] -= (np.sum(bins) - parallel_size)
             self.bins = bins
 
-    def do_stats_per_output(self, output: CCDOutput, mask_key: str = 'sigma_clip_mask'):
-        imarr, immask = output.get_image_region(return_masks=True)
+    def do_stats_per_output(self, output: CCDOutput, mask_key: str = 'combined'):
+        imarr, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
         binaxint = getattr(output, f"{self.binaxis}_axint")
         slicer = [slice(None)] * imarr.ndim
         slicer[binaxint] = slice(0, len(self.bins))
         slicer = tuple(slicer)
 
         stats = {'output': output.id, 'bins': self.bins}
-        if immask is not None and mask_key in immask:
-            mask = immask[mask_key].values
+        if immask is not None:
+            mask = immask.values
             stats["n_masked"] = int(np.count_nonzero(mask))
         else:
             mask = np.zeros(imarr.shape, dtype=bool)
