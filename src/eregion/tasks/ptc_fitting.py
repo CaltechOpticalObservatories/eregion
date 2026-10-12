@@ -165,6 +165,8 @@ class CCDPTCFit(Task):
         fwfact: float = 0.8,
         lincoff: float = 0.2,
         n_fw_candidates: int = 1,
+        fluxcol: str = "mean",
+        noisecol: str = "std",
         **kwargs,
     ):
         """Fit results of a PTC reduction in a CCD specific manner.
@@ -223,8 +225,11 @@ class CCDPTCFit(Task):
            number of full well candidates to consider in finding full well. If PTC data is noisy or has pathological
            behaviour of overscans at low signals, setting this to a value >1 (e.g. 5) might allow fits to continue
 
-        return_resids: bool
-           return the full residual arrays. Adds a lot of data to the result, but very useful for plotting
+         fluxcol: str
+           name of the column to use as the flux values. Default is "mean" (standard PTC)
+
+         noisecol: str
+           name of the column to use as the noise values. Default is "std" (standard PTC, using standard deviation)
 
         **kwargs: additional keyword arguments
 
@@ -242,6 +247,8 @@ class CCDPTCFit(Task):
         self.brighter_fatter = brighter_fatter
         self.fwfact = fwfact
         self.n_fw_candidates = n_fw_candidates
+        self.fluxcol = fluxcol
+        self.noisecol = noisecol
 
     def run(self, inp: PTCResult) -> CCDPTCFitResultCollection:
         if not isinstance(inp, PTCResult):
@@ -281,9 +288,9 @@ class CCDPTCFit(Task):
 
             exptime_key = inp.ptc_meta.get("exptime_key", "exptime")
             exptime = dat[exptime_key].to_numpy()
-            mean = dat["mean"].to_numpy()
+            mean = dat[self.fluxcol].to_numpy()
             std = dat[
-                "std"
+                self.noisecol
             ].to_numpy()  # NOTE: dat["std"] is already divided by sqrt(2)
 
             satidx = find_adc_sat_index(exptime, mean, SAT_SIGMA)

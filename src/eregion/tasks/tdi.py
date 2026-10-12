@@ -25,7 +25,9 @@ _StatsDictT = dict[str, np.ndarray]
 class TDIExtractPTC(LazyTask):
     task_result = PTCResult
 
-    def __init__(self, groupby_keys: Iterable[str], name: Optional[str] = None, **kwargs):
+    def __init__(
+        self, groupby_keys: Iterable[str], name: Optional[str] = None, **kwargs
+    ):
 
         self.groupby_keys = groupby_keys
 
@@ -120,16 +122,13 @@ class TDIExtractPTC(LazyTask):
                 # don't do sigma clip masking on this for now.
                 # datapoints are cheap here, and any kind of vignetting will cause
                 # row wise sigma clipping to go wild. Possible future upgrade of TDI analysis
-                diffstats = self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
                 stats[opid] |= self.tdi_stats(output, suffix=f"_{dpidx0}-{dpidx1}")
             diff_images.append(internal_diffim)
 
         statsdf = self.make_ptc_table(stats)
         return statsdf, diff_images
 
-    def make_ptc_table(
-        self, stats: dict[Any, dict[str, np.ndarray]]
-    ) -> pd.DataFrame:
+    def make_ptc_table(self, stats: dict[Any, dict[str, np.ndarray]]) -> pd.DataFrame:
         """Take the collected statistics output from a TDI run and turn it into a pandas DataFrame
 
         parameters
@@ -171,6 +170,7 @@ class TDIExtractPTC(LazyTask):
         # FUTURE complaint: maybe "std" should be averaging non-diffed, and have "diff_std" for diff
         # anyway, at the moment just have the sqrt(2) on "std" for the same behaviour as PTC task
         outdf["std"] = outdf[sfx_diff_filter("std")].mean(axis=1) / np.sqrt(2)
+        outdf["mad"] = outdf[sfx_diff_filter("mad")].mean(axis=1) / np.sqrt(2)
         return outdf
 
     def tdi_stats(self, output: CCDOutput, suffix: str = "") -> dict[str, np.ndarray]:
@@ -224,7 +224,7 @@ class TDIExtractPTC(LazyTask):
             llel_len = abs(axslc.stop - axslc.start)
             stats["n_masked"] = np.zeros(llel_len, dtype=np.uint32)
 
-        assert len(stats["n_masked"]) == len(stats[f"mean"])
+        assert len(stats["n_masked"]) == len(stats["mean"])
 
         if len(suffix) > 0:
             stats = {f"{k}{suffix}": v for k, v in stats.items()}
