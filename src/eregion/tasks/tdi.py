@@ -205,7 +205,7 @@ class TDIExtractPTC(LazyTask):
         im, mask = output.get_image_region(return_masks=True, mask_key="combined")
         stats = dict()
 
-        ma = np.ma.MaskedArray(data=im.values, mask=mask.values)
+        ma = np.ma.MaskedArray(data=im.values, mask=mask.values if mask is not None else None)
         stats |= do_statistics(ma, axis=output.serial_axint, which=_TDISTATS)
 
         if mask is not None:
