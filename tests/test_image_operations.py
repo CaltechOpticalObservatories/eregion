@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pytest
 
-from eregion.core.image_operations import do_digital_binning, find_vignetted_region
+from eregion.core.image_operations import do_digital_binning, find_vignetted_region, find_cosmic_rays
 
 
 def test_do_digital_binning_sums_correctly_default_axis():
@@ -164,3 +164,46 @@ def test_find_vignetted_region_ignores_nonfinite():
 def test_find_vignetted_region_bad_input_raises(image, kwargs):
     with pytest.raises(ValueError):
         find_vignetted_region(image, **kwargs)
+
+
+CR_ARGS = {"effective_gain": 1.0, "readnoise": 5.0}
+CR_PIXELS = [(20, 30), (50, 70), (80, 15)]
+
+
+def _flat_with_cosmics(shape=(100, 100), seed=0):
+    rng = np.random.default_rng(seed)
+    image = rng.normal(1000.0, np.sqrt(1000.0), shape)
+    for y, x in CR_PIXELS:
+        image[y, x] += 5000.0
+    image[60, 40:44] += 3000.0  # short track
+    return image
+
+
+def test_find_cosmic_rays_flags_injected_cosmics():
+    mask = find_cosmic_rays(_flat_with_cosmics(), **CR_ARGS)
+    assert mask.dtype == bool
+    for y, x in CR_PIXELS:
+        assert mask[y, x]
+    assert mask[60, 40:44].all()
+    assert mask.sum() < 50
+
+
+def test_find_cosmic_rays_ignores_input_mask_and_nans():
+    image = _flat_with_cosmics()
+    image[5, 5] = np.nan
+    input_mask = np.zeros(image.shape, dtype=bool)
+    input_mask[CR_PIXELS[0]] = True
+    mask = find_cosmic_rays(image, mask=input_mask, **CR_ARGS)
+    assert not mask[CR_PIXELS[0]]
+    assert not mask[5, 5]
+    assert mask[CR_PIXELS[1]]
+
+
+def test_find_cosmic_rays_raises_on_bad_input():
+    image = _flat_with_cosmics()
+    with pytest.raises(ValueError, match="2D"):
+        find_cosmic_rays(image[None], **CR_ARGS)
+    with pytest.raises(ValueError, match="effective_gain and readnoise"):
+        find_cosmic_rays(image, effective_gain=1.0)
+    with pytest.raises(ValueError, match="mask shape"):
+        find_cosmic_rays(image, mask=np.zeros((10, 10), dtype=bool), **CR_ARGS)

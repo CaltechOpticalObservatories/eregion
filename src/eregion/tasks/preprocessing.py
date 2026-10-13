@@ -9,7 +9,7 @@ from functools import wraps
 
 from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
-from eregion.core.image_operations import sigma_clip_image, find_vignetted_region
+from eregion.core.image_operations import sigma_clip_image, find_vignetted_region, find_cosmic_rays
 from eregion.core.image_stats import do_statistics, STATFUNCS
 from eregion.tasks import LazyTask, ImageResult
 
@@ -414,5 +414,146 @@ class VignetteMasking(BasePreprocessingTask):
             output.masks["vignette_mask"] = full_mask
         return output
 
-    # def __call__(self, image: np.ndarray) -> np.ndarray:
-    #     return find_vignetted_region(ensure_numpy(image), **self.vignette_args)
+
+class CosmicRayMasking(BasePreprocessingTask):
+    task_result = ImageResult
+
+    def __init__(self,
+                 name: Optional[str] = "cosmic_ray_masking",
+                 lacosmic_args: Optional[dict[str, Any]] = None,
+                 use_existing_masks: bool = True,
+                 **kwargs
+    ) -> None:
+        """
+        Create a cosmic ray mask per output with the L.A.Cosmic algorithm (lacosmic package). 'ccd' method searches the
+        image region, serial overscan and parallel overscan of a CCDOutput separately, so the step between the
+        illuminated image region and the scans is not flagged as cosmic rays (prescans are not searched). 'simple' method
+        searches the whole output at once. Outputs that are not CCDOutput are always searched as a whole.
+        Masks are saved in output.masks["cosmic_ray_mask"] for later use.
+
+        The per-pixel noise model is chosen in this order:
+        1. the DetImage 'std' plane, if present, is used as the 1-sigma error.
+        2. effective_gain and readnoise from lacosmic_args, if given.
+        3. effective_gain = 1 and readnoise = robust (MAD) std of the serial overscan for a CCDOutput, or of the whole
+           output data otherwise. In 2. any missing one of the two is filled the same way.
+
+        :param name: Optional[str]
+        :param lacosmic_args: Optional[dict[str, Any]]
+            Arguments to pass to eregion.core.image_operations.find_cosmic_rays, e.g. contrast, cr_threshold,
+            neighbor_threshold, effective_gain, readnoise, maxiter, border_mode.
+        :param use_existing_masks: bool
+            If True, pixels already flagged in the output's combined mask are ignored during detection. Default is True.
+        :keyword method: Optional[str]
+            'ccd' (default) or 'simple', see above.
+        """
+        if 'method' not in kwargs:
+            kwargs['method'] = 'ccd'
+        super().__init__(name=name, **kwargs)
+        self.lacosmic_args = dict(lacosmic_args or {})
+        if "error" in self.lacosmic_args or "mask" in self.lacosmic_args:
+            raise ValueError("lacosmic_args cannot contain 'error' or 'mask', they are set per output.")
+        self.use_existing_masks = use_existing_masks
+
+    def _process_single_image(self, img: DetImage) -> DetImage:
+        """
+        Process a single DetImage by finding cosmic rays in each output.
+        :param img: DetImage
+            The image to be processed.
+        :return: DetImage
+            The processed image with updated masks.
+        """
+        if not any(v for k, v in img.image_type.items() if str(k).endswith("_subtracted")):
+            self.logger.warning(f"DetImage {img.id} is not flagged as bias/scan subtracted. The lacosmic noise model "
+                                f"from effective_gain and readnoise assumes a zero-level corrected image.")
+        has_std = "std" in img.get_data("all").data_vars
+        for out_id, output in img.outputs.items():
+            img.outputs[out_id] = self.method(output, has_std)
+        img.image_type.update({"cosmic_ray_masked": True})
+        return img
+
+    def _noise_args(self, output: Output, has_std: bool) -> dict[str, Any]:
+        """
+        Pick the noise model for find_cosmic_rays for a single output, see __init__ docstring for the order.
+        :return: dict with either 'error' (full output xr.DataArray) or 'effective_gain' and 'readnoise'.
+        """
+        if has_std:
+            self.logger.info(f"Output {output.id}: using 'std' plane as lacosmic error.")
+            return {"error": output.get_output_data("std")}
+        noise_args = {"effective_gain": self.lacosmic_args.get("effective_gain", 1.0),
+                      "readnoise": self.lacosmic_args.get("readnoise")}
+        if noise_args["readnoise"] is None:
+            if isinstance(output, CCDOutput):
+                noise_data, source = output.get_scan(axis="serial", kind="overscan"), "serial overscan"
+            else:
+                noise_data, source = output.data, "output data"
+            if noise_data.size == 0:
+                raise ValueError(f"Output {output.id}: {source} is empty, cannot estimate readnoise. "
+                                 f"Pass readnoise in lacosmic_args.")
+            noise_args["readnoise"] = float(STATFUNCS["mad"](np.ma.masked_invalid(noise_data.values)))
+            if not np.isfinite(noise_args["readnoise"]) or noise_args["readnoise"] <= 0:
+                raise ValueError(f"Output {output.id}: readnoise estimated from {source} is "
+                                 f"{noise_args['readnoise']}. Pass readnoise in lacosmic_args.")
+            self.logger.info(f"Output {output.id}: estimated readnoise {noise_args['readnoise']:.3g} from {source}.")
+        return noise_args
+
+    @property
+    def methods(self):
+        """
+        Return a dictionary of available methods for cosmic ray masking and their function signatures.
+        :return: dict
+            Dictionary with method names as keys and function signatures as values.
+        """
+        return {
+            'simple': self._mask_output,  # whole output at once
+            'ccd': self._mask_ccdoutput,  # image region, serial overscan and parallel overscan separately
+        }
+
+    def _mask_output(self, output: Output, has_std: bool) -> Output:
+        """
+        Find cosmic rays in the whole output and save them in output.masks["cosmic_ray_mask"].
+        """
+        return self._mask_regions(output, has_std, regions=[{}])
+
+    def _mask_ccdoutput(self, output: Output, has_std: bool) -> Output:
+        """
+        Find cosmic rays separately in the image region, serial overscan and parallel overscan of a CCDOutput and save
+        them in output.masks["cosmic_ray_mask"]. Falls back to the whole output for other Output types.
+        """
+        if not isinstance(output, CCDOutput):
+            return self._mask_output(output, has_std)
+        regions = [output.image_region,
+                   {output.serial_axis: output.serial_overscan},
+                   {output.parallel_axis: output.parallel_overscan}]
+        return self._mask_regions(output, has_std, regions=regions)
+
+    def _mask_regions(self, output: Output, has_std: bool, regions: list[dict[str, slice]]) -> Output:
+        """
+        Run find_cosmic_rays on each region of the output and OR the results into output.masks["cosmic_ray_mask"].
+        :param regions: slicers (as in slice_data) of the regions to search, {} is the whole output.
+        """
+        data = output.data
+        existing = output.get_output_mask("combined") if self.use_existing_masks else None
+        noise_args = self._noise_args(output, has_std)
+        lacosmic_args = {k: v for k, v in self.lacosmic_args.items() if k not in ("effective_gain", "readnoise")}
+
+        mask = xr.zeros_like(data).astype(bool)
+        for slicer in regions:
+            region = slice_data(data, slicer)
+            if region.size == 0:
+                continue
+            region_noise = dict(noise_args)
+            if "error" in region_noise:
+                region_noise["error"] = slice_data(region_noise["error"], slicer).values
+            region_mask = None if existing is None else slice_data(existing, slicer).values
+            cr_mask = find_cosmic_rays(region.values, mask=region_mask, **region_noise, **lacosmic_args)
+            # regions can overlap (overscan corners), so OR instead of overwrite
+            mask.loc[region.coords] = mask.loc[region.coords].values | cr_mask
+        self.logger.info(f"Output {output.id}: found {int(mask.sum())} cosmic ray pixels.")
+
+        if output.masks is None:
+            output.masks = mask.to_dataset(name="cosmic_ray_mask")
+        elif "cosmic_ray_mask" in output.masks:
+            output.masks["cosmic_ray_mask"] = (output.masks["cosmic_ray_mask"] | mask)
+        else:
+            output.masks["cosmic_ray_mask"] = mask
+        return output
