@@ -70,6 +70,7 @@ class BiasSubtraction(BasePreprocessingTask):
         :keyword only_image_area: bool, If True, only subtract bias from the image area, ignoring overscan/prescan regions. Default is True.
         :keyword quick: bool, If True, perform full image subtraction including overscan/prescan regions. Default is False.
         """
+        kwargs['n_jobs'] = kwargs.get('n_jobs', 1)
         super().__init__(name=name, **kwargs)
         self.master_bias = None
 

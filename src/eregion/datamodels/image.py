@@ -256,7 +256,8 @@ class Output(Mappable):
 
         return header, data
 
-    def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', data_var='data', **imshow_kwargs):
+    def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', data_var='data',
+             **imshow_kwargs):
         """
         Plot this output's image.
         :param ax: Matplotlib Axes object to plot on. If None, a new figure and axes are created.
@@ -398,8 +399,8 @@ class CCDOutput(Output):
         """
         return self.get_scan(axis=axis, kind='overscan', corner=corner, data_var=data_var)
 
-    def show(self, ax=None, shade_regions=False, save=None, with_mask=True, mask_key='sigma_clip_mask', data_var='data',
-             **imshow_kwargs):
+    def show(self, ax=None, save=None, with_mask=True, mask_key='sigma_clip_mask', data_var='data',
+             shade_regions=False, **imshow_kwargs):
         ax = super().show(ax=ax, save=None, with_mask=with_mask, mask_key=mask_key, data_var=data_var, **imshow_kwargs)
 
         if shade_regions:
@@ -697,8 +698,6 @@ class DetImage:
         Build a full mask from the individual output masks.
         :return: True if a full mask was built, False otherwise.
         """
-        if self.masks is not None:
-            return True
         self.masks = xr.Dataset(coords=self.data.coords)
         for out_id, output in self.outputs.items():
             if output.masks is not None:
