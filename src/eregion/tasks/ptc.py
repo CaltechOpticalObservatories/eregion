@@ -161,10 +161,7 @@ class PTC(LazyTask):
                     ma_diffdat = sigma_clip_image(slice_data(diffdat, imslc).values, **sigma_clip_args)
                     output.set_data_in_parent(ma_diffdat.filled(np.nan), imslc) # set nan filled data in parent
                     diffmask.loc[decrease_slicer_stop_index(imslc)] |= ma_diffdat.mask # set in diff mask
-                if output.masks:
-                    output.masks['sigma_clip_mask'] = diffmask
-                else:
-                    output.masks = diffmask.to_dataset(name='sigma_clip_mask')  # set in output attr
+                output.set_mask('sigma_clip_mask', diffmask, combine=False)
 
                 diffstat = (unique_info | # Add unique keys identifying flat group
                            {"output": out_id, "diff": True, "seqnum":'-'.join([str(i) for i in diffpairidx])} |
