@@ -15,9 +15,7 @@ from .mappable import Mappable
 from eregion.utils import (
     ensure_dataarray,
     slice_data,
-    ensure_numpy,
     configure_logger,
-    decrease_slicer_stop_index,
     set_slice_in_data,
     XRDATA
 )
@@ -101,7 +99,8 @@ class Output(Mappable):
     )
     masks: Optional[xr.Dataset] = Field(
         default=None,
-        description="Optional xr.Dataset containing masks for this output.",
+        description="Optional xr.Dataset containing masks for this output. "
+        "Write masks via set_mask() so the parent DetImage's full mask is rebuilt.",
         exclude=True,
     )
 
@@ -136,6 +135,22 @@ class Output(Mappable):
                     return None
         else:
             return None
+
+    def set_mask(self, mask_key: str, mask: xr.DataArray, combine: bool = True):
+        """
+        Set a mask for this output and clear the parent's full mask so it is rebuilt on next access.
+        :param mask_key: str, name of the mask data_var in self.masks.
+        :param mask: xr.DataArray, boolean mask with the same coords as this output.
+        :param combine: bool, if True OR with an existing mask under mask_key, else replace it.
+        """
+        if self.masks is None:
+            self.masks = mask.to_dataset(name=mask_key)
+        elif combine and mask_key in self.masks:
+            self.masks[mask_key] = self.masks[mask_key] | mask
+        else:
+            self.masks[mask_key] = mask
+        if self.parent is not None:
+            self.parent.masks = None
 
     def get_masked_output_data(self, data_var: str = 'data', mask_key: str = 'combined', fill_value=np.nan):
         mask = self.get_output_mask(mask_key)
@@ -721,7 +736,8 @@ class DetImage:
         :param mask_key: str or 'all' or 'combined'. Returns dataset if 'all'. Returns DataArray if key is specified. Returns OR combined mask from all keys if 'combined'.
         :return: xr.DataArray or xr.Dataset
         """
-        if self._build_full_mask():
+        built = self._build_full_mask() if self.masks is None else True
+        if built:
             match mask_key:
                 case 'all':
                     return self.masks
@@ -738,7 +754,8 @@ class DetImage:
 
     @property
     def combined_mask(self):
-        if self._build_full_mask():
+        built = self._build_full_mask() if self.masks is None else True
+        if built:
             combmask = np.any(self.masks.to_array().to_numpy(), axis=0)
             return xr.DataArray(combmask, dims=self.masks.dims, coords=self.masks.coords)
         else:

@@ -169,6 +169,34 @@ def test_detimage_default_output_creation_and_lookup():
     assert det.num_outputs == 2 and det.outputs["1"].parent is det
 
 
+def test_output_set_mask_invalidates_full_mask():
+    det = DetImage(data=make_dataarray((4, 4)), output_objects={
+        oid: Output(id=oid, ext_id=0, ext_slice=(slice(0, 4), xslc), data_slice=(slice(0, 4), xslc))
+        for oid, xslc in [("a", slice(0, 2)), ("b", slice(2, 4))]
+    })
+    out = det.outputs["a"]
+    empty = xr.zeros_like(out.data, dtype=bool)
+    out.set_mask("m1", empty)
+    assert int(det.get_mask("combined").sum()) == 0
+
+    # combine=True ORs into the existing mask and the full mask is rebuilt
+    pix = empty.copy()
+    pix[0, 0] = True
+    out.set_mask("m1", pix)
+    assert det.masks is None
+    assert bool(det.get_mask("m1")[0, 0]) and int(det.get_mask("combined").sum()) == 1
+
+    out.set_mask("m2", empty)
+    assert set(det.get_mask("all").data_vars) == {"m1", "m2"}
+
+    # combine=False replaces the existing mask
+    out.set_mask("m1", empty, combine=False)
+    assert int(det.get_mask("combined").sum()) == 0
+
+    # full rebuilds are idempotent
+    assert det._build_full_mask() and det._build_full_mask()
+
+
 def test_focalplaneimage_construct_and_place_tiles():
     # Create two non-overlapping tiles
     props = DetectorProperties(pixel_size=1.0, x_size=4, y_size=4)

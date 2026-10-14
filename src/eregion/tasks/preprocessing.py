@@ -331,13 +331,7 @@ class SigmaClipMasking(BasePreprocessingTask):
         image_data_clipped = sigma_clip_image(image_data.values, **self.sigma_clip_args)
         combined_mask.loc[image_data.coords] = image_data_clipped.mask
 
-        if output.masks is None:
-            output.masks = combined_mask.to_dataset(name="sigma_clip_mask")
-        else:
-            if "sigma_clip_mask" in output.masks:
-                output.masks["sigma_clip_mask"] = (output.masks["sigma_clip_mask"] | combined_mask)
-            else:
-                output.masks["sigma_clip_mask"] = combined_mask
+        output.set_mask("sigma_clip_mask", combined_mask)
         return output
 
     def _sigma_clip_per_output(self, output: Output) -> Output:
@@ -348,13 +342,7 @@ class SigmaClipMasking(BasePreprocessingTask):
         clipped = sigma_clip_image(data.values, **self.sigma_clip_args)
         mask = xr.DataArray(data=clipped.mask, coords=data.coords, dims=data.dims)
 
-        if output.masks is None:
-            output.masks = mask.to_dataset(name="sigma_clip_mask")
-        else:
-            if "sigma_clip_mask" in output.masks:
-                output.masks["sigma_clip_mask"] = (output.masks["sigma_clip_mask"] | mask)
-            else:
-                output.masks["sigma_clip_mask"] = mask
+        output.set_mask("sigma_clip_mask", mask)
         return output
 
 
@@ -392,7 +380,7 @@ class VignetteMasking(BasePreprocessingTask):
                                 f"relative to the illumination level and assumes a zero-level corrected image.")
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self._mask_output(output)
-        img.image_type.update({"vignette_masked": True})
+        img.image_type.update({"vignette_masked": img._build_full_mask()})
         return img
 
     def _mask_output(self, output: Output) -> Output:
@@ -402,16 +390,10 @@ class VignetteMasking(BasePreprocessingTask):
         image_data, _ = output.get_image_region()
         vignette_mask = find_vignetted_region(image_data.values, **self.vignette_args)
 
-        im_slcs = decrease_slicer_stop_index(output.image_region)
         full_mask = xr.zeros_like(output.data).astype(bool)
-        full_mask.sel(**im_slcs).values[...] = vignette_mask
+        full_mask.loc[image_data.coords] = vignette_mask
 
-        if output.masks is None:
-            output.masks = full_mask.to_dataset(name="vignette_mask")
-        elif "vignette_mask" in output.masks:
-            output.masks["vignette_mask"] = (output.masks["vignette_mask"] | full_mask)
-        else:
-            output.masks["vignette_mask"] = full_mask
+        output.set_mask("vignette_mask", full_mask)
         return output
 
 
@@ -468,7 +450,7 @@ class CosmicRayMasking(BasePreprocessingTask):
         has_std = "std" in img.get_data("all").data_vars
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self.method(output, has_std)
-        img.image_type.update({"cosmic_ray_masked": True})
+        img.image_type.update({"cosmic_ray_masked": img._build_full_mask()})
         return img
 
     def _noise_args(self, output: Output, has_std: bool) -> dict[str, Any]:
@@ -550,10 +532,5 @@ class CosmicRayMasking(BasePreprocessingTask):
             mask.loc[region.coords] = mask.loc[region.coords].values | cr_mask
         self.logger.info(f"Output {output.id}: found {int(mask.sum())} cosmic ray pixels.")
 
-        if output.masks is None:
-            output.masks = mask.to_dataset(name="cosmic_ray_mask")
-        elif "cosmic_ray_mask" in output.masks:
-            output.masks["cosmic_ray_mask"] = (output.masks["cosmic_ray_mask"] | mask)
-        else:
-            output.masks["cosmic_ray_mask"] = mask
+        output.set_mask("cosmic_ray_mask", mask)
         return output

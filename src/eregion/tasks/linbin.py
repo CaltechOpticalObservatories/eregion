@@ -164,7 +164,10 @@ class LinBin(LazyTask):
             # bin mask if it exists
             if immask is not None:
                 binned_mask = do_digital_binning(immask.astype(int), binsizes=self.bins, binaxis=binaxint).astype(bool)
-                output.masks[mask_key] = set_slice_in_data(ensure_dataarray(binned_mask), output.masks[mask_key], imslc)
+                output.set_mask(mask_key,
+                                set_slice_in_data(ensure_dataarray(binned_mask), output.masks[mask_key], imslc),
+                                combine=False
+                                )
 
         return img
 
