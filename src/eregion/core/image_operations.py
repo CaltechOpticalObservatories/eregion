@@ -47,6 +47,67 @@ def mean_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str, 
                           axis=0)
     return stats
 
+def _check_same_shape(**arrays: np.ndarray) -> None:
+    shapes = {name: np.shape(arr) for name, arr in arrays.items()}
+    if len(set(shapes.values())) != 1:
+        raise ValueError(f"All arrays must have the same shape, got {shapes}")
+
+def welford_update(count: np.ndarray, mean: np.ndarray, m2: np.ndarray,
+                   image: np.ndarray, valid: np.ndarray) -> None:
+    """
+    Add one image to running per-pixel Welford accumulators. Arrays are updated in place to keep memory use flat
+    when streaming many images.
+
+    :param count: np.ndarray, number of valid samples per pixel so far
+    :param mean: np.ndarray (float), running mean per pixel
+    :param m2: np.ndarray (float), running sum of squared deviations from the mean per pixel
+    :param image: np.ndarray, new image to add
+    :param valid: np.ndarray (bool), True for pixels of image that should be added (i.e. not masked)
+    :return: None
+    """
+    _check_same_shape(count=count, mean=mean, m2=m2, image=image, valid=valid)
+    count += valid
+    delta = np.where(valid, image - mean, 0.0)
+    mean += np.divide(delta, count, out=np.zeros_like(mean), where=count > 0)
+    m2 += delta * np.where(valid, image - mean, 0.0)
+
+def welford_finalize(count: np.ndarray, mean: np.ndarray, m2: np.ndarray) -> dict[str, np.ndarray]:
+    """
+    Turn Welford accumulators into mean, sample standard deviation (ddof=1) and count images.
+    Pixels with no samples get NaN mean, pixels with fewer than 2 samples get NaN std.
+
+    :param count: np.ndarray, number of valid samples per pixel
+    :param mean: np.ndarray, running mean per pixel
+    :param m2: np.ndarray, running sum of squared deviations from the mean per pixel
+    :return: dict with 'data' (mean), 'std' and 'count' arrays
+    """
+    _check_same_shape(count=count, mean=mean, m2=m2)
+    data = np.where(count > 0, mean, np.nan)
+    std = np.sqrt(np.divide(m2, count - 1, out=np.full_like(m2, np.nan, dtype=float), where=count > 1))
+    return {'data': data, 'std': std, 'count': count.copy()}
+
+def stochastic_median_update(median: np.ndarray, count: np.ndarray, std: np.ndarray,
+                             image: np.ndarray, valid: np.ndarray) -> None:
+    """
+    Robbins-Monro streaming approximation of the per-pixel median, updated in place:
+    median += sqrt(pi/2) * std / count * sign(image - median). sqrt(pi/2) is 1/f(median) for a Gaussian,
+    which gives the optimal step size. Error falls like std/sqrt(count), the estimate is mildly sensitive
+    to image order if the signal drifts over the series.
+
+    :param median: np.ndarray (float), running median estimate per pixel
+    :param count: np.ndarray, number of valid samples per pixel including the current image
+    :param std: np.ndarray, running standard deviation per pixel including the current image
+    :param image: np.ndarray, new image to add
+    :param valid: np.ndarray (bool), True for pixels of image that should be added (i.e. not masked)
+    :return: None
+    """
+    _check_same_shape(median=median, count=count, std=std, image=image, valid=valid)
+    first = valid & (count == 1)
+    median[first] = image[first]
+    update = valid & (count > 1)
+    step = np.sqrt(np.pi / 2) * np.divide(std, count, out=np.zeros_like(median), where=update)
+    median += np.where(update, step * np.sign(image - median), 0.0)
+
 
 def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray,
                      sigma: float,

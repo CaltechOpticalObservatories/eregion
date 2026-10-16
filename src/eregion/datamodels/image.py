@@ -671,7 +671,7 @@ class DetImage:
         if "shape" in self.meta:
             return self.meta["shape"]
         if self._data is not None:
-            return self._data.sizes
+            return self._data['data'].shape
         if (opshape := self._shape_from_outputs) is not None:
             return opshape
         raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")

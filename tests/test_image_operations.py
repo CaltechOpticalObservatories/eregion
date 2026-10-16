@@ -3,7 +3,14 @@ import time
 import numpy as np
 import pytest
 
-from eregion.core.image_operations import do_digital_binning, find_vignetted_region, find_cosmic_rays
+from eregion.core.image_operations import (
+    do_digital_binning,
+    find_vignetted_region,
+    find_cosmic_rays,
+    welford_update,
+    welford_finalize,
+    stochastic_median_update,
+)
 
 
 def test_do_digital_binning_sums_correctly_default_axis():
@@ -207,3 +214,64 @@ def test_find_cosmic_rays_raises_on_bad_input():
         find_cosmic_rays(image, effective_gain=1.0)
     with pytest.raises(ValueError, match="mask shape"):
         find_cosmic_rays(image, mask=np.zeros((10, 10), dtype=bool), **CR_ARGS)
+
+
+def _stream_welford(images, valids):
+    count = np.zeros(images[0].shape)
+    mean = np.zeros(images[0].shape)
+    m2 = np.zeros(images[0].shape)
+    for image, valid in zip(images, valids):
+        welford_update(count, mean, m2, image, valid)
+    return count, mean, m2
+
+
+def test_welford_matches_numpy_mean_and_std():
+    rng = np.random.default_rng(0)
+    images = rng.normal(1e4, 5.0, size=(50, 6, 7))
+
+    stats = welford_finalize(*_stream_welford(images, [np.ones((6, 7), bool)] * len(images)))
+
+    np.testing.assert_allclose(stats["data"], images.mean(axis=0), rtol=1e-10)
+    np.testing.assert_allclose(stats["std"], images.std(axis=0, ddof=1), rtol=1e-8)
+    assert np.all(stats["count"] == len(images))
+
+
+def test_welford_with_masks_matches_masked_numpy_and_gives_nan_for_low_counts():
+    rng = np.random.default_rng(1)
+    images = rng.normal(100.0, 3.0, size=(20, 5, 5))
+    masks = rng.random(images.shape) < 0.3
+    masks[:, 0, 0] = True  # never valid
+    masks[1:, 0, 1] = True  # valid only once
+
+    stats = welford_finalize(*_stream_welford(images, ~masks))
+    ma = np.ma.MaskedArray(images, mask=masks)
+
+    np.testing.assert_allclose(stats["data"][1:], ma.mean(axis=0).filled(np.nan)[1:], rtol=1e-10)
+    np.testing.assert_allclose(stats["std"][1:], ma.std(axis=0, ddof=1).filled(np.nan)[1:], rtol=1e-8)
+    assert np.isnan(stats["data"][0, 0]) and np.isnan(stats["std"][0, 0])
+    assert stats["data"][0, 1] == images[0, 0, 1] and np.isnan(stats["std"][0, 1])
+    np.testing.assert_array_equal(stats["count"], (~masks).sum(axis=0))
+
+
+def test_stochastic_median_approximates_median():
+    rng = np.random.default_rng(2)
+    n, sigma = 300, 10.0
+    images = rng.normal(500.0, sigma, size=(n, 20, 20))
+    valid = np.ones((20, 20), bool)
+    count, mean, m2 = (np.zeros((20, 20)) for _ in range(3))
+    median = np.zeros((20, 20))
+    for image in images:
+        welford_update(count, mean, m2, image, valid)
+        std = np.sqrt(np.divide(m2, count - 1, out=np.zeros_like(m2), where=count > 1))
+        stochastic_median_update(median, count, std, image, valid)
+
+    err = np.abs(median - np.median(images, axis=0))
+    assert np.mean(err < 3 * sigma / np.sqrt(n)) > 0.95
+
+
+def test_streaming_updates_reject_mismatched_shapes():
+    good = np.zeros((3, 3))
+    with pytest.raises(ValueError, match="same shape"):
+        welford_update(good.copy(), good.copy(), good.copy(), np.zeros((3, 4)), np.ones((3, 3), bool))
+    with pytest.raises(ValueError, match="same shape"):
+        stochastic_median_update(good.copy(), good.copy(), good.copy(), good, np.ones((2, 3), bool))
