@@ -289,3 +289,10 @@ def test_fpimagebundle_filter_preserves_subtype():
     assert filtered[0] is focal_plane
     with np.testing.assert_raises(TypeError):
         _ = bundle + ImageBundle()
+
+def test_detimage_shape_from_data_and_default_output():
+    det = DetImage(data=make_dataarray((4, 6)))
+    assert det.shape == (4, 6)
+    out = det.outputs["0"]
+    assert out.output_slice == (slice(0, 4), slice(0, 6))
+    assert out.data.shape == (4, 6)
