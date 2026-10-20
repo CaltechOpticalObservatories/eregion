@@ -17,6 +17,12 @@ def calc_approx_taylor_series_coeffs(func: Callable[np.ndarray[Complex], [np.nda
     :param N : Integer
         number of coefficients to calculate
 
+    returns
+    =======
+
+    coeffs: np.ndarray
+        array of coefficients of the Taylor series (including 0th order, i.e. unity) upto order N-1 (i.e. return N coefficients)
+
     """
 
     #using the fact that the derivative of a function in Fourier space is just 1/N times the function
