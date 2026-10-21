@@ -258,6 +258,38 @@ def _quantity_column_to_fits_column(
     return outcols
 
 
+def _unc_column_to_fits_column(
+    name: str, series: list[unc.Variable | None]
+) -> list[fits.Column]:
+    if len(series) == 0:
+        raise ValueError("require non-zero length series")
+
+    errname = f"{name}_err"
+
+    def _generate_vals(series):
+        for v in series:
+            if v is None:
+                yield np.nan, 0.0
+                continue
+            yield v.nominal_value, v.std_dev
+
+    nomvals, errvals = zip(*_generate_vals(series))
+    nomvals = list(nomvals)
+    errvals = list(errvals)
+    nomdtp = _choose_minimal_numpy_dtype(nomvals)
+    errdtp = _choose_minimal_numpy_dtype(errvals)
+    nomfmt = _fits_format_code(nomdtp)
+    errfmt = _fits_format_code(errdtp)
+    nomvals = np.array(nomvals, dtype=nomdtp)
+    errvals = np.array(errvals, dtype=errdtp)
+
+    outcols = [
+        fits.Column(name=name, array=nomvals, format=nomfmt),
+        fits.Column(name=errname, array=errvals, format=errfmt),
+    ]
+    return outcols
+
+
 def _pint_unit_to_fits_unit(unit: pint.Unit | str) -> str:
     """Convert a Pint unit to the FITS-standard unit representation."""
     unit_string: str = str(unit)
@@ -330,6 +362,9 @@ def _dataframe_column_to_fits_column(
 
     if all(isinstance(value, (pint.Quantity)) for value in non_null):
         return _quantity_column_to_fits_column(name, values)
+
+    if all(isinstance(value, (unc.Variable)) for value in non_null):
+        return _unc_column_to_fits_column(name, values)
 
     raise TypeError(
         f"Unsupported dataframe column '{name}' with values of type {type(non_null[0]).__name__}."
