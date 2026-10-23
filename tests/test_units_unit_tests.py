@@ -3,10 +3,12 @@ import pint
 import uncertainties as unc
 import numpy as np
 import pandas as pd
+from astropy.io import fits
 
 from eregion.utils.io_utils import (
     _quantity_column_to_fits_column,
     _choose_minimal_numpy_dtype,
+    _unc_column_to_fits_column,
     save_dataframe_to_fits,
 )
 
@@ -76,19 +78,21 @@ def test_np_dtype_promotion():
     # functionality of np.promote_type and np.min_scalar_type at that point
 
 
-def test_saving_FITS_from_dataframe_with_uncertainties(monkeypatch):
-    punc = lambda n, e: pint.Quantity(unc.ufloat(n, e), "metre")
-    vals = [punc(1.0, 0.01), punc(12.0, 0.2), punc(19.0, 0.2)]
-
-    dfdict = {"length": vals}
-
-    df = pd.DataFrame(dfdict)
-
+@pytest.fixture
+def save_HDUL_in_globalvar(monkeypatch):
     def patched_hdul_save(self, *args, **kwargs):
         global _HDUL
         _HDUL = self
 
     monkeypatch.setattr("astropy.io.fits.HDUList.writeto", patched_hdul_save)
+
+    
+def test_saving_FITS_from_dataframe_with_uncertainties(save_HDUL_in_globalvar):
+    punc = lambda n, e: pint.Quantity(unc.ufloat(n, e), "metre")
+    vals = [punc(1.0, 0.01), punc(12.0, 0.2), punc(19.0, 0.2)]
+
+    dfdict = {"length": vals}
+    df = pd.DataFrame(dfdict)
 
     save_dataframe_to_fits(df, "nobodycaresatall.fits")
 
@@ -98,3 +102,25 @@ def test_saving_FITS_from_dataframe_with_uncertainties(monkeypatch):
     # again, no idea why this diff fails slightly. But it's errors,
     # if you care about more than one decimal point you're going wrong
     assert np.all(np.isclose(diff, 0, atol=1e-4))
+
+
+
+def test_uncertain_column():
+    vals = [unc.ufloat(1.0, 0.01), unc.ufloat(0.2, 0.03)]
+    outcols = _unc_column_to_fits_column("vals", vals)
+
+    assert len(outcols) == 2
+    assert(outcols[1].name == "vals_err")
+    assert(np.all(np.isclose(outcols[1].array, [0.01, 0.03], rtol=1E-3)))
+    assert(np.all(np.isclose(outcols[0].array, [1.0, 0.2], rtol=1E-3)))
+    
+def test_saving_FITS_from_dataframe_with_unc_column(save_HDUL_in_globalvar):
+    vals = [unc.ufloat(1.0, 0.01), unc.ufloat(0.2, 0.03)]
+    dfdict = {"vals" : vals}
+
+    df = pd.DataFrame(dfdict)
+
+    save_dataframe_to_fits(df, "nobodycaresatall.fits")
+    assert np.all(np.isclose(_HDUL[1].data["vals"], [1.0, 0.2], rtol=1E-3))
+    assert np.all(np.isclose(_HDUL[1].data["vals_err"], [0.01, 0.03], rtol=1E-3))              
+    

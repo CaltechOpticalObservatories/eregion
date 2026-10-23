@@ -205,6 +205,15 @@ def _choose_minimal_numpy_dtype(vals: Iterable[float | int]) -> Type[np.dtype]:
     return mintp
 
 
+def _fits_column_from_list(values: list, name: str, unit) -> fits.Column:
+    dtp = _choose_minimal_numpy_dtype(values)
+    fmt = _fits_format_code(dtp)
+    outarr = np.array(values, dtype=dtp)
+    unit = "" if unit is None else unit
+    outcol = fits.Column(name=name, array=outarr, format=fmt, unit=unit)
+    return outcol
+
+
 def _quantity_column_to_fits_column(
     name: str, series: list[pint.Quantity | None]
 ) -> fits.Column | list[fits.Column]:
@@ -232,15 +241,10 @@ def _quantity_column_to_fits_column(
                 yield qout.magnitude, None
 
     outqtups = list(_generate_qvals(series))
-    nomvals, errvals = zip(*outqtups)
-    nomvals = list(nomvals)
-    nomdtp = _choose_minimal_numpy_dtype(nomvals)
-    nomfmt = _fits_format_code(nomdtp)
-    nomvals = np.array(nomvals, dtype=nomdtp)
     unt = _pint_unit_to_fits_unit(outunit)
-
-    outcols = []
-    outcols.append(fits.Column(name=name, array=nomvals, format=nomfmt, unit=unt))
+    nomvals, errvals = zip(*outqtups)
+    nomcol = _fits_column_from_list(list(nomvals), name, unt)
+    outcols = [nomcol]
 
     if all(_ is None for _ in errvals):
         # one column case, same as before
@@ -249,12 +253,8 @@ def _quantity_column_to_fits_column(
     # we have error column
     # note the above procedure ensured it's in the correct units already
     errname = f"{name}_err"
-    errvals = list(errvals)
-    errdtp = _choose_minimal_numpy_dtype(errvals)
-    errvals = np.array(errvals, dtype=errdtp)
-    errfmt = _fits_format_code(errdtp)
-
-    outcols.append(fits.Column(name=errname, array=errvals, format=errfmt, unit=unt))
+    errcol = _fits_column_from_list(list(errvals), errname, unt)
+    outcols.append(errcol)
     return outcols
 
 
@@ -274,19 +274,9 @@ def _unc_column_to_fits_column(
             yield v.nominal_value, v.std_dev
 
     nomvals, errvals = zip(*_generate_vals(series))
-    nomvals = list(nomvals)
-    errvals = list(errvals)
-    nomdtp = _choose_minimal_numpy_dtype(nomvals)
-    errdtp = _choose_minimal_numpy_dtype(errvals)
-    nomfmt = _fits_format_code(nomdtp)
-    errfmt = _fits_format_code(errdtp)
-    nomvals = np.array(nomvals, dtype=nomdtp)
-    errvals = np.array(errvals, dtype=errdtp)
-
-    outcols = [
-        fits.Column(name=name, array=nomvals, format=nomfmt),
-        fits.Column(name=errname, array=errvals, format=errfmt),
-    ]
+    nomcol = _fits_column_from_list(list(nomvals), name, None)
+    errcol = _fits_column_from_list(list(errvals), errname, None)
+    outcols = [nomcol, errcol]
     return outcols
 
 

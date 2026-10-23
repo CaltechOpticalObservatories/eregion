@@ -304,7 +304,9 @@ class CCDPTCFit(Task):
             fwfactloc, fwloc = find_rough_full_well(
                 mean, std, self.fwfact, n_candidates=self.n_fw_candidates
             )
-            fitres.full_well = _Q(float(mean[fwloc]) * _ureg.DN)
+            fitres.full_well = _Q(float(fwloc) * _ureg.DN)
+
+            fwws = np.argmin(np.abs(mean - fwloc))
 
             self.logger.info("doing PTC fits...")
             match self.brighter_fatter:
@@ -318,7 +320,7 @@ class CCDPTCFit(Task):
                     fitres["ptc_noise_classic"] = _Q(nest * _ureg.elec)
                 case BrighterFatterFitTypes.ASTIER_ONE_PARAM:
                     Kest, nest, a00est, Kast, a00ast, nast = self.astier_fit_bootstrap(
-                        mean, std, fwfactloc, fwloc
+                        mean, std, fwfactloc, fwws
                     )
                     fitres["camera_gain_classic"] = _Q(Kest * _ureg.elec / _ureg.DN)
                     fitres["ptc_noise_classic"] = _Q(nest * _ureg.elec)
