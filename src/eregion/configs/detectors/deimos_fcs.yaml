@@ -21,12 +21,12 @@ objects:
         data_slice: [!slice [0, 4116], !slice [0, 1069]] # Slice of the full DetImage data array where this output's data will go
         serial_prescan: !slice [0, 24] # 24 px
         serial_overscan: !slice [1048, 1069] # 21 px
-        parallel_prescan: !slice [0, 1]
+        parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4116] # 20 pix
         parallel_axis: 'y'
         readout_pixel: [0, 0]
     focal_plane_position:
-      x_cen: -65.700  # mm
+      x_cen: -73.7175  # mm
       y_cen: 0.0  # mm
       angle: 0.0  # degrees (assuming origin is bottom left and angle is CCW positive)
       flip_x: false
@@ -47,12 +47,12 @@ objects:
         data_slice: [!slice [0, 4116], !slice [0, 1069]] # Slice of the full DetImage data array where this output's data will go
         serial_prescan: !slice [1068, 1044] # 24 px
         serial_overscan: !slice [20, -1] # 21 px
-        parallel_prescan: !slice [0, 1]
+        parallel_prescan: !slice [0, 0]
         parallel_overscan: !slice [4096, 4116]
         parallel_axis: 'y'
         readout_pixel: [0, 1068]
     focal_plane_position:
-      x_cen: 65.700  # mm
+      x_cen: 73.7175  # mm
       y_cen: 0.0  # mm
       angle: 0.0  # degrees (assuming origin is bottom left and angle is CCW positive)
       flip_x: false
