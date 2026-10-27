@@ -254,4 +254,5 @@ class PTC(LazyTask):
         ptc_df['mean'] = ptc_df[[f'mean_{sfx}' for sfx in file_sfx]].mean(axis=1)
         ptc_df['median'] = ptc_df[[f'median_{sfx}' for sfx in file_sfx]].mean(axis=1)
         ptc_df['std'] = ptc_df[[f'std_{sfx}' for sfx in diff_sfx]].mean(axis=1)/np.sqrt(2) # divide by sqrt(2) because this noise is from difference of two images
+        ptc_df['mad'] = ptc_df[[f'mad_{sfx}' for sfx in diff_sfx]].mean(axis=1)/np.sqrt(2)
         return ptc_df

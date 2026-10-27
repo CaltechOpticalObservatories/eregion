@@ -1,0 +1,61 @@
+## NEW DEIMOS FCS detectors config.
+## 2 fits files, one per detector, each with 2 extensions for the two channels of that detector.
+---
+description: DEIMOS FCS detectors, 2 detectors with 1 channel readout each
+detector_type: CCD
+detector_output_class: CCDOutput
+
+objects:
+  - name: 'fcs_1'
+    class: DetImage
+    filename_format: '*FCS_1_*'  # Use wildcard to indicate the filename
+    header_index: 0
+    properties:
+      x_size: 1069
+      y_size: 4116
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'A'
+        ext_id: "AMPA"
+        ext_slice: [!slice [0, 4116], !slice [0, 1069]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4116], !slice [0, 1069]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [0, 24] # 24 px
+        serial_overscan: !slice [1048, 1069] # 21 px
+        parallel_prescan: !slice [0, 1]
+        parallel_overscan: !slice [4096, 4116] # 20 pix
+        parallel_axis: 'y'
+        readout_pixel: [0, 0]
+    focal_plane_position:
+      x_cen: -65.700  # mm
+      y_cen: 0.0  # mm
+      angle: 0.0  # degrees (assuming origin is bottom left and angle is CCW positive)
+      flip_x: false
+      flip_y: false
+
+  - name: 'fcs_2'
+    class: DetImage
+    filename_format: '*FCS_2_*'  # Use wildcard to indicate the filename
+    header_index: 0  # primary header
+    properties:
+      x_size: 1069
+      y_size: 4116
+      pixel_size: 0.015  # mm
+    outputs:
+      - id: 'B'
+        ext_id: "AMPB"
+        ext_slice: [!slice [0, 4116], !slice [0, 1069]]  # Slice of the ext_id that has the data for this output
+        data_slice: [!slice [0, 4116], !slice [0, 1069]] # Slice of the full DetImage data array where this output's data will go
+        serial_prescan: !slice [1068, 1044] # 24 px
+        serial_overscan: !slice [20, -1] # 21 px
+        parallel_prescan: !slice [0, 1]
+        parallel_overscan: !slice [4096, 4116]
+        parallel_axis: 'y'
+        readout_pixel: [0, 1068]
+    focal_plane_position:
+      x_cen: 65.700  # mm
+      y_cen: 0.0  # mm
+      angle: 0.0  # degrees (assuming origin is bottom left and angle is CCW positive)
+      flip_x: false
+      flip_y: false
+
+
