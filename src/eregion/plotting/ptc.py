@@ -45,7 +45,7 @@ class PTCCurvePlotter(Plotter[PTCResult]):
             ax = self.new_axes()
 
         table = self.result.ptc_table
-        variance = table["std_diff"] ** 2
+        variance = table["std"] ** 2
 
         # Relabel the hue column through the descriptor up front
         hue_data = table[self.hue].map(self.descriptor.resolve_legend_label) if self.hue in table.columns else None

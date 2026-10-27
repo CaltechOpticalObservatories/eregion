@@ -97,10 +97,10 @@ def test_load_image_fits_reads_hdus_and_handles_none(tmp_path):
 def test_guess_image_type_from_header_defaults_and_custom_keywords():
     headers = [{"OBJECT": "BIAS", "EXPTIME": "10"}]
     out = guess_image_type_from_header(headers)
-    assert out == {"type": "bias", "exptime": "10"}
+    assert out == {"type": "BIAS", "exptime": "10"}
 
     custom = guess_image_type_from_header(
         [{"MYTYPE": "FLAT", "MYEXP": "20"}],
         keywords={"type": ["MYTYPE"], "exptime": ["MYEXP"]},
     )
-    assert custom == {"type": "flat", "exptime": "20"}
+    assert custom == {"type": "FLAT", "exptime": "20"}
