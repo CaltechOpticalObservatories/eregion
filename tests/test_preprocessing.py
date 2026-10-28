@@ -112,3 +112,25 @@ def test_cosmic_ray_masking_estimates_readnoise_from_overscan():
 def test_cosmic_ray_masking_rejects_per_output_args():
     with pytest.raises(ValueError, match="error"):
         CosmicRayMasking(lacosmic_args={"error": np.ones((2, 2))})
+
+
+def test_cosmic_ray_masking_labels_cosmic_rays_when_enabled():
+    det, crs = _ccd_with_cosmics()
+    out = CosmicRayMasking(label_cosmic_rays=True)._process_single_image(det)
+    mask = out.outputs["C"].masks["cosmic_ray_mask"].values
+    labels = out.labels["cosmic_ray_labels"]
+
+    assert np.array_equal(labels.values > 0, mask)
+    assert labels.attrs["num_labels"] == len(np.unique(labels.values[labels.values > 0]))
+    assert labels.values[crs["image"]] > 0 and labels.values[crs["overscan"]] > 0
+    assert labels.values[crs["image"]] != labels.values[crs["overscan"]]
+
+
+def test_cosmic_ray_masking_does_not_label_by_default():
+    det, _ = _ccd_with_cosmics()
+    assert CosmicRayMasking()._process_single_image(det).labels is None
+
+
+def test_cosmic_ray_masking_rejects_bad_label_connectivity():
+    with pytest.raises(ValueError, match="label_connectivity"):
+        CosmicRayMasking(label_connectivity=4)

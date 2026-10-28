@@ -7,6 +7,9 @@ from eregion.core.image_operations import (
     do_digital_binning,
     find_vignetted_region,
     find_cosmic_rays,
+    mean_combine,
+    median_combine,
+    label_cosmic_rays,
     welford_update,
     welford_finalize,
     stochastic_median_update,
@@ -216,6 +219,22 @@ def test_find_cosmic_rays_raises_on_bad_input():
         find_cosmic_rays(image, mask=np.zeros((10, 10), dtype=bool), **CR_ARGS)
 
 
+@pytest.mark.parametrize("combine, key, npfunc", [
+    (mean_combine, "mean", np.ma.mean),
+    (median_combine, "median", np.ma.median),
+])
+def test_combine_returns_statistic_under_its_name(combine, key, npfunc):
+    rng = np.random.default_rng(3)
+    images = [np.ma.MaskedArray(rng.normal(10.0, 1.0, (4, 5)), mask=rng.random((4, 5)) < 0.2) for _ in range(7)]
+
+    stats = combine(images)
+    stacked = np.ma.stack(images, axis=0)
+
+    assert set(stats) == {key, "std", "count"}
+    np.testing.assert_allclose(stats[key], npfunc(stacked, axis=0))
+    np.testing.assert_array_equal(stats["count"], stacked.count(axis=0))
+
+
 def _stream_welford(images, valids):
     count = np.zeros(images[0].shape)
     mean = np.zeros(images[0].shape)
@@ -231,7 +250,7 @@ def test_welford_matches_numpy_mean_and_std():
 
     stats = welford_finalize(*_stream_welford(images, [np.ones((6, 7), bool)] * len(images)))
 
-    np.testing.assert_allclose(stats["data"], images.mean(axis=0), rtol=1e-10)
+    np.testing.assert_allclose(stats["mean"], images.mean(axis=0), rtol=1e-10)
     np.testing.assert_allclose(stats["std"], images.std(axis=0, ddof=1), rtol=1e-8)
     assert np.all(stats["count"] == len(images))
 
@@ -246,10 +265,10 @@ def test_welford_with_masks_matches_masked_numpy_and_gives_nan_for_low_counts():
     stats = welford_finalize(*_stream_welford(images, ~masks))
     ma = np.ma.MaskedArray(images, mask=masks)
 
-    np.testing.assert_allclose(stats["data"][1:], ma.mean(axis=0).filled(np.nan)[1:], rtol=1e-10)
+    np.testing.assert_allclose(stats["mean"][1:], ma.mean(axis=0).filled(np.nan)[1:], rtol=1e-10)
     np.testing.assert_allclose(stats["std"][1:], ma.std(axis=0, ddof=1).filled(np.nan)[1:], rtol=1e-8)
-    assert np.isnan(stats["data"][0, 0]) and np.isnan(stats["std"][0, 0])
-    assert stats["data"][0, 1] == images[0, 0, 1] and np.isnan(stats["std"][0, 1])
+    assert np.isnan(stats["mean"][0, 0]) and np.isnan(stats["std"][0, 0])
+    assert stats["mean"][0, 1] == images[0, 0, 1] and np.isnan(stats["std"][0, 1])
     np.testing.assert_array_equal(stats["count"], (~masks).sum(axis=0))
 
 
@@ -275,3 +294,24 @@ def test_streaming_updates_reject_mismatched_shapes():
         welford_update(good.copy(), good.copy(), good.copy(), np.zeros((3, 4)), np.ones((3, 3), bool))
     with pytest.raises(ValueError, match="same shape"):
         stochastic_median_update(good.copy(), good.copy(), good.copy(), good, np.ones((2, 3), bool))
+
+
+def test_label_cosmic_rays_counts_groups_and_connectivity():
+    mask = np.zeros((10, 10), dtype=bool)
+    mask[1:3, 1:3] = True
+    mask[6, 6] = mask[7, 7] = True  # diagonal neighbors
+
+    labels, n = label_cosmic_rays(mask)
+    assert n == 2 and labels.dtype == np.int32
+    assert np.array_equal(labels > 0, mask)
+    assert labels[6, 6] == labels[7, 7] != labels[1, 1]
+
+    labels4, n4 = label_cosmic_rays(mask, connectivity=1)
+    assert n4 == 3 and labels4[6, 6] != labels4[7, 7]
+
+
+def test_label_cosmic_rays_raises_on_bad_input():
+    with pytest.raises(ValueError, match="2D"):
+        label_cosmic_rays(np.zeros((2, 2, 2), dtype=bool))
+    with pytest.raises(ValueError, match="connectivity"):
+        label_cosmic_rays(np.zeros((2, 2), dtype=bool), connectivity=3)

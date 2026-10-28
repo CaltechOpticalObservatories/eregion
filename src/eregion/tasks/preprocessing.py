@@ -9,7 +9,7 @@ from functools import wraps
 
 from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
-from eregion.core.image_operations import sigma_clip_image, find_vignetted_region, find_cosmic_rays
+from eregion.core.image_operations import sigma_clip_image, find_vignetted_region, find_cosmic_rays, label_cosmic_rays
 from eregion.core.image_stats import do_statistics, STATFUNCS
 from eregion.tasks import LazyTask, ImageResult
 
@@ -402,20 +402,27 @@ class CosmicRayMasking(BasePreprocessingTask):
                  name: Optional[str] = "cosmic_ray_masking",
                  lacosmic_args: Optional[dict[str, Any]] = None,
                  use_existing_masks: bool = True,
+                 label_cosmic_rays: bool = False,
+                 label_connectivity: int = 2,
                  **kwargs
     ) -> None:
         """
-        Create a cosmic ray mask per output with the L.A.Cosmic algorithm (lacosmic package). 'ccd' method searches the
-        image region, serial overscan and parallel overscan of a CCDOutput separately, so the step between the
-        illuminated image region and the scans is not flagged as cosmic rays (prescans are not searched). 'simple' method
-        searches the whole output at once. Outputs that are not CCDOutput are always searched as a whole.
-        Masks are saved in output.masks["cosmic_ray_mask"] for later use.
+        Create a cosmic ray mask per output with the L.A.Cosmic algorithm (lacosmic package) and save in
+        output.masks["cosmic_ray_mask"].
+
+        - 'ccd' method searches the image region, serial overscan and parallel overscan of a CCDOutput separately
+        - 'simple' method searches the whole output at once. Applies to non CCDOutput Outputs.
+
+        If label_cosmic_rays is True, each connected group of cosmic ray pixels in the full image mask also gets a
+        unique integer label, saved in DetImage.labels["cosmic_ray_labels"] (0 is background, attrs["num_labels"] is
+        the number of cosmic rays).
 
         The per-pixel noise model is chosen in this order:
-        1. the DetImage 'std' plane, if present, is used as the 1-sigma error.
-        2. effective_gain and readnoise from lacosmic_args, if given.
-        3. effective_gain = 1 and readnoise = robust (MAD) std of the serial overscan for a CCDOutput, or of the whole
-           output data otherwise. In 2. any missing one of the two is filled the same way.
+
+          1. the DetImage 'std' plane, if present, is used as the 1-sigma error.
+          2. effective_gain and readnoise from lacosmic_args, if given.
+          3. effective_gain = 1 and readnoise = robust (MAD) std of the serial overscan for a CCDOutput, or of the whole
+             output data otherwise. In 2. any missing one of the two is filled the same way.
 
         :param name: Optional[str]
         :param lacosmic_args: Optional[dict[str, Any]]
@@ -423,16 +430,25 @@ class CosmicRayMasking(BasePreprocessingTask):
             neighbor_threshold, effective_gain, readnoise, maxiter, border_mode.
         :param use_existing_masks: bool
             If True, pixels already flagged in the output's combined mask are ignored during detection. Default is True.
+        :param label_cosmic_rays: bool
+            If True, label the found cosmic rays in DetImage.labels["cosmic_ray_labels"]. Default is False.
+        :param label_connectivity: int
+            1 for 4-connected or 2 for 8-connected (diagonal tracks stay one cosmic ray) labeling. Default is 2.
         :keyword method: Optional[str]
             'ccd' (default) or 'simple', see above.
         """
         if 'method' not in kwargs:
             kwargs['method'] = 'ccd'
         super().__init__(name=name, **kwargs)
+
         self.lacosmic_args = dict(lacosmic_args or {})
         if "error" in self.lacosmic_args or "mask" in self.lacosmic_args:
             raise ValueError("lacosmic_args cannot contain 'error' or 'mask', they are set per output.")
         self.use_existing_masks = use_existing_masks
+        if label_connectivity not in (1, 2):
+            raise ValueError(f"label_connectivity must be 1 or 2, got {label_connectivity}.")
+        self.label_cosmic_rays = label_cosmic_rays
+        self.label_connectivity = label_connectivity
 
     def _process_single_image(self, img: DetImage) -> DetImage:
         """
@@ -449,7 +465,23 @@ class CosmicRayMasking(BasePreprocessingTask):
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self.method(output, has_std)
         img.image_type.update({"cosmic_ray_masked": img._build_full_mask()})
+        if self.label_cosmic_rays:
+            self._label_image(img)
         return img
+
+    def _label_image(self, img: DetImage) -> None:
+        """
+        Label the cosmic rays in the full image mask, so a cosmic ray crossing an output boundary keeps one label, and
+        save them in img.labels["cosmic_ray_labels"].
+        """
+        cr_mask = img.get_mask("cosmic_ray_mask")
+        if cr_mask is None:
+            cr_mask = xr.zeros_like(img.data, dtype=bool)
+        labels, nlabels = label_cosmic_rays(cr_mask.values, connectivity=self.label_connectivity)
+        label_arr = cr_mask.copy(data=labels)
+        label_arr.attrs["num_labels"] = nlabels
+        img.set_labels("cosmic_ray_labels", label_arr)
+        self.logger.info(f"DetImage {img.id}: labeled {nlabels} cosmic rays.")
 
     def _noise_args(self, output: Output, has_std: bool) -> dict[str, Any]:
         """

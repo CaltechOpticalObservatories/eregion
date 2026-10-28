@@ -20,10 +20,11 @@ def median_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str
     Returns
     -------
     dict
-        A dictionary containing the median-combined image, standard deviation, and count of pixels used in the combination.
+        A dictionary with the median-combined image under 'median', standard deviation under 'std', and count of pixels
+        used in the combination under 'count'.
     """
     stacked_images = np.ma.stack(images, axis=0)
-    stats = do_statistics(data=stacked_images, which={'data': np.ma.median, 'std': np.ma.std, 'count': np.ma.count},
+    stats = do_statistics(data=stacked_images, which={'median': np.ma.median, 'std': np.ma.std, 'count': np.ma.count},
                           axis=0)
     return stats
 
@@ -40,10 +41,11 @@ def mean_combine(images: Sequence[np.ndarray | np.ma.MaskedArray]) -> dict[str, 
     Returns
     -------
     dict
-        A dictionary containing the mean-combined image, standard deviation, and count of pixels used in the combination.
+        A dictionary with the mean-combined image under 'mean', standard deviation under 'std', and count of pixels
+        used in the combination under 'count'.
     """
     stacked_images = np.ma.stack(images, axis=0)
-    stats = do_statistics(data=stacked_images, which={'data': np.ma.mean, 'std': np.ma.std, 'count': np.ma.count},
+    stats = do_statistics(data=stacked_images, which={'mean': np.ma.mean, 'std': np.ma.std, 'count': np.ma.count},
                           axis=0)
     return stats
 
@@ -79,12 +81,12 @@ def welford_finalize(count: np.ndarray, mean: np.ndarray, m2: np.ndarray) -> dic
     :param count: np.ndarray, number of valid samples per pixel
     :param mean: np.ndarray, running mean per pixel
     :param m2: np.ndarray, running sum of squared deviations from the mean per pixel
-    :return: dict with 'data' (mean), 'std' and 'count' arrays
+    :return: dict with 'mean', 'std' and 'count' arrays
     """
     _check_same_shape(count=count, mean=mean, m2=m2)
-    data = np.where(count > 0, mean, np.nan)
+    mean_out = np.where(count > 0, mean, np.nan)
     std = np.sqrt(np.divide(m2, count - 1, out=np.full_like(m2, np.nan, dtype=float), where=count > 1))
-    return {'data': data, 'std': std, 'count': count.copy()}
+    return {'mean': mean_out, 'std': std, 'count': count.copy()}
 
 def stochastic_median_update(median: np.ndarray, count: np.ndarray, std: np.ndarray,
                              image: np.ndarray, valid: np.ndarray) -> None:
@@ -283,6 +285,25 @@ def find_cosmic_rays(
                                 effective_gain=effective_gain, readnoise=readnoise, maxiter=maxiter,
                                 border_mode=border_mode)
     return cr_mask
+
+
+def label_cosmic_rays(cr_mask: np.ndarray, connectivity: int = 2) -> tuple[np.ndarray, int]:
+    """
+    Label each connected group of cosmic ray pixels with a unique integer using scipy.ndimage.label.
+
+    :param cr_mask: 2D boolean array, True where a cosmic ray was found.
+    :param connectivity: 1 for 4-connected (edge neighbors only), 2 for 8-connected (diagonal neighbors too, keeps
+        diagonal cosmic ray tracks as one label).
+    :return: tuple of (2D int32 label array with 0 as background and 1..N for the cosmic rays, N).
+    """
+    cr_mask = np.asarray(cr_mask, dtype=bool)
+    if cr_mask.ndim != 2:
+        raise ValueError(f"cr_mask must be 2D, got {cr_mask.ndim}D.")
+    if connectivity not in (1, 2):
+        raise ValueError(f"connectivity must be 1 or 2, got {connectivity}.")
+    labels = np.zeros(cr_mask.shape, dtype=np.int32)
+    nlabels = ndimage.label(cr_mask, structure=ndimage.generate_binary_structure(2, connectivity), output=labels)
+    return labels, nlabels
 
 
 def flip_and_rotate(image: np.ndarray, angle: float, flip_x: bool=False, flip_y: bool=False) -> np.ndarray:

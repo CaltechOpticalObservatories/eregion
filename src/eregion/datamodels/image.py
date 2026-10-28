@@ -483,6 +483,8 @@ class DetImage:
         meta: DetImageMeta or dict - Metadata for the detector image.
         id: str | int - Identifier for the corresponding detector taken from 'name' key in detector config.
         image_type: dict[str, Any] - Mapping of any image identifying keys to their values like 'type', 'exptime', 'mode', etc.
+        masks: xr.Dataset or None - Full image boolean masks built from the outputs' masks.
+        labels: xr.Dataset or None - Full image integer label images (e.g. 'cosmic_ray_labels'), set with set_labels().
         _data: Internal attribute for storing image data when loaded.
         _dataloader: Internal variable for storing data loader Callable for on-demand loading.
 
@@ -503,6 +505,7 @@ class DetImage:
         self._data: xr.Dataset | None = None
         self._dataloader: Callable | None = None
         self.masks: xr.Dataset | None = None
+        self.labels: xr.Dataset | None = None
 
         if data is not None:
             self.set_data(data)
@@ -708,6 +711,25 @@ class DetImage:
             return all(a == b for a, b in zip(propsize, opshape))
         return None
 
+    def set_labels(self, label_key: str, labels: xr.DataArray) -> None:
+        """
+        Store a full image integer label array (0 is background) in self.labels under label_key, replacing any
+        existing labels with the same key.
+        :param label_key: str, name of the label data_var in self.labels.
+        :param labels: xr.DataArray of integers with the same dims and shape as self.data.
+        :return: None
+        """
+        if not np.issubdtype(labels.dtype, np.integer):
+            raise TypeError(f"labels must have an integer dtype, got {labels.dtype}.")
+        data = self.data
+        if labels.dims != data.dims or labels.shape != data.shape:
+            raise ValueError(f"labels dims/shape {labels.dims}{labels.shape} do not match image data "
+                             f"{data.dims}{data.shape}.")
+        if self.labels is None:
+            self.labels = labels.to_dataset(name=label_key)
+        else:
+            self.labels[label_key] = labels
+
     def _build_full_mask(self) -> bool:
         """
         Build a full mask from the individual output masks.
@@ -814,13 +836,20 @@ class DetImage:
         if isinstance(data, xr.DataArray):
             ds_to_save = data.to_dataset(name='data')
         else:
-            ds_to_save = data
+            # shallow copy so adding masks/labels below does not change self._data
+            ds_to_save = data.copy()
         # add masks if they exist
         if self.masks is not None:
             ds_to_save.update(self.masks)
             ds_to_save.attrs['mask_keys'] = json.dumps(list(self.masks.data_vars.keys()))
         else:
             ds_to_save.attrs['mask_keys'] = json.dumps([])
+        # add labels if they exist
+        if self.labels is not None:
+            ds_to_save.update(self.labels)
+            ds_to_save.attrs['label_keys'] = json.dumps(list(self.labels.data_vars.keys()))
+        else:
+            ds_to_save.attrs['label_keys'] = json.dumps([])
         # convert meta to dict to store in attrs
         ds_to_save.attrs["meta"] = self.meta.to_json()
         ds_to_save.attrs["image_type"] = json.dumps(self.image_type)
@@ -849,7 +878,10 @@ class DetImage:
         loaded_ds = xr.load_dataset(filepath)
         mask_keys = json.loads(loaded_ds.attrs['mask_keys'])
         masks = loaded_ds[mask_keys] if len(mask_keys) > 0 else None
-        data = loaded_ds.drop_vars(mask_keys)
+        # files saved before labels were added have no 'label_keys' attr
+        label_keys = json.loads(loaded_ds.attrs.get('label_keys', '[]'))
+        labels = loaded_ds[label_keys] if len(label_keys) > 0 else None
+        data = loaded_ds.drop_vars(mask_keys + label_keys)
         meta = DetImageMeta.from_json(loaded_ds.attrs['meta'])
 
         outputs = {}
@@ -863,6 +895,7 @@ class DetImage:
 
         detimg = cls(data=data, output_objects=outputs, meta=meta)
         detimg.masks = masks
+        detimg.labels = labels
         detimg.image_type = json.loads(loaded_ds.attrs["image_type"])
         return detimg
 

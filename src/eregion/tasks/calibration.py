@@ -128,10 +128,13 @@ class MasterCombine(Task):
         Create a master calibration frame from a list of calibration frames using the specified method.
         :param images: list of numpy arrays
             List of detector images containing calibration frames.
-        :return: master_cal: tuple of numpy arrays
-            The generated master calibration frame.
+        :return: master_cal: dict of numpy arrays
+            The generated master calibration frame under 'data', plus the 'std' and 'count' planes.
         """
-        return self.method(images)
+        mcdict = self.method(images)
+        # core combine functions return the combined image under the statistic name ('median' or 'mean')
+        mcdict['data'] = mcdict.pop(self.method_name)
+        return mcdict
 
     @property
     def methods(self):

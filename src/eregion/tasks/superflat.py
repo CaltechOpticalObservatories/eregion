@@ -113,6 +113,7 @@ class SuperCombine(Task):
         with np.errstate(divide='ignore', invalid='ignore'):
             if self.method_name == 'welford':
                 stats = welford_finalize(counts.values, ds['mean'].values, ds['m2'].values)
+                stats['data'] = stats.pop('mean')
                 out = xr.Dataset({key: counts.copy(data=val) for key, val in stats.items()})
                 out['median'] = ds['median'].where(counts > 0)
             else:

@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 import xarray as xr
 from astropy.io import fits
 
@@ -296,3 +297,29 @@ def test_detimage_shape_from_data_and_default_output():
     out = det.outputs["0"]
     assert out.output_slice == (slice(0, 4), slice(0, 6))
     assert out.data.shape == (4, 6)
+
+
+def test_detimage_labels_roundtrip_netcdf_and_validation(tmp_path):
+    det = DetImage(
+        data=make_dataarray((4, 6)),
+        meta=DetImageMeta(
+            name="D1",
+            properties=DetectorProperties(pixel_size=0.01, x_size=6, y_size=4),
+            focal_plane_position=None,
+        ),
+    )
+    labels = xr.zeros_like(det.data, dtype=np.int32)
+    labels[1, 2] = 1
+    det.set_labels("cosmic_ray_labels", labels)
+
+    det.to_netcdf(str(tmp_path / "labeled.nc"))
+    assert set(det.get_data("all").data_vars) == {"data"}
+
+    loaded = DetImage.from_netcdf(str(tmp_path / "labeled.nc"))
+    assert set(loaded.get_data("all").data_vars) == {"data"}
+    np.testing.assert_array_equal(loaded.labels["cosmic_ray_labels"].values, labels.values)
+
+    with pytest.raises(TypeError, match="integer"):
+        det.set_labels("bad", xr.zeros_like(det.data))
+    with pytest.raises(ValueError, match="shape"):
+        det.set_labels("bad", make_dataarray((3, 3)).astype(np.int32))
