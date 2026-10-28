@@ -112,7 +112,7 @@ def stochastic_median_update(median: np.ndarray, count: np.ndarray, std: np.ndar
 def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray,
                      sigma: float,
                      axis: int | None=None,
-                     **kwargs) -> np.ma.MaskedArray:
+                     **kwargs):
     """
     Apply sigma clipping (astropy.stats.sigma_clip) to an image.
 
@@ -129,8 +129,7 @@ def sigma_clip_image(image: np.ndarray | np.ma.MaskedArray,
 
     Returns
     -------
-    np.ma.MaskedArray
-        The sigma-clipped image.
+    The sigma-clipped image.
     """
     masked = sigma_clip(image, sigma=sigma, axis=axis, **kwargs)
     return masked

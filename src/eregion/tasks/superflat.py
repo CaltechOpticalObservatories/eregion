@@ -1,17 +1,12 @@
-import pandas as pd
 from copy import deepcopy
 import numpy as np
 import xarray as xr
-from typing import Optional
-from pydantic import Field, ConfigDict
-import os
+from typing import Callable
 
 from eregion.tasks import Task
-from eregion.datamodels import DetImage, ImageBundle, FPImageBundle
+from eregion.datamodels import DetImage, ImageBundle
 from eregion.tasks.imagegen import ImageResult
-from eregion.core.image_stats import do_statistics, STATFUNCS
 from eregion.core.image_operations import welford_update, welford_finalize, stochastic_median_update
-from eregion.utils.io_utils import save_dataframe_to_fits, load_dataframe_from_fits
 
 
 class SuperCombine(Task):
@@ -129,7 +124,7 @@ class SuperCombine(Task):
         return out
 
     @property
-    def final_image_result(self):
+    def final_image_result(self) -> ImageResult:
         if self.dataset is None:
             raise AttributeError("No combined superimage to return!!!")
         if self.superimage.num_outputs == 0:
@@ -147,7 +142,7 @@ class SuperCombine(Task):
         return self.final_image_result
 
     @property
-    def methods(self):
+    def methods(self) -> dict[str, Callable]:
         return {
             'mean': self.mean_combine,
             'welford': self.welford_combine

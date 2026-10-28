@@ -250,9 +250,14 @@ class PTC(LazyTask):
         ptc_df = pd.DataFrame(ptc_tab)
 
         file_sfx = df[~df['diff']]['seqnum'].unique()
+        for oper in ["mean", "median"]:
+            ptc_df[oper] = ptc_df[[f"{oper}_{sfx}" for sfx in file_sfx]].mean(axis=1)
+
         diff_sfx = df[df['diff']]['seqnum'].unique()
-        ptc_df['mean'] = ptc_df[[f'mean_{sfx}' for sfx in file_sfx]].mean(axis=1)
-        ptc_df['median'] = ptc_df[[f'median_{sfx}' for sfx in file_sfx]].mean(axis=1)
-        ptc_df['std'] = ptc_df[[f'std_{sfx}' for sfx in diff_sfx]].mean(axis=1)/np.sqrt(2) # divide by sqrt(2) because this noise is from difference of two images
-        ptc_df['mad'] = ptc_df[[f'mad_{sfx}' for sfx in diff_sfx]].mean(axis=1)/np.sqrt(2)
+        for oper in ["std", "mad"]:
+            ptc_df[oper] = ptc_df[[f"{oper}_{sfx}" for sfx in diff_sfx]].mean(axis=1)
+
+        ptc_df["std"] /= np.sqrt(2)
+        ptc_df["mad"] /= np.sqrt(2)
+
         return ptc_df
