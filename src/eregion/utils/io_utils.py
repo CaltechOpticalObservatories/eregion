@@ -197,12 +197,25 @@ def load_dataframe_from_fits(filepath: str) -> pd.DataFrame:
 def _choose_minimal_numpy_dtype(vals: Iterable[float | int]) -> Type[np.dtype]:
     mintp = None
     for v in vals:
+        if isinstance(v, float) and mintp is None:
+            # python native floats are 64-bit, don't lose precision for now
+            # at the expense of storage
+            mintp = np.float64
         ot = np.min_scalar_type(v)
         if mintp is None:
             mintp = ot
         else:
             mintp = np.promote_types(mintp, ot)
     return mintp
+
+
+def _fits_column_from_list(values: list, name: str, unit) -> fits.Column:
+    dtp = _choose_minimal_numpy_dtype(values)
+    fmt = _fits_format_code(dtp)
+    outarr = np.array(values, dtype=dtp)
+    unit = "" if unit is None else unit
+    outcol = fits.Column(name=name, array=outarr, format=fmt, unit=unit)
+    return outcol
 
 
 def _quantity_column_to_fits_column(
@@ -232,15 +245,10 @@ def _quantity_column_to_fits_column(
                 yield qout.magnitude, None
 
     outqtups = list(_generate_qvals(series))
-    nomvals, errvals = zip(*outqtups)
-    nomvals = list(nomvals)
-    nomdtp = _choose_minimal_numpy_dtype(nomvals)
-    nomfmt = _fits_format_code(nomdtp)
-    nomvals = np.array(nomvals, dtype=nomdtp)
     unt = _pint_unit_to_fits_unit(outunit)
-
-    outcols = []
-    outcols.append(fits.Column(name=name, array=nomvals, format=nomfmt, unit=unt))
+    nomvals, errvals = zip(*outqtups)
+    nomcol = _fits_column_from_list(list(nomvals), name, unt)
+    outcols = [nomcol]
 
     if all(_ is None for _ in errvals):
         # one column case, same as before
@@ -249,12 +257,30 @@ def _quantity_column_to_fits_column(
     # we have error column
     # note the above procedure ensured it's in the correct units already
     errname = f"{name}_err"
-    errvals = list(errvals)
-    errdtp = _choose_minimal_numpy_dtype(errvals)
-    errvals = np.array(errvals, dtype=errdtp)
-    errfmt = _fits_format_code(errdtp)
+    errcol = _fits_column_from_list(list(errvals), errname, unt)
+    outcols.append(errcol)
+    return outcols
 
-    outcols.append(fits.Column(name=errname, array=errvals, format=errfmt, unit=unt))
+
+def _unc_column_to_fits_column(
+    name: str, series: list[unc.Variable | None]
+) -> list[fits.Column]:
+    if len(series) == 0:
+        raise ValueError("require non-zero length series")
+
+    errname = f"{name}_err"
+
+    def _generate_vals(series):
+        for v in series:
+            if v is None:
+                yield np.nan, np.nan
+                continue
+            yield v.nominal_value, v.std_dev
+
+    nomvals, errvals = zip(*_generate_vals(series))
+    nomcol = _fits_column_from_list(list(nomvals), name, None)
+    errcol = _fits_column_from_list(list(errvals), errname, None)
+    outcols = [nomcol, errcol]
     return outcols
 
 
@@ -330,6 +356,9 @@ def _dataframe_column_to_fits_column(
 
     if all(isinstance(value, (pint.Quantity)) for value in non_null):
         return _quantity_column_to_fits_column(name, values)
+
+    if all(isinstance(value, (unc.Variable)) for value in non_null):
+        return _unc_column_to_fits_column(name, values)
 
     raise TypeError(
         f"Unsupported dataframe column '{name}' with values of type {type(non_null[0]).__name__}."
