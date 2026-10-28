@@ -269,7 +269,7 @@ def _unc_column_to_fits_column(
     def _generate_vals(series):
         for v in series:
             if v is None:
-                yield np.nan, 0.0
+                yield np.nan, np.nan
                 continue
             yield v.nominal_value, v.std_dev
 
