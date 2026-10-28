@@ -197,6 +197,10 @@ def load_dataframe_from_fits(filepath: str) -> pd.DataFrame:
 def _choose_minimal_numpy_dtype(vals: Iterable[float | int]) -> Type[np.dtype]:
     mintp = None
     for v in vals:
+        if isinstance(v, float) and mintp is None:
+            # python native floats are 64-bit, don't lose precision for now
+            # at the expense of storage
+            mintp = np.float64
         ot = np.min_scalar_type(v)
         if mintp is None:
             mintp = ot
