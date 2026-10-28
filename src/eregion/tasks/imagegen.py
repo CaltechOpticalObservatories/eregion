@@ -314,7 +314,7 @@ class ImageCreator(LazyTask):
             if not glob2.fnmatch.fnmatch(
                 os.path.basename(filename), obj["filename_format"]
             ):
-                self.logger.info(
+                self.logger.debug(
                     "Skipping file %s as it does not match filename format for this object (%s)",
                     filename,
                     obj["filename_format"],

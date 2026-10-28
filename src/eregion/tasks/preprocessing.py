@@ -182,9 +182,7 @@ class ScanSubtraction(BasePreprocessingTask):
         :keyword trim_end: int
             number of indices to trim from the end of the scan region before calculating the subtraction value. Default is 0.
         """
-        if 'method' not in kwargs:
-            self.logger.warning("'method' not specified, defaulting to 'median_by_axis'.")
-            kwargs['method'] = 'median_by_axis'
+        kwargs['method'] = kwargs.get('method','median_by_axis')
         super().__init__(name=name, **kwargs)
         self.which_scan = which_scan.lower()
         if self.which_scan not in ["serial_prescan", "serial_overscan", "parallel_prescan", "parallel_overscan"]:
