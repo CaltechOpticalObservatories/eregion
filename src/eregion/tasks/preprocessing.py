@@ -402,7 +402,7 @@ class CosmicRayMasking(BasePreprocessingTask):
                  name: Optional[str] = "cosmic_ray_masking",
                  lacosmic_args: Optional[dict[str, Any]] = None,
                  use_existing_masks: bool = True,
-                 label_cosmic_rays: bool = False,
+                 label: bool = False,
                  label_connectivity: int = 2,
                  **kwargs
     ) -> None:
@@ -413,7 +413,7 @@ class CosmicRayMasking(BasePreprocessingTask):
         - 'ccd' method searches the image region, serial overscan and parallel overscan of a CCDOutput separately
         - 'simple' method searches the whole output at once. Applies to non CCDOutput Outputs.
 
-        If label_cosmic_rays is True, each connected group of cosmic ray pixels in the full image mask also gets a
+        If label is True, each connected group of cosmic ray pixels in the full image mask also gets a
         unique integer label, saved in DetImage.labels["cosmic_ray_labels"] (0 is background, attrs["num_labels"] is
         the number of cosmic rays).
 
@@ -430,7 +430,7 @@ class CosmicRayMasking(BasePreprocessingTask):
             neighbor_threshold, effective_gain, readnoise, maxiter, border_mode.
         :param use_existing_masks: bool
             If True, pixels already flagged in the output's combined mask are ignored during detection. Default is True.
-        :param label_cosmic_rays: bool
+        :param label: bool
             If True, label the found cosmic rays in DetImage.labels["cosmic_ray_labels"]. Default is False.
         :param label_connectivity: int
             1 for 4-connected or 2 for 8-connected (diagonal tracks stay one cosmic ray) labeling. Default is 2.
@@ -447,7 +447,7 @@ class CosmicRayMasking(BasePreprocessingTask):
         self.use_existing_masks = use_existing_masks
         if label_connectivity not in (1, 2):
             raise ValueError(f"label_connectivity must be 1 or 2, got {label_connectivity}.")
-        self.label_cosmic_rays = label_cosmic_rays
+        self.label = label
         self.label_connectivity = label_connectivity
 
     def _process_single_image(self, img: DetImage) -> DetImage:
@@ -465,7 +465,7 @@ class CosmicRayMasking(BasePreprocessingTask):
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self.method(output, has_std)
         img.image_type.update({"cosmic_ray_masked": img._build_full_mask()})
-        if self.label_cosmic_rays:
+        if self.label:
             self._label_image(img)
         return img
 
