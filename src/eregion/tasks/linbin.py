@@ -11,6 +11,7 @@ import os
 from pydantic import Field
 from typing import Callable, Generator, Literal
 import numpy as np
+import xarray as xr
 import pandas as pd
 
 from eregion.tasks import LazyTask
@@ -164,6 +165,8 @@ class LinBin(LazyTask):
             # bin mask if it exists
             if immask is not None:
                 binned_mask = do_digital_binning(immask.astype(int), binsizes=self.bins, binaxis=binaxint).astype(bool)
+                if mask_key not in output.masks:
+                    output.masks[mask_key] = xr.zeros_like(output.data, dtype=bool)
                 output.set_mask(mask_key,
                                 set_slice_in_data(ensure_dataarray(binned_mask), output.masks[mask_key], imslc),
                                 combine=False
