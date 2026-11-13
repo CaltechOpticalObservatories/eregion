@@ -3,7 +3,7 @@ A Mappable base class for task outputs, replacing the older dict[str, Any].
 
 This module provides a base class that combines the benefits of dataclasses (typed fields,
 IDE autocomplete, refactor safety) with the flexibility of dict-like access (str keys,
-dynamic wiring in pipelines).
+dynamic wiring in flows).
 
 The Mapping-facing API intentionally exposes only task payload fields. Execution metadata
 (``params``, ``upstream``, and ``timestamp``) remains available as attributes and through
@@ -13,13 +13,13 @@ Each Task subclass defines a concrete Result class that:
   1. Inherits from TaskResult
   2. Defines typed fields for each output
   3. Returns instances instead of raw dicts
-  4. Enables early validation of pipeline wiring
+  4. Enables early validation of flow wiring
 
 Design rationale:
-  - Mapping protocol (__getitem__, keys(), items(), etc.) allows dict-like access for pipelines
+  - Mapping protocol (__getitem__, keys(), items(), etc.) allows dict-like access for flows
   - Pydantic BaseModel gives runtime validation, serialization, and field constraints
   - Explicit fields (vs Any) enable IDE autocompletion and type safety
-  - get_schema() class method enables discovery of available keys before pipeline runs
+  - get_schema() class method enables discovery of available keys before flow runs
 """
 
 from __future__ import annotations
@@ -27,7 +27,8 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from collections.abc import Mapping
-from typing import Any, Iterator
+from types import UnionType
+from typing import Any, Iterator, Union, get_args, get_origin
 from pydantic import ConfigDict, Field
 from astropy.time import Time
 import os
@@ -231,7 +232,7 @@ class TaskResult(Mappable):
         """
         Return the output schema (field names, types, descriptions, defaults).
 
-        Useful for pipeline builders to:
+        Useful for flow builders to:
           - Validate task wiring before execution
           - Show users available output keys
           - Detect typos in key names early
@@ -279,7 +280,7 @@ class TaskResult(Mappable):
         """
         Return a dummy/empty instance of this result class.
 
-        Useful for pipeline introspection (e.g., "what keys does this task output?")
+        Useful for flow introspection (e.g., "what keys does this task output?")
         without running the task. Required fields get type-appropriate defaults,
         optional ones use their declared defaults.
 
@@ -296,6 +297,12 @@ class TaskResult(Mappable):
         """
         def get_type_default(annotation):
             """Get a sensible default for a type."""
+            # An optional field is happy with None; for a union of concrete types, stand in for the first one
+            union_args = get_args(annotation)
+            if get_origin(annotation) in (Union, UnionType) and union_args:
+                if type(None) in union_args:
+                    return None
+                annotation = union_args[0]
             try:
                 # Check the type annotation
                 type_name = getattr(annotation, '__name__', str(annotation))
@@ -312,6 +319,9 @@ class TaskResult(Mappable):
                     return []
                 elif 'dict' in type_name.lower():
                     return {}
+                elif isinstance(annotation, type):
+                    # A concrete class (e.g. ImageBundle): an argument-less instance is its empty value
+                    return annotation()
                 else:
                     return None
             except:
@@ -323,14 +333,11 @@ class TaskResult(Mappable):
                 # Get a type-appropriate default
                 kwargs[field_name] = get_type_default(field_info.annotation)
             else:
-                # Use the field's default or default_factory
-                if field_info.default is not None:
-                    kwargs[field_name] = field_info.default
-                elif field_info.default_factory is not None:
+                # An optional field always declares a default, which may legitimately be None
+                if field_info.default_factory is not None:
                     kwargs[field_name] = field_info.default_factory()
                 else:
-                    # Fall back to None or type default
-                    kwargs[field_name] = get_type_default(field_info.annotation)
+                    kwargs[field_name] = field_info.default
 
         try:
             instance = cls(**kwargs)

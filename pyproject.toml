@@ -21,7 +21,6 @@ dependencies = [
     "astropy>=7.0",
     "matplotlib>=3.9",
     "glob2>=0.7",
-    "prefect>=2.15.0",
     "pyyaml>=6.0.3",
     "pydantic>=2.12.4",
     "joblib>=1.5.3",

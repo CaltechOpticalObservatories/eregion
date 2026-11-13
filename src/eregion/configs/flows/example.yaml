@@ -1,0 +1,82 @@
+# This is an example flow configuration, documenting every key the flow runner understands.
+# It is a template, not a runnable flow: `task: package.module.class` is a placeholder, so loading
+# it validates the schema but building a flow runner from it will fail to import the tasks.
+
+debug: false   # Optional: set to true to enable debug mode (more verbose logging, etc.)
+
+flows:
+  - name: FLOW_1  # Name of the flow, required
+    description: Flow 1
+    lazy: false  # Set true if this flow should be run lazily (i.e. as images arrive)
+
+    nodes:  # List of tasks (nodes) in the flow
+      - name: TASK_1   # Name of the task node, required
+        task: package.module.class   # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
+        init:  # Initialization parameters (for Task.__init__); only `params`, outputs of other tasks are never passed to __init__
+          params: # Specify the kwargs needed to configure the task; refer to the task documentation for required and optional params and kwargs
+            param_1: value
+            param_2: value
+            # etc.
+        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters; use `inputs` to specify data coming from
+              # outputs of other tasks, and `params` for any additional parameters
+          inputs: # Specify any args needed from outputs of other tasks in this config
+            arg_1: flow_name.node_name.field_name # Each task's output is its own TaskResult subclass; reference a
+                                                   # named payload field on an upstream task's result with
+                                                   # 'flow.node.field'. Use 'flow.node' (no field) to pass
+                                                   # the whole upstream TaskResult instead. If the field's value
+                                                   # supports being called (e.g. ImageBundle), append a query
+                                                   # string to filter it, e.g. flow_name.node_name.field_name('type == "bias"')
+            arg_2: [flow_name.node_a, flow_name.node_b]  # A list of references is resolved into a list of values, in
+                                                          # this order (e.g. for a task taking several TaskResults)
+            arg_3:  # A mapping of references is resolved into a dict of values under the same keys
+              key_1: flow_name.node_a.field_name
+              key_2: flow_name.node_b.field_name
+            # etc.
+          params:
+            param_1: value
+            param_2: value
+            # etc.
+
+      - name: TASK_2
+        task: package.module.class
+        init:
+          params:
+            param_1: value
+            # etc.
+        run:
+          inputs:
+            arg_1: FLOW_1.TASK_1.field_name  # Example of using output from TASK_1 as input for TASK_2
+          params:
+            param_1: value
+            # etc.
+        depends_on: [TASK_1]   # Dependencies of this task, which fix the execution order. A bare node name is
+                               # assumed to be in this flow; write 'flow.node' for one in another.
+                               # Any node referenced under `run.inputs` is added automatically if it is
+                               # missing here, with a warning, so `depends_on` is only required for an
+                               # ordering constraint that no input expresses.
+
+  - name: FLOW_2
+    description: Flow 2
+    lazy: true  # This flow will be run lazily (i.e. as images arrive)
+    source: TASK_3  # Required for a lazy flow: the node whose `lazy_run()` yields the batches that
+                    # drive it. It must have no dependencies, so that it is the only node in the first
+                    # generation of the execution order; pull in other flows' results downstream of it.
+    nodes:
+      - name: TASK_3
+        task: package.module.class
+        init:
+          params:
+            param_1: value
+            # etc.
+        run:
+          params:  # The source node is fed by its own params, not by another task's output
+            param_1: value
+            # etc.
+
+      - name: TASK_4
+        task: package.module.class
+        run:
+          inputs:
+            arg_1: FLOW_2.TASK_3.field_name           # the batch yielded by the source node
+            arg_2: FLOW_1.TASK_2.field_name  # Example of using output from a task in another flow as input
+        depends_on: [TASK_3, FLOW_1.TASK_2]   # specify dependencies across flows as well
