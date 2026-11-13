@@ -4,7 +4,7 @@ Execution of the flows described in a yaml configuration.
 `FlowRunner` builds the graph (see `nodes.py`), checks it can run (`dry_run`), and then
 runs every flow in dependency order, collecting each task's `TaskResult`.
 """
-from typing import Iterator
+from collections.abc import Iterator
 from copy import deepcopy
 import inspect
 
@@ -106,8 +106,8 @@ class FlowRunner:
                         pass
                 else:
                     self.execute_eager_flow(flow)
-            except Exception as exc:
-                logger.exception(f"Flow '{flow.name}' failed: {exc}")
+            except Exception:
+                logger.exception(f"Flow '{flow.name}' failed")
                 raise
             logger.info(f"Flow '{flow.name}' complete")
 
@@ -143,8 +143,8 @@ class FlowRunner:
         batch_results = deepcopy(self.results)
         batches = execute_task(source, batch_results, lazy=True)
         if not isinstance(batches, Iterator):
-            raise ValueError(f"Source node '{source.name}' for lazy flow '{flow.name}' did not "
-                             f"return an iterator")
+            raise TypeError(f"Source node '{source.name}' for lazy flow '{flow.name}' did not "
+                            f"return an iterator")
 
         for batch in batches:
             batch_results[source.name] = batch.model_copy(

@@ -6,9 +6,9 @@ reference string in the flow yaml, e.g. ``images: masterbias_flow.bias_creator.d
 `ResultRef` is that reference, parsed once when the node is built; from then on the runner
 works with the parsed form and never looks at the text again.
 """
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 import re
 
 from eregion.utils import configure_logger
