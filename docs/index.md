@@ -6,9 +6,9 @@ Supports direct task usage in scripts and orchestration in config-driven DAG wor
 ## Key Features
 
 - Modular tasks — preprocessing, calibration, analysis, and image generation.
-- Dual usage — call tasks directly in scripts or chain them in a pipeline.
+- Dual usage — call tasks directly in scripts or chain them in a flow.
 - Reusable image ops — shared combine/stack core functionality in `core`.
-- Config-driven orchestration — Prefect-ready flows kept in `pipeline`.
+- Config-driven orchestration — YAML-defined flows (DAGs of tasks) built and run by `flow`.
 - Optional lazy execution — support for generator-style tasks.
 
 ## Installation
@@ -31,23 +31,23 @@ pip install -e '.[dev,test]'
 
 **Scripted** — import task classes from `eregion.tasks` and call `run(...)` or `__call__(...)`.
 
-**Orchestrated** — define a pipeline flow YAML describing a DAG of tasks, then run it from Python:
+**Orchestrated** — define a flow YAML describing a DAG of tasks, then run it from Python:
 
 ```python
-from eregion.pipeline import PipelineEngine
+from eregion.flow import FlowRunner
 
-engine = PipelineEngine("path/to/pipeline.yaml")
-engine.run()
+runner = FlowRunner("path/to/flow.yaml")
+runner.run()
 ```
 
 or from the command line:
 
 ```bash
-eregion validate path/to/pipeline.yaml   # build the DAG and print the execution plan, no tasks run
-eregion run path/to/pipeline.yaml        # build the DAG and execute it end-to-end
+eregion validate path/to/flow.yaml   # build the DAG and print the execution plan, no tasks run
+eregion run path/to/flow.yaml        # build the DAG and execute it end-to-end
 
 # Override ${...} placeholders in the config, and allow ${VAR} to fall back to env vars
-eregion run path/to/pipeline.yaml --var data_dir=/data/raw --env
+eregion run path/to/flow.yaml --var data_dir=/data/raw --env
 ```
 
 Run `eregion --help` for the full list of commands and options.

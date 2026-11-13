@@ -8,7 +8,7 @@ import threading
 from eregion.utils import configure_logger, load_class
 from eregion.datamodels import TaskResult
 
-# Base abstract class for tasks, should have a call method for direct execution and a run method for pipeline workflows
+# Base abstract class for tasks, should have a call method for direct execution and a run method for flows
 class Task(ABC):
     required_keys = []
     task_result = TaskResult

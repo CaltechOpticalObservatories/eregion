@@ -4,7 +4,7 @@ from eregion.datamodels import TaskResult
 class DeleteResult(Task):
     task_result = TaskResult
     """
-    Task to delete a result from the pipeline engine's self.results dictionary to free up memory.
+    Task to delete a result from the flow runner's self.results dictionary to free up memory.
     """
     def __init__(self, name: str = "delete"):
         super().__init__(name=name)
@@ -17,7 +17,7 @@ class DeleteResult(Task):
 class SaveResult(Task):
     task_result = TaskResult
     """
-    Task to save a result from the pipeline engine's self.results dictionary to disk.
+    Task to save a result from the flow runner's self.results dictionary to disk.
     """
     def __init__(self, name: str = "save"):
         super().__init__(name=name)

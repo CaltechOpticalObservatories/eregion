@@ -105,31 +105,48 @@ class DetectorConfig(ConfigLoader):
 
         super().validate_config()
 
-### Pipeline Configuration Class ###
-class PipelineConfig(ConfigLoader):
-    required_keys = ['pipelines']
-    required_pipeline_keys = ['name', 'lazy', 'nodes']
+### Flow Configuration Class ###
+class FlowConfig(ConfigLoader):
+    required_keys = ['flows']
+    required_flow_keys = ['name', 'lazy', 'nodes']
+    required_node_keys = ['name', 'task']
 
     def __init__(self, config_input, runtime_variables: Mapping | None = None, enable_env_vars: bool = False):
         """
-        Initialize the PipelineConfig either from a YAML config file path or config data in string or dict format.
+        Initialize the FlowConfig either from a YAML config file path or config data in string or dict format.
         :param config_input: str or dict
             Path to a YAML config file or config data as a string or dictionary.
         """
         super().__init__(config_input, runtime_variables=runtime_variables, enable_env_vars=enable_env_vars)
 
     def validate_config(self):
+        # Configs written before flows were called flows list them under 'pipelines'
+        if 'pipelines' in self.config:
+            if 'flows' in self.config:
+                raise ValueError("Config defines both 'flows' and the deprecated 'pipelines'; keep only 'flows'")
+            self.logger.warning("The 'pipelines' config key is deprecated; rename it to 'flows'.")
+            self.config['flows'] = self.config.pop('pipelines')
+
         for key in self.required_keys:
             if key not in self.config:
                 raise KeyError(f"Missing required config key: {key}")
 
-        for pipeline in self.config['pipelines']:
-            for key in self.required_pipeline_keys:
-                if key not in pipeline:
-                    raise KeyError(f"Missing required pipeline key: {key} in pipeline {pipeline.get('name', 'unknown')}")
+        for flow in self.config['flows']:
+            flow_name = flow.get('name', 'unknown')
+            for key in self.required_flow_keys:
+                if key not in flow:
+                    raise KeyError(f"Missing required flow key: {key} in flow {flow_name}")
 
-            if pipeline['lazy']:
-                assert 'source' in pipeline, f"Missing required key 'source' for lazy pipeline {pipeline.get('name', 'unknown')}"
+            if flow['lazy'] and 'source' not in flow:
+                raise KeyError(f"Missing required key 'source' for lazy flow {flow_name}")
+
+            if not isinstance(flow['nodes'], list) or not flow['nodes']:
+                raise ValueError(f"'nodes' of flow {flow_name} must be a non-empty list")
+
+            for index, node in enumerate(flow['nodes']):
+                for key in self.required_node_keys:
+                    if key not in node:
+                        raise KeyError(f"Missing required node key: {key} in node {index} of flow {flow_name}")
 
         super().validate_config()
 

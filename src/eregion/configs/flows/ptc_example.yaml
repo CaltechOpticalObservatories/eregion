@@ -1,7 +1,7 @@
-# This is an example pipeline flow configuration for creating a master bias frame
+# This is an example flow configuration for creating a master bias frame
 
 debug: false
-pipelines:
+flows:
   - name: masterbias_flow
     description: Load biases, subtract overscan, and create master biases
     lazy: false

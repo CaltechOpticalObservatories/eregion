@@ -3,7 +3,7 @@ A Mappable base class for task outputs, replacing the older dict[str, Any].
 
 This module provides a base class that combines the benefits of dataclasses (typed fields,
 IDE autocomplete, refactor safety) with the flexibility of dict-like access (str keys,
-dynamic wiring in pipelines).
+dynamic wiring in flows).
 
 The Mapping-facing API intentionally exposes only task payload fields. Execution metadata
 (``params``, ``upstream``, and ``timestamp``) remains available as attributes and through
@@ -13,13 +13,13 @@ Each Task subclass defines a concrete Result class that:
   1. Inherits from TaskResult
   2. Defines typed fields for each output
   3. Returns instances instead of raw dicts
-  4. Enables early validation of pipeline wiring
+  4. Enables early validation of flow wiring
 
 Design rationale:
-  - Mapping protocol (__getitem__, keys(), items(), etc.) allows dict-like access for pipelines
+  - Mapping protocol (__getitem__, keys(), items(), etc.) allows dict-like access for flows
   - Pydantic BaseModel gives runtime validation, serialization, and field constraints
   - Explicit fields (vs Any) enable IDE autocompletion and type safety
-  - get_schema() class method enables discovery of available keys before pipeline runs
+  - get_schema() class method enables discovery of available keys before flow runs
 """
 
 from __future__ import annotations
@@ -232,7 +232,7 @@ class TaskResult(Mappable):
         """
         Return the output schema (field names, types, descriptions, defaults).
 
-        Useful for pipeline builders to:
+        Useful for flow builders to:
           - Validate task wiring before execution
           - Show users available output keys
           - Detect typos in key names early
@@ -280,7 +280,7 @@ class TaskResult(Mappable):
         """
         Return a dummy/empty instance of this result class.
 
-        Useful for pipeline introspection (e.g., "what keys does this task output?")
+        Useful for flow introspection (e.g., "what keys does this task output?")
         without running the task. Required fields get type-appropriate defaults,
         optional ones use their declared defaults.
 
