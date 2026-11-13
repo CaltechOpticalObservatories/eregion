@@ -79,16 +79,6 @@ flows:
             images: linbin_flow.linbin_creator.data('type == "linbin" & extra_0 != "bias"')
         depends_on: [linbin_flow.linbin_creator]
 
-      - name: badpixel_masking
-        task: eregion.tasks.preprocessing.SigmaClipMasking
-        init:
-          params:
-            clip_axis: "serial"
-        run:
-          inputs:
-            images: linbin_flow.overscan_sub.data
-        depends_on: [linbin_flow.overscan_sub]
-
       - name: bias_subtraction
         task: eregion.tasks.preprocessing.BiasSubtraction
         init:
@@ -96,9 +86,9 @@ flows:
             only_image_area: true
         run:
           inputs:
-            images: linbin_flow.badpixel_masking.data
+            images: linbin_flow.overscan_sub.data
             master_bias: masterbias_flow.make_master_bias.master_bias('type == "master_linbin_bias"')
-        depends_on: [linbin_flow.badpixel_masking, masterbias_flow.make_master_bias]
+        depends_on: [linbin_flow.overscan_sub, masterbias_flow.make_master_bias]
 
       - name: combine
         task: eregion.tasks.calibration.MasterCombine
@@ -138,13 +128,6 @@ flows:
             images: digital_flow.flat_creator.data('type == "flat"')
         depends_on: [digital_flow.flat_creator]
 
-      - name: badpixel_masking
-        task: eregion.tasks.preprocessing.SigmaClipMasking
-        run:
-          inputs:
-            images: digital_flow.overscan_sub.data
-        depends_on: [digital_flow.overscan_sub]
-
       - name: bias_subtraction
         task: eregion.tasks.preprocessing.BiasSubtraction
         init:
@@ -152,9 +135,9 @@ flows:
             only_image_area: true
         run:
           inputs:
-            images: digital_flow.badpixel_masking.data
+            images: digital_flow.overscan_sub.data
             master_bias: masterbias_flow.make_master_bias.master_bias('type == "master_bias_nan"')
-        depends_on: [digital_flow.badpixel_masking, masterbias_flow.make_master_bias]
+        depends_on: [digital_flow.overscan_sub, masterbias_flow.make_master_bias]
 
       - name: combine
         task: eregion.tasks.calibration.MasterCombine
