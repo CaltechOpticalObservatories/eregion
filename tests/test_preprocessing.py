@@ -116,7 +116,7 @@ def test_cosmic_ray_masking_rejects_per_output_args():
 
 def test_cosmic_ray_masking_labels_cosmic_rays_when_enabled():
     det, crs = _ccd_with_cosmics()
-    out = CosmicRayMasking(label_cosmic_rays=True)._process_single_image(det)
+    out = CosmicRayMasking(label=True)._process_single_image(det)
     mask = out.outputs["C"].masks["cosmic_ray_mask"].values
     labels = out.labels["cosmic_ray_labels"]
 
