@@ -39,18 +39,6 @@ flows:
             images: masterbias_flow.overscan_sub.data
         depends_on: [masterbias_flow.overscan_sub]
 
-      - name: cleanup_0
-        task: eregion.tasks.bookkeeping.DeleteResult
-        run:
-          inputs:
-            result: masterbias_flow.bias_creator
-
-      - name: cleanup_1
-        task: eregion.tasks.bookkeeping.DeleteResult
-        run:
-          inputs:
-            result: masterbias_flow.overscan_sub
-
   - name: linbin_flow
     description: Flow for LinBin processing
     lazy: false

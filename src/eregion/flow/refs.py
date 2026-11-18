@@ -99,7 +99,7 @@ class ResultRef:
             The whole upstream TaskResult, or one of its payload fields, optionally filtered.
         """
         if self.node not in results:
-            raise ValueError(f"references '{self.node}', which has not produced a result yet")
+            raise ValueError(f"Node '{self.node}' has not produced a result yet")
 
         result = results[self.node]
         if self.field is None:
@@ -108,14 +108,14 @@ class ResultRef:
         try:
             value = result[self.field]
         except KeyError as e:
-            raise KeyError(f"references field '{self.field}', which '{self.node}' "
-                           f"({type(result).__name__}) does not produce; it produces "
-                           f"{list(result.keys())}") from e
+            raise KeyError(f"Node '{self.node}' ({type(result).__name__}) does not produce a "
+                           f"field '{self.field}'; it produces {list(result.keys())}") from e
 
         if self.query is not None and apply_query:
             if not callable(value):
-                raise TypeError(f"references '{self.node}.{self.field}' with a filter call, but its "
-                                f"value (type {type(value).__name__}) is not callable.")
+                raise TypeError(f"Reference '{self}' has a filter call, but the value of "
+                                f"'{self.node}.{self.field}' (type {type(value).__name__}) is "
+                                f"not callable")
             value = value(self.query)
         return value
 
@@ -164,7 +164,11 @@ def parse_inputs(run_inputs: dict, node_name: str) -> dict:
         try:
             return ResultRef.parse(text, flow_name)
         except (TypeError, ValueError) as e:
-            raise type(e)(f"Input '{arg_path}' of node '{node_name}': {e}") from e
+            # A note keeps the original exception, with its type, message and traceback;
+            # rebuilding it would fail for any exception whose constructor takes more than
+            # a message (pydantic's ValidationError, for one)
+            e.add_note(f"Input '{arg_path}' of node '{node_name}'")
+            raise
 
     return {arg_name: map_refs(spec, parse_one, arg_name) for arg_name, spec in run_inputs.items()}
 
@@ -188,8 +192,10 @@ def resolve_inputs(run_inputs: dict, results: Mapping[str, Any], node_name: str,
         try:
             return ref.resolve(results, apply_query=apply_queries)
         except (ValueError, KeyError, TypeError) as e:
-            message = e.args[0] if e.args else str(e)
-            raise type(e)(f"Input '{arg_path}' for task '{node_name}' {message}") from e
+            # See parse_inputs: the context goes on as a note so that the original exception
+            # reaches the caller unchanged
+            e.add_note(f"Input '{arg_path}' for task '{node_name}'")
+            raise
 
     return {arg_name: map_refs(spec, resolve_one, arg_name) for arg_name, spec in run_inputs.items()}
 

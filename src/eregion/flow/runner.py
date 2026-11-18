@@ -5,7 +5,6 @@ Execution of the flows described in a yaml configuration.
 runs every flow in dependency order, collecting each task's `TaskResult`.
 """
 from collections.abc import Iterator
-from copy import deepcopy
 import inspect
 
 from eregion.configs import FlowConfig
@@ -139,8 +138,10 @@ class FlowRunner:
         """
         source = flow.nodes[flow.source]
 
-        # A temporary mapping keeps each batch's results apart from the accumulated ones
-        batch_results = deepcopy(self.results)
+        # A temporary mapping keeps each batch's node entries apart from the accumulated ones.
+        # A shallow copy is enough: the loop below only rebinds keys, and the results
+        # themselves are never mutated in place.
+        batch_results = dict(self.results)
         batches = execute_task(source, batch_results, lazy=True)
         if not isinstance(batches, Iterator):
             raise TypeError(f"Source node '{source.name}' for lazy flow '{flow.name}' did not "

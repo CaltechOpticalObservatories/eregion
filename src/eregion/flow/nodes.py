@@ -140,8 +140,11 @@ def build_node(node_cfg: dict, flow_name: str) -> tuple[FlowNode, set[str]]:
     try:
         task = task_class(name=node_name, **init_params)
     except (TypeError, ValueError, NotImplementedError) as e:
-        raise type(e)(f"Node '{node_name}': cannot initialise {task_class.__name__} with the configured "
-                      f"'init.params' {sorted(init_params)}: {e}") from e
+        # Annotate rather than rebuild: a task's __init__ may raise an exception that cannot be
+        # constructed from a message alone, e.g. a pydantic ValidationError from a config model
+        e.add_note(f"Node '{node_name}': cannot initialise {task_class.__name__} with the "
+                   f"configured 'init.params' {sorted(init_params)}")
+        raise
 
     run_block = node_cfg.get("run", {})
     run_inputs = parse_inputs(run_block.get("inputs", {}), node_name)

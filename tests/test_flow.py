@@ -41,6 +41,17 @@ class EchoTask(Task):
         return EchoResult(value=x + 1)
 
 
+class StrictInitTask(Task):
+    """Takes 'name' only, so an unexpected init param cannot be applied to it."""
+    task_result = EchoResult
+
+    def __init__(self, name=None):
+        super().__init__(name=name)
+
+    def run(self):
+        return EchoResult()
+
+
 class SourceResult(TaskResult):
     value: int = 0
 
@@ -279,12 +290,15 @@ def test_build_flow_nodes_holds_an_initialised_task_instance():
 def test_build_flow_nodes_reports_a_bad_init_param():
     flow_cfg = {
         "name": "PIPE",
-        # DeleteResult.__init__ takes 'name' only, so an extra init param cannot be applied
-        "nodes": [{"name": "A", "task": "eregion.tasks.bookkeeping.DeleteResult",
+        # StrictInitTask.__init__ takes 'name' only, so an extra init param cannot be applied
+        "nodes": [{"name": "A", "task": "tests.test_flow.StrictInitTask",
                    "init": {"params": {"nonexistent": 1}}}],
     }
-    with pytest.raises(TypeError, match="cannot initialise DeleteResult"):
+    # The task's own TypeError is re-raised unchanged; the node context is added as a note
+    with pytest.raises(TypeError, match="unexpected keyword argument") as excinfo:
         build_flow_nodes(flow_cfg)
+    assert any("cannot initialise StrictInitTask" in note
+               for note in getattr(excinfo.value, "__notes__", []))
 
 
 # ---------------------------------------------------------------------------

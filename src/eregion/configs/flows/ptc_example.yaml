@@ -41,20 +41,13 @@ flows:
             images: masterbias_flow.overscan_sub.data('type == "bias"')
         depends_on: [masterbias_flow.overscan_sub]
 
-      - name: cleanup_0
-        task: eregion.tasks.bookkeeping.DeleteResult
-        run:
-          inputs:
-            result: masterbias_flow.bias_creator
-
-      - name: cleanup_1
-        task: eregion.tasks.bookkeeping.DeleteResult
-        run:
-          inputs:
-            result: masterbias_flow.overscan_sub
-
   - name: ptc_flow
     description: Flow for PTC processing
+    # Every node of a lazy flow but the source runs once per batch, on that batch's results
+    # alone. Keep saving, plotting and anything else that writes to disk out of this flow:
+    # it would run per batch and write each batch over the last, leaving only the final one
+    # on disk, while the combined result stays in memory. Put it in an eager flow downstream
+    # (output_flow below), which runs once, after every batch has been accumulated.
     lazy: true
     source: ptc_flow.creator
     nodes:
@@ -113,6 +106,12 @@ flows:
             images: ptc_flow.bias_subtraction.data
         depends_on: [ptc_flow.bias_subtraction]
 
+  # Saves belong here, outside the lazy ptc_flow, so that they write its combined result
+  # rather than one batch of it; see the note on ptc_flow above.
+  - name: output_flow
+    description: Write the finished results to disk
+    lazy: false
+    nodes:
       - name: save
         task: eregion.tasks.bookkeeping.SaveResult
         run:

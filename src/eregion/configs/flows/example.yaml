@@ -57,7 +57,12 @@ flows:
 
   - name: FLOW_2
     description: Flow 2
-    lazy: true  # This flow will be run lazily (i.e. as images arrive)
+    lazy: true  # This flow will be run lazily (i.e. as images arrive). Every node but the source runs
+                # once per batch, on that batch's results alone, and the runner accumulates each
+                # node's batches into one combined result. Keep saving, plotting and anything else
+                # that writes to disk out of a lazy flow: it would run per batch and write each
+                # batch over the last, leaving only the final one on disk, while the combined
+                # result stays in memory. Put it in an eager flow downstream (FLOW_3 below).
     source: TASK_3  # Required for a lazy flow: the node whose `lazy_run()` yields the batches that
                     # drive it. It must have no dependencies, so that it is the only node in the first
                     # generation of the execution order; pull in other flows' results downstream of it.
@@ -80,3 +85,18 @@ flows:
             arg_1: FLOW_2.TASK_3.field_name           # the batch yielded by the source node
             arg_2: FLOW_1.TASK_2.field_name  # Example of using output from a task in another flow as input
         depends_on: [TASK_3, FLOW_1.TASK_2]   # specify dependencies across flows as well
+
+  - name: FLOW_3
+    description: Flow 3, writing the finished results to disk
+    lazy: false  # A node that writes belongs in an eager flow like this one, which runs once, after
+                 # the flows it depends on have finished. Referencing a lazy flow's node from here
+                 # gives the combined result of all its batches, not one batch of it.
+    nodes:
+      - name: TASK_5
+        task: package.module.class
+        run:
+          inputs:
+            arg_1: [FLOW_1.TASK_2, FLOW_2.TASK_4]  # The whole TaskResults, as a task that saves them would take
+          params:
+            output_dir: /path/to/output
+        depends_on: [FLOW_1.TASK_2, FLOW_2.TASK_4]
