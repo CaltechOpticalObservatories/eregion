@@ -203,14 +203,11 @@ class TDIExtractPTC(LazyTask):
 
         stats |= output.stats(_TDISTATS, region="image", axis=output.serial_axint, mask_key="combined")
 
+        # number of masked pixels in each parallel row, like every other TDI statistic
         if mask is not None:
-            stats["n_masked"] = int(
-                np.sum(mask.values, axis=output.serial_axint, dtype=np.uint32)
-            )
+            stats["n_masked"] = np.sum(mask.values, axis=output.serial_axint, dtype=np.uint32)
         else:
-            axslc = output.image_region[output.parallel_axis]
-            llel_len = abs(axslc.stop - axslc.start)
-            stats["n_masked"] = np.zeros(llel_len, dtype=np.uint32)
+            stats["n_masked"] = np.zeros(im.shape[output.parallel_axint], dtype=np.uint32)
 
         assert len(stats["n_masked"]) == len(stats["mean"])
 

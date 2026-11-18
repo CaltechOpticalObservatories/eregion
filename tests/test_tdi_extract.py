@@ -1,5 +1,6 @@
 import pytest
 import numpy as np
+import xarray as xr
 from copy import deepcopy
 
 from eregion.tasks.tdi import TDIExtractPTC
@@ -125,3 +126,23 @@ def test_TDI_multigroup(example_DetImages_TDIPTC):
     
 
     
+
+
+def test_TDI_stats_count_masked_pixels_per_row(example_DetImages_TDIPTC):
+    ops, imby = example_DetImages_TDIPTC()
+    for op in ops:
+        mask = xr.zeros_like(op.data, dtype=bool)
+        mask.loc[{"y": 5, "x": 10}] = True
+        mask.loc[{"y": 5, "x": 20}] = True
+        mask.loc[{"y": 7, "x": 3}] = True
+        op.set_mask("cr", mask)
+
+    extractor = TDIExtractPTC(groupby_keys=["det_id"])
+    stats = extractor.tdi_stats(ops[0])
+    assert len(stats["n_masked"]) == len(stats["mean"]) == 200
+    assert stats["n_masked"][5] == 2 and stats["n_masked"][7] == 1
+    assert stats["n_masked"].sum() == 3
+
+    # the full task runs on masked images, with per-row counts for each image and diff pair
+    tab = next(extractor.lazy_run(imby)).ptc_table
+    assert tab["n_masked_0"].sum() == 3 and tab["n_masked_0-1"].sum() == 3

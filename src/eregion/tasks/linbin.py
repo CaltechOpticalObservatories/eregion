@@ -11,7 +11,6 @@ import os
 from pydantic import Field
 from typing import Callable, Generator, Literal
 import numpy as np
-import xarray as xr
 import pandas as pd
 
 from eregion.tasks import LazyTask
@@ -71,7 +70,7 @@ class LinBin(LazyTask):
         :param name: str, optional
             The name of the task. Default is "LinBin".
         :keyword mask_key: str, optional
-            The key for the mask to use when calculating statistics. Default is "sigma_clip_mask".
+            The key for the mask to use when calculating statistics. Default is "combined" (all masks ORed).
 
         """
         super().__init__(name=name, **kwargs)
@@ -109,6 +108,7 @@ class LinBin(LazyTask):
         digbin_flats = ImageBundle(results)
 
 
+        mask_key = self.meta.get("mask_key", "combined")
         pairstats = []
         for unique_keys, dig_group in digbin_flats.groupby(by=self.groupby_keys):
             if len(dig_group) == 0:
@@ -125,12 +125,14 @@ class LinBin(LazyTask):
             stats = {key: dig_group.iloc[0][key] for key in self.groupby_keys}
             for i, img in enumerate(dig_group['object']):  # dig_group is a DataFrame
                 for out_id, output in img.outputs.items():
-                    outstat = stats.copy() | {"seqnum": str(i), "binning": "digital"} | self.do_stats_per_output(output)
+                    outstat = (stats.copy() | {"seqnum": str(i), "binning": "digital"} |
+                               self.do_stats_per_output(output, mask_key=mask_key))
                     pairstats.append(outstat)
 
             for i, img in enumerate(lin_group['object']):  # lin_group is a DataFrame
                 for out_id, output in img.outputs.items():
-                    outstat = stats.copy() | {"seqnum": str(i), "binning": "analog"} | self.do_stats_per_output(output)
+                    outstat = (stats.copy() | {"seqnum": str(i), "binning": "analog"} |
+                               self.do_stats_per_output(output, mask_key=mask_key))
                     pairstats.append(outstat)
 
         stats = self.make_linbin_table(pairstats)
@@ -144,8 +146,6 @@ class LinBin(LazyTask):
         if not all(isinstance(output, CCDOutput) for output in img.outputs.values()):
             raise ValueError("Outputs must be of type CCDOutput")
 
-        mask_key = self.meta.get("mask_key", "combined")
-
         for output in img.outputs.values():
             binaxint = getattr(output, f"{self.binaxis}_axint")
             # Ensure we take all pixels not along the binaxis.
@@ -154,21 +154,20 @@ class LinBin(LazyTask):
             imslc[getattr(output, otheraxis)] = output.output_slice[1-binaxint]
             # Slice the data and mask for the current output, slice direction is from prescan to overscan, so that the first row is the first row read out from the CCD
             imdata = slice_data(output.data, imslc).values
-            mask = output.get_output_mask(mask_key)
-            immask = slice_data(mask, imslc).values if mask is not None else None
             # get bins
 
             self._get_binsizes(imdata.shape[binaxint])
             # bin data
             binned_data = do_digital_binning(imdata, binsizes=self.bins, binaxis=binaxint)
             output.set_data_in_parent(binned_data, imslc)
-            # bin mask if it exists
-            if immask is not None:
+            # bin every mask the same way, so they stay aligned with the binned data;
+            # a binned pixel is masked if any of the pixels summed into it was
+            mask_keys = list(output.masks.data_vars) if output.masks is not None else []
+            for key in mask_keys:
+                immask = slice_data(output.masks[key], imslc).values
                 binned_mask = do_digital_binning(immask.astype(int), binsizes=self.bins, binaxis=binaxint).astype(bool)
-                if mask_key not in output.masks:
-                    output.masks[mask_key] = xr.zeros_like(output.data, dtype=bool)
-                output.set_mask(mask_key,
-                                set_slice_in_data(ensure_dataarray(binned_mask), output.masks[mask_key], imslc),
+                output.set_mask(key,
+                                set_slice_in_data(ensure_dataarray(binned_mask), output.masks[key], imslc),
                                 combine=False
                                 )
 

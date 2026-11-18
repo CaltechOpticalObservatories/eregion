@@ -72,3 +72,37 @@ def test_linbin_runs_on_8k_by_8k_image_with_incremental_binning():
 
     assert elapsed < 60.0, f"LinBin.run took too long on {DET_SIZE}x{DET_SIZE} data: {elapsed:.2f}s"
 
+
+
+def _make_small_masked_image() -> DetImage:
+    rng = np.random.default_rng(1)
+    output = CCDOutput(
+        id="A", ext_id=0,
+        ext_slice=(slice(0, 12), slice(0, 6)), data_slice=(slice(0, 12), slice(0, 6)),
+        parallel_axis="y",
+        parallel_prescan=slice(0, 1, 1), parallel_overscan=slice(11, 12, 1),
+        serial_prescan=slice(0, 1, 1), serial_overscan=slice(5, 6, 1),
+    )
+    img = DetImage(data=rng.random((12, 6)), output_objects={"A": output}, name="D1")
+    for key, pixel in (("cr", (2, 2)), ("vignette", (5, 3))):
+        mask = np.zeros((12, 6), dtype=bool)
+        mask[pixel] = True
+        output.set_mask(key, output.data.copy(data=mask))
+    return img
+
+
+def test_linbin_bins_every_mask_with_the_default_mask_key():
+    img = _make_small_masked_image()
+    # image rows 1..10 are binned into rows of 1, 2, 3 and 4 summed rows
+    LinBin(binsizes=1)._bin_image(img)
+    masks = img.outputs["A"].masks
+    # row 2 is summed into the second bin (rows 2-3 -> row 2), row 5 into the third (rows 4-6 -> row 3)
+    assert bool(masks["cr"].sel(y=2, x=2)) and int(masks["cr"].sum()) == 1
+    assert bool(masks["vignette"].sel(y=3, x=3)) and int(masks["vignette"].sum()) == 1
+
+
+def test_linbin_stats_use_the_mask_key():
+    task = LinBin(binsizes=1, mask_key="cr")
+    normal, linbin = _make_small_masked_image(), _make_small_masked_image()
+    stats = next(task.lazy_run(normal_flats=[normal], linbin_flats=[linbin])).stats
+    assert set(stats["n_masked_digital_0"]) == {1} and set(stats["n_masked_analog_0"]) == {1}

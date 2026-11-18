@@ -1,5 +1,6 @@
 from typing import Generic, TypeVar, Self
 import pathlib
+import re
 import pandas as pd
 from copy import deepcopy
 
@@ -7,6 +8,11 @@ from eregion.datamodels.image import DetImage
 
 TImage = TypeVar("TImage")
 
+
+def _saved_image_order(path: pathlib.Path) -> tuple[int, int, str]:
+    """ Sort key restoring ImageBundle.save() order: image_2.nc before image_10.nc, other .nc files after. """
+    match = re.fullmatch(r"image_(\d+)", path.stem)
+    return (0, int(match.group(1)), "") if match else (1, 0, path.name)
 
 class ImageBundle(Generic[TImage]):
     """
@@ -168,7 +174,7 @@ class ImageBundle(Generic[TImage]):
                 f"{cls.image_class.__name__} does not have a from_netcdf() method."
             )
 
-        files = sorted(pathlib.Path(filepath).resolve().glob("*.nc"))
+        files = sorted(pathlib.Path(filepath).resolve().glob("*.nc"), key=_saved_image_order)
         images = []
         for file in files:
             im = cls.image_class.from_netcdf(file)

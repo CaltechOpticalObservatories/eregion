@@ -32,3 +32,11 @@
   the last dot; `ImageBundle.save` works again.
 - `FocalPlaneImage` keeps detector masks that changed after the detector was added.
 - `Output.get_masked_output_data` no longer fails when the output has masks.
+- `MasterBias`/`MasterDark` no longer turn a pixel masked in some frames into NaN: masked pixels are left out of the
+  combination, and `count`/`std` reflect that. A master carries one mask, 'combine_mask' (pixels masked in every
+  frame), instead of the first frame's masks, and no longer inherits the first frame's labels.
+- `MasterDark.run(mask_key=...)` now uses `mask_key` for the combination; the master's stats use its 'combine_mask'.
+- `TDIExtractPTC` no longer crashes on masked images; `n_masked` is a per-row count like the other statistics.
+- `LinBin` no longer raises `KeyError` with the default `mask_key`, bins every mask along with the data, and uses
+  `mask_key` for its statistics.
+- `ImageBundle.load` restores the saved order (image_2 before image_10).

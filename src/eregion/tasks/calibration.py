@@ -9,6 +9,7 @@ from eregion.tasks import Task
 from eregion.datamodels import DetImage, ImageBundle, FPImageBundle
 from eregion.tasks.imagegen import ImageResult
 from eregion.core.image_stats import STATFUNCS
+from eregion.utils import slice_data
 from eregion.utils.io_utils import save_dataframe_to_fits, load_dataframe_from_fits
 
 # Dataclass to hold master bias results
@@ -65,8 +66,6 @@ class MasterCombine(Task):
             Name of the task.
         :keyword groupby_keys: list
             List of keys to group by when combining calibration frames. Defaults to ['det_id', 'type'] if not provided.
-        :keyword mask_key: str
-            Key to use for the mask in the .masks attribute when performing the combination. Defaults to 'sigma_clip_mask'.
         :keyword method: str
             Method to use for combining calibration frames. Choices are 'median' (default) or 'mean'.
         """
@@ -84,6 +83,10 @@ class MasterCombine(Task):
         Generate master calibration frames from a list of DetImage objects.
         :param images: list of DetImage
             List of detector images containing calibration frames (bias, dark, flat, lamp) to combine.
+        :keyword mask_key: str
+            Mask whose pixels are left out of the combination ('combined', the default, ORs all masks of a frame).
+            Each master frame gets a 'combine_mask' mask flagging pixels that were masked in every frame
+            (their data is NaN and their count 0); the masks and labels of the input frames are not carried over.
         :return: ImageResult
             An ImageResult object containing the generated master calibration frames.
         """
@@ -105,22 +108,33 @@ class MasterCombine(Task):
             master_cal = imgs[0].copy()
             master_cal.meta['filename'] = ', '.join([img.meta['filename'] for img in imgs])
             master_cal.image_type.update({'type': f'master_{unique_id}'})
-            # Combine calibration data
+            # Combine calibration data, leaving out the masked pixels of each frame
             mask_key = kwargs.get('mask_key', 'combined')
-            to_combine = []
-            for img in imgs:
-                masked_img = img.get_masked_data(mask_key=mask_key)
-                to_combine.append(masked_img.values)
+            to_combine = [img.get_masked_array(mask_key=mask_key) for img in imgs]
 
             mcdict = self._create_mastercal(to_combine)
             mcdataset = xr.Dataset(
                 data_vars={key: xr.DataArray(coords=imgs[0].data.coords, dims=imgs[0].data.dims, data=val)
                            for key, val in mcdict.items()})
             master_cal.set_data(mcdataset)
+            self._set_combine_mask(master_cal)
             master_cals.append(master_cal)
             self.logger.info(f'Created master calibration frame for det_id: {master_cal.id}, type: {master_cal.image_type}')
 
         return self.task_result(data=master_cals)
+
+    @staticmethod
+    def _set_combine_mask(master_cal: DetImage):
+        """
+        Replace the masks copied from the first frame with 'combine_mask': pixels masked in every combined frame.
+        The first frame's labels (e.g. its cosmic rays) do not describe the master either, so they are dropped.
+        """
+        master_cal.masks = None
+        master_cal.labels = None
+        count = master_cal.get_data('count')
+        for output in master_cal.outputs.values():
+            output.masks = None
+            output.set_mask('combine_mask', slice_data(count, output.output_slice) == 0, combine=False)
 
     def _create_mastercal(self, images: list[np.ndarray])-> dict[str, np.ndarray]:
         """
@@ -183,11 +197,12 @@ class MasterDark(MasterCombine):
         :param add_to: CalibrationResult, optional
             An existing CalibrationResult to combine the new master dark with. If None, a new CalibrationResult is created.
         :param mask_key: str, optional
-            The key to use for the mask in the .masks attribute.
+            Mask of the input frames whose pixels are left out of the combination. The stats of the master dark use
+            its 'combine_mask' (pixels masked in every frame), the only mask a master carries.
         :param kwargs: Additional keyword arguments to pass to the parent run method.
         :return: CalibrationResult
         """
-        res = super().run(images, **kwargs)
+        res = super().run(images, mask_key=mask_key, **kwargs)
         darks = res.data
 
         stats = []
@@ -195,7 +210,7 @@ class MasterDark(MasterCombine):
             self.logger.info(f"Doing per output stats on image #{i} of {len(darks)}")
             imtype = {key: darks.list.iloc[i][key] for key in self.meta['groupby_keys']}
             for out_id, output in img.outputs.items():
-                outstat = imtype | self.do_stats_per_output(output, mask_key=mask_key)
+                outstat = imtype | self.do_stats_per_output(output, mask_key='combined')
                 stats.append(outstat)
         stats = pd.DataFrame(stats)
 

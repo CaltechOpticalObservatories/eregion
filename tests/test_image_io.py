@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 
-from eregion.datamodels import DetectorProperties, DetImage, DetImageMeta
+from eregion.datamodels import DetectorProperties, DetImage, DetImageMeta, ImageBundle
 
 
 def make_dataarray(shape=(10, 10)):
@@ -16,3 +16,11 @@ def test_detimage_to_netcdf_appends_the_extension(tmp_path):
     for name in ("plain", "flat_0.5s", "done.nc"):
         img.to_netcdf(tmp_path / name)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["done.nc", "flat_0.5s.nc", "plain.nc"]
+
+
+def test_imagebundle_save_and_load_keep_order(tmp_path):
+    from tests.image_helpers import make_image
+    bundle = ImageBundle([make_image(seed) for seed in range(12)])
+    bundle.save(tmp_path / "bundle")
+    loaded = ImageBundle.load(str(tmp_path / "bundle"))
+    assert [img.data.values[0, 0] for img in loaded] == [img.data.values[0, 0] for img in bundle]
