@@ -3,7 +3,7 @@ import numpy as np
 from copy import deepcopy
 
 from eregion.tasks.tdi import TDIExtractPTC
-from eregion.datamodels.image import DetImage, CCDOutput, ImageBundle
+from eregion.datamodels import DetImage, CCDOutput, ImageBundle
 
 from scipy.stats import spearmanr
 import matplotlib.pyplot as plt
