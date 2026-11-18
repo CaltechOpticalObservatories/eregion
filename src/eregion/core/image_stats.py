@@ -75,7 +75,61 @@ def do_statistics(data: np.ndarray | np.ma.MaskedArray,
             stats[f"{prepend_kw}{kw}"] = stat
             stats[f"{prepend_kw}{kw}p"] = pval
         else:
-            val = operation(data, axis=axis)
-            val = np.nan if isinstance(val, np.ma.core.MaskedConstant) else val.filled(np.nan) if isinstance(val, np.ma.MaskedArray) else val
-            stats[f"{prepend_kw}{kw}"] = val
+            stats[f"{prepend_kw}{kw}"] = reduce_array(data, operation, axis=axis)
     return stats
+
+def reduce_array(data: np.ndarray | np.ma.MaskedArray, stat: str | Callable = 'median', axis: int | None = None) -> Any:
+    """
+    Reduce data to a single statistic, over the whole array or along one axis. Fully masked results become NaN.
+    :param data: np.ndarray or np.ma.MaskedArray
+        Input data array; masked pixels are ignored by the STATFUNCS functions.
+    :param stat: str or Callable
+        Name of a statistic in STATFUNCS (e.g. 'median', 'mean', 'std', 'mad') or a function called as stat(data, axis=axis).
+    :param axis: int or None
+        Axis along which to calculate the statistic. If None, the entire array is used.
+    :return: scalar or np.ndarray
+    """
+    if isinstance(stat, str):
+        if stat not in STATFUNCS:
+            raise ValueError(f"Unknown statistic '{stat}', expected one of {list(STATFUNCS)} or a callable")
+        stat = STATFUNCS[stat]
+    val = stat(data, axis=axis)
+    if isinstance(val, np.ma.core.MaskedConstant):
+        return np.nan
+    if isinstance(val, np.ma.MaskedArray):
+        return val.filled(np.nan)
+    return val
+
+def check_mask_aware(stat: str | Callable) -> None:
+    """
+    Reject statistic functions that silently ignore the mask of a masked array: plain numpy functions such as
+    np.median or np.nanmean, and scipy.stats functions. numpy.ma functions, the functions in this module (STATFUNCS)
+    and other callables are accepted.
+    :param stat: str or Callable, a STATFUNCS name or a function.
+    :raises TypeError: if stat ignores masks.
+    """
+    func = stat.func if isinstance(stat, partial) else stat
+    module = getattr(func, '__module__', None) or ''
+    if (module == 'numpy' or module.startswith(('numpy.', 'scipy.'))) and not module.startswith('numpy.ma'):
+        name = getattr(func, '__name__', repr(func))
+        raise TypeError(f"'{name}' ({module}) ignores masked pixels; pass a statistic name such as "
+                        f"{list(STATFUNCS)[:4]}, a numpy.ma function, or wrap scipy functions with wrap_scipy_statfun")
+
+def as_masked_array(data: np.ndarray, mask: np.ndarray | None = None, mask_invalid: bool = False) -> np.ma.MaskedArray:
+    """
+    Wrap data in a masked array with a boolean mask.
+    :param data: np.ndarray
+        Input data array.
+    :param mask: np.ndarray or None
+        Mask with data's shape, truthy where the pixel should be ignored. None masks nothing.
+    :param mask_invalid: bool
+        If True, NaN and inf pixels are masked as well.
+    :return: np.ma.MaskedArray
+    """
+    data = np.asarray(data)
+    boolmask = np.zeros(data.shape, dtype=bool) if mask is None else np.asarray(mask).astype(bool)
+    if boolmask.shape != data.shape:
+        raise ValueError(f"Mask shape {boolmask.shape} does not match data shape {data.shape}")
+    if mask_invalid:
+        boolmask = boolmask | ~np.isfinite(data)
+    return np.ma.masked_array(data, mask=boolmask)

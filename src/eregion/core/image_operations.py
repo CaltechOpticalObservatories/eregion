@@ -366,3 +366,67 @@ def do_digital_binning(data: np.ndarray, binsizes: Sequence[int], binaxis: int =
     binned_data = np.zeros(data.shape, dtype=np.promote_types(data.dtype, binned.dtype))
     binned_data[tuple(dst_idx)] = binned
     return binned_data
+
+################### Arithmetic with uncertainty propagation ###################
+ARITHMETIC_OPS = {
+    'add': np.add,
+    'subtract': np.subtract,
+    'multiply': np.multiply,
+    'divide': np.divide,
+}
+
+def _check_op(op: str) -> None:
+    if op not in ARITHMETIC_OPS:
+        raise ValueError(f"Unknown arithmetic operation '{op}', expected one of {list(ARITHMETIC_OPS)}")
+
+def arithmetic(a: np.ndarray, b: float | np.ndarray, op: str, reflected: bool = False) -> np.ndarray:
+    """
+    Apply an elementwise arithmetic operation `a <op> b`, where b is a scalar or an array that broadcasts to a's shape
+    (e.g. a per-row median kept with keepdims). The result always has a's shape.
+    :param a: np.ndarray, data operand.
+    :param b: float or np.ndarray, the other operand.
+    :param op: str, one of ARITHMETIC_OPS ('add', 'subtract', 'multiply', 'divide').
+    :param reflected: bool, if True compute `b <op> a` instead (e.g. 1 / a).
+    :return: np.ndarray, result of the operation.
+    """
+    _check_op(op)
+    a = np.asarray(a)
+    try:
+        broadcast = np.broadcast_shapes(np.shape(b), a.shape)
+    except ValueError:
+        broadcast = None
+    if broadcast != a.shape:
+        raise ValueError(f"Operand of shape {np.shape(b)} does not broadcast to the data shape {a.shape}")
+    if reflected:
+        return ARITHMETIC_OPS[op](np.broadcast_to(b, a.shape), a)
+    return ARITHMETIC_OPS[op](a, b)
+
+def propagate_std(op: str,
+                  a: np.ndarray,
+                  b: float | np.ndarray,
+                  std_a: np.ndarray | None = None,
+                  std_b: float | np.ndarray | None = None) -> np.ndarray | None:
+    """
+    First-order propagation of independent standard deviations through `a <op> b`. A missing std is taken as zero,
+    so a scalar b (std_b=None) gives the scalar rules: std unchanged for add/subtract, scaled by |b| for multiply and
+    by 1/|b| for divide.
+    :param op: str, one of ARITHMETIC_OPS.
+    :param a: np.ndarray, left operand values.
+    :param b: float or np.ndarray, right operand values (broadcastable to a).
+    :param std_a: np.ndarray or None, standard deviation of a.
+    :param std_b: float, np.ndarray or None, standard deviation of b.
+    :return: np.ndarray with a's shape, or None if neither operand has a std.
+    """
+    _check_op(op)
+    if std_a is None and std_b is None:
+        return None
+    sa = np.zeros_like(a, dtype=float) if std_a is None else np.asarray(std_a, dtype=float)
+    sb = 0.0 if std_b is None else np.asarray(std_b, dtype=float)
+    match op:
+        case 'add' | 'subtract':
+            std = np.hypot(sa, sb)
+        case 'multiply':
+            std = np.hypot(b * sa, a * sb)
+        case 'divide':
+            std = np.hypot(sa / b, a * sb / np.square(b))
+    return np.broadcast_to(std, np.shape(a)).copy()

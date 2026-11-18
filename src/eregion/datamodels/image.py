@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import pathlib
 import json
 import logging
+from copy import deepcopy
 
 from eregion.utils import (
     ensure_dataarray,
@@ -13,15 +14,17 @@ from eregion.utils import (
     set_slice_in_data,
     XRDATA
 )
+from eregion.core.image_stats import STATFUNCS, as_masked_array, check_mask_aware, do_statistics, reduce_array
 from eregion.datamodels.meta import DetImageMeta
 from eregion.datamodels import output as output_module
 from eregion.datamodels.output import Output
+from eregion.datamodels.operators import ArithmeticOperators
 from eregion.utils import load_class
 
 logger = logging.getLogger(__name__)
 
 ############################################## DETIMAGE CLASS #######################################################
-class DetImage:
+class DetImage(ArithmeticOperators):
     """
     Base detector image holding 2D (only spatial) pixel data and outputs. The data arrays are stored in .data
     as an xarray.Dataset. Since xarray.Dataset requires a data variable name to store arrays in, the default name used
@@ -44,6 +47,10 @@ class DetImage:
         labels: xr.Dataset or None - Full image integer label images (e.g. 'cosmic_ray_labels'), set with set_labels().
         _data: Internal attribute for storing image data when loaded.
         _dataloader: Internal variable for storing data loader Callable for on-demand loading.
+
+    Arithmetic: `image + 2`, `image - other_image`, `2 * image`, `1 / image` return a new DetImage, applying the
+    operation output by output (see unary_op/binary_op). add/subtract/multiply/divide do the same and take
+    inplace=True and the region/propagate_std/combine_masks options.
     """
 
     ndim: int = 2
@@ -347,6 +354,172 @@ class DetImage:
             return datarr.where(~mask.to_numpy(), other=fill_value)
         else:
             return datarr
+
+    def has_data_var(self, data_var: str) -> bool:
+        """ Return True if the image data (loaded on demand) has a data variable named data_var. """
+        return data_var in self.get_data('all').data_vars
+
+    def ensure_float(self):
+        """ Cast integer 'data' and 'std' arrays to float64, so that arithmetic written back into them is not truncated. """
+        for var in ('data', 'std'):
+            if self.has_data_var(var) and not np.issubdtype(self._data[var].dtype, np.floating):
+                self._data[var] = self._data[var].astype(np.float64)
+
+    def copy(self) -> DetImage:
+        """
+        Return an independent copy of this image: data, meta, outputs (with their headers and masks) are copied, and
+        the copied outputs point to the new image. An image that is not loaded yet stays unloaded and shares the
+        data loader. Cheaper than copy.deepcopy, which also walks every Output's parent link.
+        :return: DetImage
+        """
+        # meta and image_type are copied together so that an image_type shared with meta stays shared
+        meta, image_type = deepcopy((self.meta, self.image_type))
+        outputs = {
+            out_id: out.model_copy(update={
+                'parent': None,
+                'header': deepcopy(out.header),
+                'masks': out.masks.copy(deep=True) if out.masks is not None else None,
+                **deepcopy(out.__pydantic_extra__ or {}),  # model_copy only copies extra fields shallowly
+            })
+            for out_id, out in self.outputs.items()
+        }
+        new = type(self)(output_objects=outputs, meta=meta)
+        new.id = self.id
+        new.image_type = image_type
+        new._data = self._data.copy(deep=True) if self._data is not None else None
+        new._dataloader = self._dataloader
+        return new
+
+    ######################################## Arithmetic ########################################
+    def unary_op(self, op: str, value: float | np.ndarray, inplace: bool = False, **kwargs) -> DetImage:
+        """
+        Apply `data <op> value` to every output (see Output.unary_op). Pixels outside every output are not changed.
+        :param op: str, one of 'add', 'subtract', 'multiply', 'divide'.
+        :param value: float, or np.ndarray broadcastable to the operated region of every output.
+        :param inplace: bool, if True modify this image, else a copy.
+        :param kwargs: passed to Output.unary_op (region, propagate_std).
+        :return: the modified image (self if inplace).
+        """
+        target = self if inplace else self.copy()
+        for output in target.outputs.values():
+            output.unary_op(op, value, **kwargs)
+        return target
+
+    def binary_op(self, op: str, other: DetImage, inplace: bool = False, **kwargs) -> DetImage:
+        """
+        Apply `self <op> other` output by output, matching outputs by id (see Output.binary_op). Pixels outside every
+        output are not changed.
+        :param op: str, one of 'add', 'subtract', 'multiply', 'divide'.
+        :param other: DetImage of the same class, with the same output ids.
+        :param inplace: bool, if True modify this image, else a copy.
+        :param kwargs: passed to Output.binary_op (region, combine_masks, propagate_std).
+        :return: the modified image (self if inplace).
+        """
+        if type(other) is not type(self):
+            raise TypeError(f"Cannot {op} a {type(other).__name__} and a {type(self).__name__}")
+        if set(other.outputs) != set(self.outputs):
+            raise ValueError(f"Images {self.id} and {other.id} have different outputs: "
+                             f"{sorted(self.outputs)} vs {sorted(other.outputs)}")
+        target = self if inplace else self.copy()
+        for out_id, output in target.outputs.items():
+            output.binary_op(op, other.outputs[out_id], **kwargs)
+        return target
+
+    def add(self, other: DetImage | float | np.ndarray, inplace: bool = False, **kwargs) -> DetImage:
+        """ Add a number, an array or another DetImage. See unary_op() and binary_op(). """
+        return self._dispatch('add', other, inplace, **kwargs)
+
+    def subtract(self, other: DetImage | float | np.ndarray, inplace: bool = False, **kwargs) -> DetImage:
+        """ Subtract a number, an array or another DetImage. See unary_op() and binary_op(). """
+        return self._dispatch('subtract', other, inplace, **kwargs)
+
+    def multiply(self, other: DetImage | float | np.ndarray, inplace: bool = False, **kwargs) -> DetImage:
+        """ Multiply by a number, an array or another DetImage. See unary_op() and binary_op(). """
+        return self._dispatch('multiply', other, inplace, **kwargs)
+
+    def divide(self, other: DetImage | float | np.ndarray, inplace: bool = False, **kwargs) -> DetImage:
+        """ Divide by a number, an array or another DetImage. See unary_op() and binary_op(). """
+        return self._dispatch('divide', other, inplace, **kwargs)
+
+    def _dispatch(self, op: str, other: DetImage | float | np.ndarray, inplace: bool, **kwargs) -> DetImage:
+        if isinstance(other, DetImage):
+            return self.binary_op(op, other, inplace=inplace, **kwargs)
+        return self.unary_op(op, other, inplace=inplace, **kwargs)
+
+    def _operate(self, op: str, other: DetImage | float | np.ndarray, reflected: bool = False) -> DetImage:
+        """ Backs the arithmetic operators: returns a new DetImage. """
+        if isinstance(other, DetImage):
+            if type(other) is not type(self) or reflected:
+                return NotImplemented
+            return self.binary_op(op, other)
+        if not self._is_operand(other):
+            return NotImplemented
+        return self.unary_op(op, other, reflected=reflected)
+
+    ######################################## Reductions ########################################
+    def reduce(self, stat: str | Callable = 'median', per_output: bool = True, **kwargs) -> dict[str, Any] | Any:
+        """
+        Reduce the image to one statistic, per output or over the whole image.
+        :param stat: str or Callable, as in Output.reduce.
+        :param per_output: bool, if True return {output id: value} computed by Output.reduce, else a single value
+            computed over the whole image (only region='full' applies then).
+        :param kwargs: region, axis, data_var, mask_key, use_mask, mask_invalid; see Output.reduce.
+        :return: dict of output id to value, or a single value.
+        """
+        if per_output:
+            return {out_id: output.reduce(stat, **kwargs) for out_id, output in self.outputs.items()}
+        if kwargs.get('use_mask', True) or kwargs.get('mask_invalid', False):
+            check_mask_aware(stat)
+        return reduce_array(self._masked_image(**kwargs), stat, axis=kwargs.get('axis'))
+
+    def stats(self, which: dict[str, Callable] = STATFUNCS, per_output: bool = True, prepend_kw: str = '',
+              **kwargs) -> dict[str, Any]:
+        """
+        Compute several statistics with core.image_stats.do_statistics, per output or over the whole image.
+        :param which: dict of statistic name to function, default STATFUNCS.
+        :param per_output: bool, if True return {output id: stats dict}, else one stats dict for the whole image.
+        :param prepend_kw: str, prefix for the statistic names.
+        :param kwargs: region, axis, data_var, mask_key, use_mask, mask_invalid; see Output.reduce.
+        :return: dict
+        """
+        if per_output:
+            return {out_id: output.stats(which, prepend_kw=prepend_kw, **kwargs)
+                    for out_id, output in self.outputs.items()}
+        if kwargs.get('use_mask', True) or kwargs.get('mask_invalid', False):
+            for stat in which.values():
+                check_mask_aware(stat)
+        return do_statistics(self._masked_image(**kwargs), which=which, axis=kwargs.get('axis'), prepend_kw=prepend_kw)
+
+    def get_masked_array(self, data_var: str = 'data', mask_key: str = 'combined',
+                         mask_invalid: bool = False) -> np.ma.MaskedArray:
+        """
+        Return the whole image as a numpy masked array, for numpy.ma based calculations that skip masked pixels.
+        Unlike get_masked_data, masked pixels are not replaced by a fill value.
+        :param data_var: str, data variable to return.
+        :param mask_key: str, mask to apply ('combined' ORs all masks; nothing is masked if the image has no masks).
+        :param mask_invalid: bool, if True also mask NaN and inf pixels.
+        :return: np.ma.MaskedArray
+        :raises KeyError: if mask_key is not 'combined' and not one of the image's masks.
+        """
+        has_masks = self.masks is not None or self._build_full_mask()
+        if mask_key == 'combined':
+            mask = self.combined_mask if has_masks else None
+        elif has_masks and mask_key in self.masks:
+            mask = self.masks[mask_key]
+        else:
+            available = list(self.masks.data_vars) if has_masks else []
+            raise KeyError(f"DetImage {self.id} has no mask '{mask_key}'; its masks are {available} (or 'combined')")
+        return as_masked_array(self.get_data(data_var).values, mask.values if mask is not None else None,
+                               mask_invalid=mask_invalid)
+
+    def _masked_image(self, region: str = 'full', axis: Optional[int] = None, data_var: str = 'data',
+                      mask_key: str = 'combined', use_mask: bool = True,
+                      mask_invalid: bool = False) -> np.ma.MaskedArray:
+        if region != 'full':
+            raise ValueError(f"Only region='full' applies to the whole image, got '{region}'; use per_output=True")
+        if not use_mask:
+            return as_masked_array(self.get_data(data_var).values, mask_invalid=mask_invalid)
+        return self.get_masked_array(data_var, mask_key=mask_key, mask_invalid=mask_invalid)
 
     def show(
             self,

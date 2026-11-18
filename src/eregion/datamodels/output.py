@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Optional, Literal, TypeVar, Mapping, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Optional, Literal, TypeVar, Mapping, Iterable
 from pydantic import Field, ConfigDict, field_serializer
 import numpy as np
 import xarray as xr
@@ -8,11 +8,14 @@ from astropy.io import fits
 import logging
 
 from .mappable import Mappable
+from .operators import ArithmeticOperators
 from eregion.utils import (
     ensure_dataarray,
     slice_data,
     XRDATA
 )
+from eregion.core.image_operations import arithmetic, propagate_std as propagate_std_through
+from eregion.core.image_stats import STATFUNCS, as_masked_array, check_mask_aware, do_statistics, reduce_array
 if TYPE_CHECKING:
     from eregion.datamodels.image import DetImage
 
@@ -20,9 +23,13 @@ logger = logging.getLogger(__name__)
 TData = TypeVar("TData")
 
 ############################################### OUTPUT BASE CLASS #####################################################
-class Output(Mappable):
+class Output(ArithmeticOperators, Mappable):
     """
     One amplifier/output region within a detector image.
+
+    Arithmetic: add/subtract/multiply/divide (and unary_op/binary_op) change the output's region of the parent
+    DetImage in place. The operators (`out + 2`, `3 * out`, `out - other_out`) instead return a new xr.DataArray of
+    the full output and leave the parent untouched.
     """
 
     id: str = Field(..., alias="id")
@@ -67,15 +74,6 @@ class Output(Mappable):
     def serialize_header(self, value: fits.Header | dict | None) -> dict | None:
         return dict(value) if isinstance(value, fits.Header) else value
 
-    def get_output_data(self, data_var: Optional[str | Literal['all']] = 'data') -> XRDATA:
-        """
-        Return the array corresponding to this output from the parent DetImage's .data attribute using the output_slice.
-        :param data_var: str or 'all'
-            Name of the data variable in the DetImage.data (xr.Dataset) to slice. If 'all', slices the entire dataset.
-        :return: xr.DataArray or xr.Dataset corresponding to this output.
-        """
-        return slice_data(self.parent.get_data(data_var), self.output_slice)
-
     def get_output_mask(self, mask_key: str | Literal['combined', 'all'] = 'combined') -> XRDATA | None:
         if self.masks:
             match mask_key:
@@ -107,10 +105,19 @@ class Output(Mappable):
         if self.parent is not None:
             self.parent.masks = None
 
+    def get_output_data(self, data_var: Optional[str | Literal['all']] = 'data') -> XRDATA:
+        """
+        Return the array corresponding to this output from the parent DetImage's .data attribute using the output_slice.
+        :param data_var: str or 'all'
+            Name of the data variable in the DetImage.data (xr.Dataset) to slice. If 'all', slices the entire dataset.
+        :return: xr.DataArray or xr.Dataset corresponding to this output.
+        """
+        return slice_data(self.parent.get_data(data_var), self.output_slice)
+
     def get_masked_output_data(self, data_var: str = 'data', mask_key: str = 'combined', fill_value=np.nan):
         mask = self.get_output_mask(mask_key)
         datarr = self.get_output_data(data_var)
-        if mask:
+        if mask is not None:
             return datarr.where(~mask.to_numpy(), other=fill_value)
         else:
             return datarr
@@ -175,6 +182,206 @@ class Output(Mappable):
         # Assign new data to the appropriate slice in the parent DetImage
         slicer = {new_data.dims[i]: slc for i, slc in enumerate(self.output_slice)} if slicer is None else slicer
         self.parent.set_data_slice(new_data, slicer, data_var=data_var)
+
+    ############################################ Regions ############################################
+    @property
+    def region_names(self) -> list[str]:
+        """ Names of the regions accepted by get_region() and the arithmetic / reduce methods. """
+        return ['full', 'image']
+
+    def _region_slicer(self, region: str) -> dict[str, slice]:
+        """
+        Return the {dim: slice} slicer of a named region of this output, in parent DetImage coordinates.
+        :param region: str, one of self.region_names. 'full' is the whole output_slice, 'image' the image_region.
+        :return: dict of dimension name to slice.
+        """
+        match region:
+            case 'full':
+                return {dim: slc for dim, slc in zip(['y', 'x'], self.output_slice)}
+            case 'image':
+                return dict(self.image_region)
+            case _:
+                raise ValueError(f"Unknown region '{region}' for {type(self).__name__}, "
+                                 f"expected one of {self.region_names}")
+
+    def get_region(self,
+                   region: str = 'full',
+                   data_var: Optional[str | Literal['all']] = 'data',
+                   mask_key: str = 'combined',
+                   with_mask: bool = False) -> tuple[XRDATA, Optional[XRDATA]]:
+        """
+        Return the data of a named region of this output and, optionally, its mask.
+        :param region: str, one of self.region_names.
+        :param data_var: str or 'all', data variable of the parent DetImage to slice.
+        :param mask_key: str, mask to return when with_mask is True ('combined' ORs all masks of this output).
+        :param with_mask: bool, if True also return the mask of the region.
+        :return: tuple of (region data, region mask). The mask is None if not requested, or if mask_key is
+            'combined' and the output has no masks.
+        :raises KeyError: if mask_key is not 'combined' and not one of this output's masks.
+        """
+        slicer = self._region_slicer(region)
+        data = slice_data(self.parent.get_data(data_var), slicer)
+        mask = self._lookup_mask(mask_key) if with_mask else None
+        return data, (slice_data(mask, slicer) if mask is not None else None)
+
+    def _lookup_mask(self, mask_key: str) -> Optional[xr.DataArray]:
+        """ Return one mask of this output, the OR of all with 'combined' (None if it has no masks). """
+        if mask_key == 'combined':
+            return self.combined_mask if self.masks else None
+        if not self.masks or mask_key not in self.masks:
+            available = list(self.masks.data_vars) if self.masks else []
+            raise KeyError(f"Output {self.id} has no mask '{mask_key}'; its masks are {available} (or 'combined')")
+        return self.masks[mask_key]
+
+    ######################################## Arithmetic ########################################
+    def unary_op(self, op: str, value: float | np.ndarray, region: str = 'full', propagate_std: bool = True,
+                 reflected: bool = False):
+        """
+        Apply `data <op> value` to a region of this output, in place in the parent DetImage.
+        :param op: str, one of 'add', 'subtract', 'multiply', 'divide'.
+        :param value: float or np.ndarray broadcastable to the region (e.g. a per-row median kept with keepdims).
+        :param region: str, region of this output to operate on, one of self.region_names.
+        :param propagate_std: bool, if True and the parent has a 'std' data variable, propagate it (value is exact).
+        :param reflected: bool, if True apply `value <op> data` instead (e.g. 1 - data, 2 / data).
+        :return: self
+        """
+        self.parent.ensure_float()
+        slicer = self._region_slicer(region)
+        data = slice_data(self.parent.data, slicer).values
+        new_data = arithmetic(data, value, op, reflected=reflected)
+        if propagate_std and self.parent.has_data_var('std'):
+            std = slice_data(self.parent.get_data('std'), slicer).values
+            if reflected:
+                new_std = propagate_std_through(op, np.broadcast_to(value, data.shape), data, std_b=std)
+            else:
+                new_std = propagate_std_through(op, data, value, std_a=std)
+            self.set_data_in_parent(new_std, slicer, data_var='std')
+        self.set_data_in_parent(new_data, slicer, data_var='data')
+        return self
+
+    def binary_op(self, op: str, other: Output, region: str = 'full', combine_masks: bool = True,
+                  propagate_std: bool = True):
+        """
+        Apply `self <op> other` pixel by pixel to a region of this output, in place in the parent DetImage. The two
+        regions are matched by position, so they only need the same shape.
+        :param op: str, one of 'add', 'subtract', 'multiply', 'divide'.
+        :param other: Output of the same class as this output.
+        :param region: str, region of both outputs to operate on, one of self.region_names.
+        :param combine_masks: bool, if True OR each of other's masks into this output's mask of the same key.
+        :param propagate_std: bool, if True and this output's parent has a 'std' data variable, propagate it
+            (other's 'std' is used if its parent has one, else taken as zero). The two outputs are treated as
+            independent, so e.g. subtracting an output from itself gives sqrt(2) * std, not 0.
+        :return: self
+        """
+        if type(other) is not type(self):
+            raise TypeError(f"Cannot {op} a {type(other).__name__} and a {type(self).__name__}; "
+                            f"both outputs must be of the same class")
+        self.parent.ensure_float()
+        slicer = self._region_slicer(region)
+        data = slice_data(self.parent.data, slicer).values
+        other_data = slice_data(other.parent.data, other._region_slicer(region)).values
+        if data.shape != other_data.shape:
+            raise ValueError(f"Region '{region}' of output {self.id} has shape {data.shape}, "
+                             f"but of output {other.id} has shape {other_data.shape}")
+        new_data = arithmetic(data, other_data, op)
+        if propagate_std and self.parent.has_data_var('std'):
+            std = slice_data(self.parent.get_data('std'), slicer).values
+            other_std = (slice_data(other.parent.get_data('std'), other._region_slicer(region)).values
+                         if other.parent.has_data_var('std') else None)
+            self.set_data_in_parent(propagate_std_through(op, data, other_data, std, other_std), slicer, data_var='std')
+        self.set_data_in_parent(new_data, slicer, data_var='data')
+        if combine_masks:
+            self._or_masks_from(other)
+        return self
+
+    def _or_masks_from(self, other: Output):
+        """ OR every mask of other into the mask of the same key of this output, matching pixels by position. """
+        if other.masks is None:
+            return
+        full = slice_data(self.parent.data, self.output_slice)
+        for key in other.masks.data_vars:
+            other_mask = other.masks[key].values.astype(bool)
+            if other_mask.shape != full.shape:
+                raise ValueError(f"Mask '{key}' of output {other.id} has shape {other_mask.shape}, "
+                                 f"but output {self.id} has shape {full.shape}")
+            self.set_mask(key, full.copy(data=other_mask), combine=True)
+
+    def add(self, other: Output | float | np.ndarray, **kwargs):
+        """ Add a number, an array or another output to this output in place. See unary_op() and binary_op(). """
+        return self._dispatch('add', other, **kwargs)
+
+    def subtract(self, other: Output | float | np.ndarray, **kwargs):
+        """ Subtract a number, an array or another output from this output in place. See unary_op() and binary_op(). """
+        return self._dispatch('subtract', other, **kwargs)
+
+    def multiply(self, other: Output | float | np.ndarray, **kwargs):
+        """ Multiply this output by a number, an array or another output in place. See unary_op() and binary_op(). """
+        return self._dispatch('multiply', other, **kwargs)
+
+    def divide(self, other: Output | float | np.ndarray, **kwargs):
+        """ Divide this output by a number, an array or another output in place. See unary_op() and binary_op(). """
+        return self._dispatch('divide', other, **kwargs)
+
+    def _dispatch(self, op: str, other: Output | float | np.ndarray, **kwargs):
+        if isinstance(other, Output):
+            return self.binary_op(op, other, **kwargs)
+        return self.unary_op(op, other, **kwargs)
+
+    def _operate(self, op: str, other: Output | float | np.ndarray, reflected: bool = False) -> xr.DataArray:
+        """ Return `self <op> other` over the full output as a new DataArray, leaving the parent untouched. """
+        data = slice_data(self.parent.data, self.output_slice)
+        if isinstance(other, Output):
+            if type(other) is not type(self) or reflected:
+                return NotImplemented
+            other = slice_data(other.parent.data, other.output_slice).values
+            if other.shape != data.shape:
+                raise ValueError(f"Output shapes {data.shape} and {other.shape} do not match")
+        elif not self._is_operand(other):
+            return NotImplemented
+        return data.copy(data=arithmetic(data.values, other, op, reflected=reflected))
+
+    ######################################## Reductions ########################################
+    def _masked_region(self, region: str, data_var: str, mask_key: str, use_mask: bool,
+                       mask_invalid: bool) -> np.ma.MaskedArray:
+        data, mask = self.get_region(region, data_var=data_var, mask_key=mask_key, with_mask=use_mask)
+        return as_masked_array(data.values, mask.values if mask is not None else None, mask_invalid=mask_invalid)
+
+    def reduce(self, stat: str | Callable = 'median', region: str = 'full', axis: Optional[int] = None,
+               data_var: str = 'data', mask_key: str = 'combined', use_mask: bool = True,
+               mask_invalid: bool = False):
+        """
+        Reduce a region of this output to one statistic.
+        :param stat: str or Callable, name in core.image_stats.STATFUNCS (e.g. 'median', 'mean', 'std', 'mad') or a
+            function called as stat(masked_array, axis=axis) that respects the mask (e.g. np.ma.max). Plain numpy
+            and scipy functions ignore masks, so they raise TypeError unless use_mask and mask_invalid are False.
+        :param region: str, region of this output, one of self.region_names.
+        :param axis: int or None, axis to collapse (0 = 'y', 1 = 'x'); None reduces to a single value.
+        :param data_var: str, data variable of the parent DetImage to use.
+        :param mask_key: str, mask whose pixels are ignored when use_mask is True.
+        :param use_mask: bool, if True ignore masked pixels.
+        :param mask_invalid: bool, if True also ignore NaN and inf pixels.
+        :return: scalar or np.ndarray; NaN where every pixel is masked.
+        :raises KeyError: if use_mask is True and mask_key is not 'combined' or one of this output's masks.
+        """
+        if use_mask or mask_invalid:
+            check_mask_aware(stat)
+        return reduce_array(self._masked_region(region, data_var, mask_key, use_mask, mask_invalid), stat, axis=axis)
+
+    def stats(self, which: dict[str, Callable] = STATFUNCS, region: str = 'full', axis: Optional[int] = None,
+              data_var: str = 'data', mask_key: str = 'combined', use_mask: bool = True,
+              mask_invalid: bool = False, prepend_kw: str = '') -> dict[str, Any]:
+        """
+        Compute several statistics of a region of this output with core.image_stats.do_statistics.
+        :param which: dict of statistic name to function, default STATFUNCS.
+        :param prepend_kw: str, prefix for the keys of the returned dict.
+        Other parameters are as in reduce().
+        :return: dict of statistic name to value.
+        """
+        if use_mask or mask_invalid:
+            for stat in which.values():
+                check_mask_aware(stat)
+        masked = self._masked_region(region, data_var, mask_key, use_mask, mask_invalid)
+        return do_statistics(masked, which=which, axis=axis, prepend_kw=prepend_kw)
 
     def _select_header_and_data(
         self, iheaders: Iterable[Mapping], idata: TData
@@ -254,6 +461,8 @@ class Output(Mappable):
             ax.figure.savefig(save)
         return ax
 
+
+
 class CCDOutput(Output):
     """
     CCD-specific output region with prescan/overscan info.
@@ -327,6 +536,11 @@ class CCDOutput(Output):
         :param data_var: Name of the data variable in the DetImage to slice. If 'all', slices the entire dataset.
         :return: sliced xr.DataArray corresponding to the requested scan region.
         """
+        return slice_data(self.parent.get_data(data_var), self._scan_slicer(axis, kind, corner))
+
+    def _scan_slicer(self, axis: Literal['serial', 'parallel'], kind: Literal['prescan', 'overscan'],
+                     corner: bool = False) -> dict[str, slice]:
+        """ Return the {dim: slice} slicer of a scan region; see get_scan(). """
         slc = getattr(self, f"{axis}_{kind}")
         slicer = {dim: self.output_slice[i] for i, dim in enumerate(['y', 'x'])}
         slicer[getattr(self, f"{axis}_axis")] = slc
@@ -339,7 +553,19 @@ class CCDOutput(Output):
             slicer[getattr(self, f"{other_axis}_axis")] = slice(
                 other_prescan.stop, other_overscan.start, step
             )
-        return slice_data(self.parent.get_data(data_var), slicer)
+        return slicer
+
+    @property
+    def region_names(self) -> list[str]:
+        return super().region_names + [f"{axis}_{kind}" for axis in ('serial', 'parallel')
+                                       for kind in ('prescan', 'overscan')]
+
+    def _region_slicer(self, region: str) -> dict[str, slice]:
+        """ Adds the scan regions ('serial_overscan', ...) to the base regions; scans exclude the corners. """
+        axis, _, kind = region.partition('_')
+        if axis in ('serial', 'parallel') and kind in ('prescan', 'overscan'):
+            return self._scan_slicer(axis, kind, corner=False)
+        return super()._region_slicer(region)
 
     def get_prescan(
         self, axis: Literal['serial', 'parallel'], corner: bool = False,

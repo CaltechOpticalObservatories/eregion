@@ -1,4 +1,6 @@
-from typing import Optional, Literal
+from __future__ import annotations
+from typing import Any, Callable, Optional, Literal
+from copy import deepcopy
 import pandas as pd
 import numpy as np
 import xarray as xr
@@ -6,13 +8,18 @@ import matplotlib.pyplot as plt
 
 from eregion.utils import configure_logger
 from eregion.datamodels import DetImage, DetImageMeta, ImageBundle
+from eregion.datamodels.operators import ArithmeticOperators
 from eregion.core.image_operations import flip_and_rotate
+from eregion.core.image_stats import STATFUNCS
 
 logger = configure_logger(__name__)
 
-class FocalPlaneImage:
+class FocalPlaneImage(ArithmeticOperators):
     """
     Composite focal-plane image made by placing multiple DetImage tiles.
+
+    Arithmetic (`fp + 2`, `fp - other_fp`, `2 * fp`, add/subtract/multiply/divide) is applied to every DetImage tile,
+    matched by detector id for two focal planes, and the mosaic is rebuilt.
 
     Parameters
     ----------
@@ -169,6 +176,9 @@ class FocalPlaneImage:
                     self._data[v].loc[slc] = flip_and_rotate(didataset[v].values, angle=row['angle'], flip_x=row['flip_x'],
                                                            flip_y=row['flip_y'])
 
+                if di.masks is None:
+                    # an output mask was changed since the full mask was last built
+                    di._build_full_mask()
                 mask_keys = list(di.masks.data_vars) if di.masks else []
                 dimasks = di.masks
                 for m in mask_keys:
@@ -221,6 +231,109 @@ class FocalPlaneImage:
             return datarr.where(~mask.to_numpy(), other=fill_value)
         else:
             return datarr
+
+    def copy(self) -> FocalPlaneImage:
+        """
+        Return an independent copy, built from copies of the DetImage tiles (see DetImage.copy).
+        :return: FocalPlaneImage
+        """
+        det_images = [det_image.copy() for det_image in self.det_images]
+        return type(self)(self.num_detectors, dim=self.dim_mm, det_images=det_images or None, **deepcopy(self.meta))
+
+    ######################################## Arithmetic ########################################
+    # The mosaic in self._data is derived from the DetImage tiles, so operations are applied to the tiles and the
+    # mosaic is rebuilt afterwards.
+    def unary_op(self, op: str, value: float | np.ndarray, inplace: bool = False, **kwargs) -> FocalPlaneImage:
+        """
+        Apply `data <op> value` to every output of every detector (see DetImage.unary_op) and rebuild the mosaic.
+        :param op: str, one of 'add', 'subtract', 'multiply', 'divide'.
+        :param value: float, or np.ndarray broadcastable to the operated region of every output.
+        :param inplace: bool, if True modify this image and its DetImages, else a copy.
+        :param kwargs: passed to Output.unary_op (region, propagate_std).
+        :return: the modified image (self if inplace).
+        """
+        target = self if inplace else self.copy()
+        for det_image in target.det_images:
+            det_image.unary_op(op, value, inplace=True, **kwargs)
+        target.construct_focal_plane_image()
+        return target
+
+    def binary_op(self, op: str, other: FocalPlaneImage, inplace: bool = False, **kwargs) -> FocalPlaneImage:
+        """
+        Apply `self <op> other` detector by detector, matching DetImages by id (see DetImage.binary_op), and rebuild
+        the mosaic.
+        :param op: str, one of 'add', 'subtract', 'multiply', 'divide'.
+        :param other: FocalPlaneImage with DetImages of the same ids.
+        :param inplace: bool, if True modify this image and its DetImages, else a copy.
+        :param kwargs: passed to Output.binary_op (region, combine_masks, propagate_std).
+        :return: the modified image (self if inplace).
+        """
+        if type(other) is not type(self):
+            raise TypeError(f"Cannot {op} a {type(other).__name__} and a {type(self).__name__}")
+        other_by_id = {det_image.id: det_image for det_image in other.det_images}
+        own_ids = [det_image.id for det_image in self.det_images]
+        if set(own_ids) != set(other_by_id):
+            raise ValueError(f"Focal planes have different detectors: {sorted(map(str, own_ids))} vs "
+                             f"{sorted(map(str, other_by_id))}")
+        target = self if inplace else self.copy()
+        for det_image in target.det_images:
+            det_image.binary_op(op, other_by_id[det_image.id], inplace=True, **kwargs)
+        target.construct_focal_plane_image()
+        return target
+
+    def add(self, other: FocalPlaneImage | float | np.ndarray, inplace: bool = False, **kwargs) -> FocalPlaneImage:
+        """ Add a number, an array or another FocalPlaneImage. See unary_op() and binary_op(). """
+        return self._dispatch('add', other, inplace, **kwargs)
+
+    def subtract(self, other: FocalPlaneImage | float | np.ndarray, inplace: bool = False,
+                 **kwargs) -> FocalPlaneImage:
+        """ Subtract a number, an array or another FocalPlaneImage. See unary_op() and binary_op(). """
+        return self._dispatch('subtract', other, inplace, **kwargs)
+
+    def multiply(self, other: FocalPlaneImage | float | np.ndarray, inplace: bool = False,
+                 **kwargs) -> FocalPlaneImage:
+        """ Multiply by a number, an array or another FocalPlaneImage. See unary_op() and binary_op(). """
+        return self._dispatch('multiply', other, inplace, **kwargs)
+
+    def divide(self, other: FocalPlaneImage | float | np.ndarray, inplace: bool = False,
+               **kwargs) -> FocalPlaneImage:
+        """ Divide by a number, an array or another FocalPlaneImage. See unary_op() and binary_op(). """
+        return self._dispatch('divide', other, inplace, **kwargs)
+
+    def _dispatch(self, op: str, other: FocalPlaneImage | float | np.ndarray, inplace: bool,
+                  **kwargs) -> FocalPlaneImage:
+        if isinstance(other, FocalPlaneImage):
+            return self.binary_op(op, other, inplace=inplace, **kwargs)
+        return self.unary_op(op, other, inplace=inplace, **kwargs)
+
+    def _operate(self, op: str, other: FocalPlaneImage | float | np.ndarray,
+                 reflected: bool = False) -> FocalPlaneImage:
+        """ Backs the arithmetic operators: returns a new FocalPlaneImage. """
+        if isinstance(other, FocalPlaneImage):
+            if type(other) is not type(self) or reflected:
+                return NotImplemented
+            return self.binary_op(op, other)
+        if not self._is_operand(other):
+            return NotImplemented
+        return self.unary_op(op, other, reflected=reflected)
+
+    ######################################## Reductions ########################################
+    # Statistics are taken per detector, not over the mosaic, whose gaps between detectors are zero-filled.
+    def reduce(self, stat: str | Callable = 'median', per_output: bool = True, **kwargs) -> dict[Any, Any]:
+        """
+        Reduce every detector to one statistic (see DetImage.reduce).
+        :return: {detector id: DetImage.reduce result}
+        """
+        return {det_image.id: det_image.reduce(stat, per_output=per_output, **kwargs)
+                for det_image in self.det_images}
+
+    def stats(self, which: dict[str, Callable] = STATFUNCS, per_output: bool = True, **kwargs) -> dict[Any, Any]:
+        """
+        Compute several statistics for every detector (see DetImage.stats).
+        :return: {detector id: DetImage.stats result}
+        """
+        return {det_image.id: det_image.stats(which, per_output=per_output, **kwargs)
+                for det_image in self.det_images}
 
     def show(self, ax=None, save=None, show_det_id=False, with_mask=False, mask_key='combined',
              data_var:str = 'data', textcolor="yellow", **imshow_kwargs):
