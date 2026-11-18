@@ -5,7 +5,7 @@ import yaml
 import pytest
 import re
 
-from eregion.configs import DetectorConfig, PipelineConfig
+from eregion.configs import DetectorConfig, FlowConfig
 
 
 def valid_detconfig_dict():
@@ -23,9 +23,9 @@ def valid_detconfig_dict():
     }
 
 
-def valid_pipelineconfig_dict():
+def valid_flowconfig_dict():
     return {
-        "pipelines": [
+        "flows": [
             {
                 "name": "calib_flow",
                 "lazy": False,
@@ -88,51 +88,66 @@ def test_validate_config_missing_property_key_raises():
         cfg = DetectorConfig(config_input=bad)
 
 
-def test_pipelineconfig_init_with_dict_validates():
-    cfg = PipelineConfig(config_input=valid_pipelineconfig_dict())
-    assert isinstance(cfg.config, dict) and cfg.config["pipelines"][0]["name"] == "calib_flow"
+def test_flowconfig_init_with_dict_validates():
+    cfg = FlowConfig(config_input=valid_flowconfig_dict())
+    assert isinstance(cfg.config, dict) and cfg.config["flows"][0]["name"] == "calib_flow"
 
 
-def test_pipelineconfig_init_with_yaml_file_path():
+def test_flowconfig_init_with_yaml_file_path():
     with tempfile.TemporaryDirectory() as td:
-        path = os.path.join(td, "pipeline.yaml")
+        path = os.path.join(td, "flow.yaml")
         with open(path, "w") as f:
-            yaml.safe_dump(valid_pipelineconfig_dict(), f)
-        cfg = PipelineConfig(config_input=path)
-        assert cfg.config["pipelines"][0]["nodes"][0]["task"] == "tasks.imagegen.ImageCreator"
+            yaml.safe_dump(valid_flowconfig_dict(), f)
+        cfg = FlowConfig(config_input=path)
+        assert cfg.config["flows"][0]["nodes"][0]["task"] == "tasks.imagegen.ImageCreator"
 
 
-def test_pipelineconfig_init_with_yaml_string():
-    yaml_str = yaml.safe_dump(valid_pipelineconfig_dict())
-    cfg = PipelineConfig(config_input=yaml_str)
-    assert cfg.config["pipelines"][0]["lazy"] is False
+def test_flowconfig_init_with_yaml_string():
+    yaml_str = yaml.safe_dump(valid_flowconfig_dict())
+    cfg = FlowConfig(config_input=yaml_str)
+    assert cfg.config["flows"][0]["lazy"] is False
 
 
-def test_pipelineconfig_missing_top_level_key_raises():
-    bad = valid_pipelineconfig_dict()
-    bad.pop("pipelines")
+def test_flowconfig_missing_top_level_key_raises():
+    bad = valid_flowconfig_dict()
+    bad.pop("flows")
     with pytest.raises(KeyError):
-        cfg = PipelineConfig(config_input=bad)
+        cfg = FlowConfig(config_input=bad)
 
 
-def test_pipelineconfig_missing_pipeline_key_raises():
-    bad = valid_pipelineconfig_dict()
-    bad["pipelines"][0].pop("nodes")
+def test_flowconfig_missing_flow_key_raises():
+    bad = valid_flowconfig_dict()
+    bad["flows"][0].pop("nodes")
     with pytest.raises(KeyError):
-        cfg = PipelineConfig(config_input=bad)
+        cfg = FlowConfig(config_input=bad)
 
 
-def test_pipelineconfig_lazy_pipeline_missing_source_raises():
-    bad = valid_pipelineconfig_dict()
-    bad["pipelines"][0]["lazy"] = True
-    with pytest.raises(AssertionError, match="Missing required key 'source'"):
-        cfg = PipelineConfig(config_input=bad)
+def test_flowconfig_lazy_flow_missing_source_raises():
+    bad = valid_flowconfig_dict()
+    bad["flows"][0]["lazy"] = True
+    with pytest.raises(KeyError, match="Missing required key 'source'"):
+        cfg = FlowConfig(config_input=bad)
 
 
-def interpolation_pipelineconfig_dict():
+def test_flowconfig_accepts_the_deprecated_pipelines_key():
+    old_style = valid_flowconfig_dict()
+    old_style["pipelines"] = old_style.pop("flows")
+    cfg = FlowConfig(config_input=old_style)
+    assert "pipelines" not in cfg.config
+    assert cfg.config["flows"] == valid_flowconfig_dict()["flows"]
+
+
+def test_flowconfig_rejects_both_flows_and_pipelines():
+    bad = valid_flowconfig_dict()
+    bad["pipelines"] = bad["flows"]
+    with pytest.raises(ValueError, match="both 'flows' and the deprecated 'pipelines'"):
+        FlowConfig(config_input=bad)
+
+
+def interpolation_flowconfig_dict():
     return {
         "debug": "${runtime.debug}",
-        "pipelines": [
+        "flows": [
             {
                 "name": "calib_flow",
                 "lazy": False,
@@ -141,7 +156,7 @@ def interpolation_pipelineconfig_dict():
                         "name": "image_creator",
                         "task": "tasks.imagegen.ImageCreator",
                         "metadata": {
-                            "path": "/data/${pipeline.data_dir}/raw",
+                            "path": "/data/${flow.data_dir}/raw",
                             "count": "${runtime.count}",
                             "nested": [
                                 "prefix-${runtime.suffix}",
@@ -158,8 +173,8 @@ def interpolation_pipelineconfig_dict():
 
 
 def test_yaml_interpolation_simple_replace_defaults_and_typed_values():
-    cfg = PipelineConfig(
-        config_input=interpolation_pipelineconfig_dict(),
+    cfg = FlowConfig(
+        config_input=interpolation_flowconfig_dict(),
         runtime_variables={
             "runtime": {
                 "debug": True,
@@ -167,13 +182,13 @@ def test_yaml_interpolation_simple_replace_defaults_and_typed_values():
                 "suffix": "end",
                 "inner": "value",
             },
-            "pipeline": {"data_dir": "science"},
+            "flow": {"data_dir": "science"},
         },
     )
 
-    node = cfg.config["pipelines"][0]["nodes"][0]
+    node = cfg.config["flows"][0]["nodes"][0]
     assert cfg.config["debug"] is True
-    assert cfg.config["pipelines"][0]["lazy"] is False
+    assert cfg.config["flows"][0]["lazy"] is False
     assert node["metadata"]["path"] == "/data/science/raw"
     assert node["metadata"]["count"] == 7
     assert node["metadata"]["nested"] == ["prefix-end", {"inner": "value"}]
@@ -181,8 +196,8 @@ def test_yaml_interpolation_simple_replace_defaults_and_typed_values():
 
 
 def test_yaml_interpolation_escaping():
-    cfg = PipelineConfig(
-        config_input=interpolation_pipelineconfig_dict(),
+    cfg = FlowConfig(
+        config_input=interpolation_flowconfig_dict(),
         runtime_variables={
             "runtime": {
                 "debug": False,
@@ -190,18 +205,18 @@ def test_yaml_interpolation_escaping():
                 "suffix": "end",
                 "inner": "value",
             },
-            "pipeline": {"data_dir": "science"},
+            "flow": {"data_dir": "science"},
         },
     )
 
-    assert cfg.config["pipelines"][0]["nodes"][0]["metadata"]["escaped"] == "${literal}"
+    assert cfg.config["flows"][0]["nodes"][0]["metadata"]["escaped"] == "${literal}"
 
 
 def test_yaml_interpolation_missing_var_raises():
-    bad = interpolation_pipelineconfig_dict()
-    bad["pipelines"][0]["nodes"][0]["metadata"]["path"] = "${runtime.missing}"
+    bad = interpolation_flowconfig_dict()
+    bad["flows"][0]["nodes"][0]["metadata"]["path"] = "${runtime.missing}"
     with pytest.raises(ValueError, match=re.escape("Unknown interpolation variable 'runtime.missing'")):
-        PipelineConfig(
+        FlowConfig(
             config_input=bad,
             runtime_variables={
                 "runtime": {
@@ -210,15 +225,15 @@ def test_yaml_interpolation_missing_var_raises():
                     "suffix": "end",
                     "inner": "value",
                 },
-                "pipeline": {"data_dir": "science"},
+                "flow": {"data_dir": "science"},
             },
         )
 
 
 def test_yaml_interpolation_cycle_raises():
-    bad = interpolation_pipelineconfig_dict()
+    bad = interpolation_flowconfig_dict()
     with pytest.raises(ValueError, match="Interpolation cycle detected"):
-        PipelineConfig(
+        FlowConfig(
             config_input=bad,
             runtime_variables={
                 "runtime": {
@@ -228,16 +243,16 @@ def test_yaml_interpolation_cycle_raises():
                     "inner": "value",
                     "loop": "${runtime.debug}",
                 },
-                "pipeline": {"data_dir": "science"},
+                "flow": {"data_dir": "science"},
             },
         )
 
 
 def test_yaml_interpolation_malformed_token_raises():
-    bad = interpolation_pipelineconfig_dict()
-    bad["pipelines"][0]["nodes"][0]["metadata"]["path"] = "${runtime.data_dir"
+    bad = interpolation_flowconfig_dict()
+    bad["flows"][0]["nodes"][0]["metadata"]["path"] = "${runtime.data_dir"
     with pytest.raises(ValueError, match="Malformed interpolation token"):
-        PipelineConfig(
+        FlowConfig(
             config_input=bad,
             runtime_variables={
                 "runtime": {
@@ -246,18 +261,18 @@ def test_yaml_interpolation_malformed_token_raises():
                     "suffix": "end",
                     "inner": "value",
                 },
-                "pipeline": {"data_dir": "science"},
+                "flow": {"data_dir": "science"},
             },
         )
 
 
 def test_yaml_interpolation_env_vars_only_when_enabled(monkeypatch):
-    bad = interpolation_pipelineconfig_dict()
-    bad["pipelines"][0]["nodes"][0]["metadata"]["path"] = "${PIPELINE_DATA_DIR}"
-    monkeypatch.setenv("PIPELINE_DATA_DIR", "from-env")
+    bad = interpolation_flowconfig_dict()
+    bad["flows"][0]["nodes"][0]["metadata"]["path"] = "${FLOW_DATA_DIR}"
+    monkeypatch.setenv("FLOW_DATA_DIR", "from-env")
 
-    with pytest.raises(ValueError, match="Unknown interpolation variable 'PIPELINE_DATA_DIR'"):
-        PipelineConfig(
+    with pytest.raises(ValueError, match="Unknown interpolation variable 'FLOW_DATA_DIR'"):
+        FlowConfig(
             config_input=bad,
             runtime_variables={
                 "runtime": {
@@ -266,11 +281,11 @@ def test_yaml_interpolation_env_vars_only_when_enabled(monkeypatch):
                     "suffix": "end",
                     "inner": "value",
                 },
-                "pipeline": {"data_dir": "science"},
+                "flow": {"data_dir": "science"},
             },
         )
 
-    cfg = PipelineConfig(
+    cfg = FlowConfig(
         config_input=bad,
         runtime_variables={
             "runtime": {
@@ -280,8 +295,8 @@ def test_yaml_interpolation_env_vars_only_when_enabled(monkeypatch):
                 "suffix": "end",
                 "inner": "value",
             },
-            "pipeline": {"data_dir": "science"},
+            "flow": {"data_dir": "science"},
         },
         enable_env_vars=True,
     )
-    assert cfg.config["pipelines"][0]["nodes"][0]["metadata"]["path"] == "from-env"
+    assert cfg.config["flows"][0]["nodes"][0]["metadata"]["path"] == "from-env"

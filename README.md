@@ -8,9 +8,9 @@ Supports direct task usage in scripts and orchestration in config‑driven DAG w
 ## Key Features
 
 - Modular tasks — preprocessing, calibration, analysis, and image generation.
-- Dual usage — call tasks directly in scripts or chain them in a pipeline.
+- Dual usage — call tasks directly in scripts or chain them in a flow.
 - Reusable image ops — shared combine/stack core functionalities in `core`.
-- Config‑driven orchestration — Prefect‑ready flows kept in `pipeline`.
+- Config‑driven orchestration — YAML-defined flows (DAGs of tasks) built and run by `flow`.
 - Optional lazy execution — support for generator‑style tasks.
 
 ---
@@ -24,14 +24,16 @@ src/eregion/
 │   └── main.py                # Typer app / entry point
 ├── configs/                  # YAML configuration files and code
 │   ├── detectors/            # YAML configs for different detectors (e.g., DEIMOS, LRIS)
-│   ├── pipeline_flows/       # YAML configs defining flows for different processing pipelines
+│   ├── flows/                # YAML configs defining flows of tasks for different processing jobs
 │   └── config.py             # Config loading and validation classes/functions
 ├── core/                     # Reusable core algorithms
 │   └── image_operations.py   # image combine/stack ops
 ├── datamodels/
 │   ├── image.py              # Flexible DetImage data class to hold image data, outputs and metadata
-├── pipeline/                 # Engine for YAML-defined DAG workflows, uses Prefect to wrap tasks and flows
-│   └── engine.py             
+├── flow/                     # YAML-defined DAGs of tasks: built and run in dependency order
+│   ├── refs.py               # references from a node's input to another node's result
+│   ├── nodes.py              # FlowNode / Flow, built from a flow config
+│   └── runner.py             # FlowRunner, eregion's simple sequential executor
 ├── tasks/                    # Modular processing/analysis tasks with defined inputs/outputs
 │   ├── analysis.py           # analysis tasks (e.g., ptc, linearity)
 │   ├── calibration.py        # calibration tasks (e.g., masterbias, masterflat)
@@ -53,24 +55,24 @@ All internal code imports the package as `eregion.<subpackage>` (e.g. `from ereg
 ### Usage
 Scripted: import task classes from tasks/* and call run(...) or __call__(...).
 
-Orchestrated: define a pipeline flow YAML (see `configs/pipeline_flows/example.yaml`) describing a
+Orchestrated: define a flow YAML (see `configs/flows/example.yaml`) describing a
 DAG of tasks, then run it either from Python:
 
 ```python
-from eregion.pipeline import PipelineEngine
+from eregion.flow import FlowRunner
 
-engine = PipelineEngine("path/to/pipeline.yaml")
-engine.run()
+runner = FlowRunner("path/to/flow.yaml")
+runner.run()
 ```
 
 or from the command line, without writing a notebook/script for each run:
 
 ```bash
-  eregion validate path/to/pipeline.yaml   # build the DAG and print the execution plan, no tasks run
-  eregion run path/to/pipeline.yaml        # build the DAG and execute it end-to-end
+  eregion validate path/to/flow.yaml   # build the DAG and print the execution plan, no tasks run
+  eregion run path/to/flow.yaml        # build the DAG and execute it end-to-end
 
   # Override ${...} placeholders in the config, and allow ${VAR} to fall back to env vars
-  eregion run path/to/pipeline.yaml --var data_dir=/data/raw --env
+  eregion run path/to/flow.yaml --var data_dir=/data/raw --env
 ```
 
 Run `eregion --help` for the full list of commands and options. The CLI is intentionally minimal

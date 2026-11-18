@@ -13,7 +13,7 @@ def parse_var_options(pairs: list[str] | None) -> dict:
         May be None or empty.
     :return: dict
         Mapping of KEY -> VALUE (both as strings) for passing as
-        variables to PipelineConfig/PipelineEngine.
+        variables to FlowConfig/FlowRunner.
     """
     variables = {}
     for pair in pairs or []:

@@ -1,7 +1,7 @@
 """
 eregion CLI entry point.
 
-Lets pipeline flow configs be run/validated from the terminal.
+Lets flow configs be run/validated from the terminal.
 """
 from typing import Optional
 
@@ -13,7 +13,7 @@ from eregion.cli.commands.validate import validate
 
 app = typer.Typer(
     name="eregion",
-    help="Run eregion pipeline flow configs as DAGs of tasks.",
+    help="Run eregion flow configs as DAGs of tasks.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -37,7 +37,7 @@ def _root(
     ),
 ):
     """
-    Run eregion pipeline flow configs as DAGs of tasks.
+    Run eregion flow configs as DAGs of tasks.
     """
 
 

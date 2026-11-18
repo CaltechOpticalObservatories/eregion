@@ -53,20 +53,20 @@ The framework is organized into four main components:
 - **Task Layer** — Modular processing and analysis units. Each task performs a single
   well-defined operation.
 - **Core Library** — Standalone library of algorithmic functions and image operations.
-- **Pipeline Engine** — Builds workflows from configuration files. Manages execution
+- **Flow Runner** — Builds workflows from configuration files. Manages execution
   order with dependency tracking. Handles errors and supports parallel execution.
 
 This separation allows each part of the system to evolve independently. Tasks do not need
-to know how workflows are executed, and the pipeline engine does not need to know the
+to know how workflows are executed, and the flow runner does not need to know the
 details of detector structure.
 
 ### Design Principles
 
 - **Modular** — Tasks are defined with clear dependencies and I/O to function as building
-  blocks in a pipeline. Plug-ins provided for users to add custom tasks.
+  blocks in a flow. Plug-ins provided for users to add custom tasks.
 - **Configurable** — Workflows and detector structures can be updated flexibly in YAML
   configs.
-- **Reusable** — Tasks can run standalone or inside pipelines.
+- **Reusable** — Tasks can run standalone or inside flows.
 - **Extensible** — New tasks and detectors can be added without modifying core code.
 
 ## 3. Config-Driven Data Model
@@ -167,7 +167,7 @@ passed downstream or analyzed independently. These can include updated `DetImage
 objects, enriched metadata, and derived quantities such as gain or bias level. The
 processing step results are required to be packaged as a dictionary with keys representing
 the result type/name. This standardization allows easy access across different parts of a
-pipeline, even across different workflows.
+flow, even across different workflows.
 
 ## 4. Modular Processing Nodes with Defined I/O
 
@@ -176,11 +176,11 @@ pipeline, even across different workflows.
 
 Processing in Eregion is built around tasks. A `Task` is the basic unit of computation and
 provides a `run()` method for execution. Tasks can also be called directly like functions,
-making them easy to use outside of pipelines.
+making them easy to use outside of flows.
 
 For streaming scenarios, the framework provides a `LazyTask` abstraction. Instead of
 processing all data at once, a lazy task yields results incrementally as images become
-available. This allows pipelines to operate on data streams or datasets that do not fit
+available. This allows flows to operate on data streams or datasets that do not fit
 entirely in memory.
 
 ### 4.2 Task Design Pattern
@@ -215,7 +215,7 @@ subtraction, overscan subtraction, bad pixel masking, etc. The image loading tas
 `DetImage` objects given a list of inputs and a detector configuration.
 
 Each task has clearly defined inputs and outputs and can be executed either
-independently or as part of a pipeline. This flexibility allows users to mix interactive
+independently or as part of a flow. This flexibility allows users to mix interactive
 analysis with automated workflows.
 
 Example flow:
@@ -226,38 +226,50 @@ Example flow:
   corrected `DetImage`s
 - ... (further tasks on results of bias-subtracted `DetImage`s)
 
-Such flows can automatically be orchestrated from pipeline YAML configuration as
+Such flows can automatically be orchestrated from flow YAML configuration as
 described in the next section.
 
-## 5. Config-Driven Pipeline Engine
+## 5. Config-Driven Flow Runner
 
 ### 5.1 YAML-Based Workflows
 
-Pipelines in Eregion are also defined using YAML configuration files (see Fig. 2). Each task
+Flows in Eregion are also defined using YAML configuration files (see Fig. 2). Each task
 entry specifies the task class, initialization parameters, runtime inputs, and dependencies.
 This declarative approach makes workflows easy to read, modify, and reproduce.
 
 ### 5.2 DAG Creation and Execution
 
-From the YAML configuration, the pipeline engine constructs a Directed Acyclic Graph
-(DAG) per pipeline where nodes correspond to tasks and edges represent dependencies.
+From the YAML configuration, the flow runner constructs a Directed Acyclic Graph
+(DAG) per flow where nodes correspond to tasks and edges represent dependencies.
 Tasks are loaded dynamically, and execution proceeds in dependency order. Another DAG
-is constructed at the pipeline level to run all defined pipelines in the dependency order.
+is constructed at the flow level to run all defined flows in the dependency order.
 
 The engine is responsible for resolving inputs between tasks, executing them in the correct
-sequence, and storing results. We use the [Prefect](https://www.prefect.io/) package to
-orchestrate the workflow dynamically. The nodes/tasks are wrapped in Prefect "tasks" and
-the pipelines in "flows" for execution. Prefect handles retries, and concurrent execution of
-the same generation of tasks. This allows users to focus on defining workflows rather than
-managing execution details.
+sequence, and storing results. It owns the scheduling itself: `graphlib.TopologicalSorter`
+turns the declared dependencies into generations of nodes, and the flows and their nodes
+are then executed sequentially in that order. There is no external workflow framework and no
+retry mechanism; a task that raises aborts the run.
+
+Each node's task is constructed once, when the engine is built, from the static `init.params`
+of its config entry. Outputs of other tasks are never passed to `Task.__init__` -- they are
+wired through `run.inputs` and resolved immediately before the task runs. One consequence is
+that a lazy flow reuses a single task instance for every batch, so a task must derive its
+per-run state from its run arguments rather than caching it on `self`.
+
+Before any task is executed, the engine dry runs the whole DAG: every task is instantiated
+with its configured init params, asked for a dummy result (`TaskResult.get_empty_instance()`),
+and the inputs of the tasks downstream are resolved against those dummies and checked against
+the signature of their `run()`/`lazy_run()` method. Wiring mistakes, such as a reference to an
+unknown node or payload field, or an argument a task does not accept, are therefore reported
+when the engine is built rather than part-way through a long run.
 
 ### 5.3 Execution Modes
 
-Eregion supports both eager and lazy execution at the pipeline level. For eager pipelines, all
+Eregion supports both eager and lazy execution at the flow level. For eager flows, all
 data is processed at once, and complete results are returned. This is useful for small
-datasets and debugging. For lazy pipelines, data is processed incrementally, and results
+datasets and debugging. For lazy flows, data is processed incrementally, and results
 are yielded as they are produced, which is more suitable for large datasets or streaming
-applications. A mix of lazy and eager pipelines can be defined in the YAML.
+applications. A mix of lazy and eager flows can be defined in the YAML.
 
 ### 5.4 TaskResult Class
 
@@ -270,32 +282,37 @@ exact inputs, the sequence of tasks applied, and the parameters used at each ste
 level of traceability is critical for scientific workflows.
 
 ```{code-block} yaml
-:caption: "Fig. 2: Example pipeline YAML structure"
+:caption: "Fig. 2: Example flow YAML structure"
 
-debug: false  # Optional: set to true to enable debug mode (more verbose logging, etc.)
+debug: false   # Optional: set to true to enable debug mode (more verbose logging, etc.)
 
-pipelines:
-  - name: PIPE_1  # Name of the pipeline flow, required
-    description: Pipeline flow 1
-    lazy: false  # Set true if this sub-pipeline should be run lazily (i.e. as images arrive)
+flows:
+  - name: FLOW_1  # Name of the flow, required
+    description: Flow 1
+    lazy: false  # Set true if this flow should be run lazily (i.e. as images arrive)
 
-    nodes:  # List of tasks (nodes) in the pipeline flow
-      - name: TASK_1  # Name of the task node, required
-        task: package.module.class  # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
-        init:  # Initialization parameters (for Task.__init__)
-          inputs:  # Specify any args needed from outputs of other tasks in this config
-            arg_1: pipe_name.node_name.data.key  # Output of tasks are wrapped in TaskResult objects by the engine, and the data
-                                                  # produced by the task is in the TaskResult.data dict; specify the path to the
-                                                  # data you want to use as input for this task
-            # etc.
-          params:  # Specify any additional kwargs (which are not task outputs) needed; refer to the task documentation for required and optional params and kwargs
+    nodes:  # List of tasks (nodes) in the flow
+      - name: TASK_1   # Name of the task node, required
+        task: package.module.class   # Path to the Class of the task to run, must be a subclass of `Task` defined in tasks.task
+        init:  # Initialization parameters (for Task.__init__); only `params`, outputs of other tasks are never passed to __init__
+          params: # Specify the kwargs needed to configure the task; refer to the task documentation for required and optional params and kwargs
             param_1: value
             param_2: value
             # etc.
-        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters, as above; use `inputs` for data coming from
+        run:  # Run-time (Task.run() or Task.lazy_run()) inputs and parameters; use `inputs` to specify data coming from
               # outputs of other tasks, and `params` for any additional parameters
-          inputs:
-            arg_1: pipe_name.node_name.data.key
+          inputs: # Specify any args needed from outputs of other tasks in this config
+            arg_1: flow_name.node_name.field_name # Each task's output is its own TaskResult subclass; reference a
+                                                   # named payload field on an upstream task's result with
+                                                   # 'flow.node.field'. Use 'flow.node' (no field) to pass
+                                                   # the whole upstream TaskResult instead. If the field's value
+                                                   # supports being called (e.g. ImageBundle), append a query
+                                                   # string to filter it, e.g. flow_name.node_name.field_name('type == "bias"')
+            arg_2: [flow_name.node_a, flow_name.node_b]  # A list of references is resolved into a list of values, in
+                                                          # this order (e.g. for a task taking several TaskResults)
+            arg_3:  # A mapping of references is resolved into a dict of values under the same keys
+              key_1: flow_name.node_a.field_name
+              key_2: flow_name.node_b.field_name
             # etc.
           params:
             param_1: value
@@ -305,99 +322,98 @@ pipelines:
       - name: TASK_2
         task: package.module.class
         init:
-          inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from TASK_1 as input for TASK_2
           params:
             param_1: value
             # etc.
         run:
           inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from TASK_1 as input for TASK_2
+            arg_1: FLOW_1.TASK_1.field_name  # Example of using output from TASK_1 as input for TASK_2
           params:
             param_1: value
             # etc.
-        depends_on: [TASK_1]  # should be specified if this task depends on the output of another task; ensures correct execution order in the pipeline flow
+        depends_on: [TASK_1]   # should be specified if this task depends on the output of another task; ensures correct execution order in the flow
 
-  - name: PIPE_2
-    description: Pipeline flow 2
-    lazy: true  # This sub-pipeline will be run lazily (i.e. as images arrive)
+  - name: FLOW_2
+    description: Flow 2
+    lazy: true  # This flow will be run lazily (i.e. as images arrive)
     nodes:
       - name: TASK_3
         task: package.module.class
         init:
-          inputs:
-            arg_1: PIPE_1.TASK_1.data.key  # Example of using output from a task in another pipeline flow as input
           params:
             param_1: value
             # etc.
         run:
           inputs:
-            arg_1: PIPE_1.TASK_2.data.key  # Example of using output from a task in another pipeline flow as input
+            arg_1: FLOW_1.TASK_2.field_name  # Example of using output from a task in another flow as input
           params:
             param_1: value
             # etc.
-        depends_on: [PIPE_1.TASK_1, PIPE_1.TASK_2]  # specify dependencies across pipeline flows as well
+        depends_on: [FLOW_1.TASK_1, FLOW_1.TASK_2]   # specify dependencies across flows as well
 ```
 
-### 5.5 Pipeline Example
+### 5.5 Flow Example
 
-A simple pipeline (Fig. 3) might consist of loading images, creating a master bias,
+A simple flow (Fig. 3) might consist of loading images, creating a master bias,
 subtracting the bias from the images, and computing summary statistics. Each step
 consumes the outputs of previous steps and produces structured results that can be
 further processed or analyzed.
 
 ```{code-block} yaml
-:caption: "Fig. 3: Example of a simple pipeline for basic calibration of images"
+:caption: "Fig. 3: Example of a simple flow for basic calibration of images"
 
 debug: false
-pipelines:
-  - name: calib_flow
-    description: Pipeline flow to create a master bias frame from bias images
+flows:
+  - name: masterbias_flow
+    description: Load biases, subtract overscan, and create master biases
     lazy: false
     nodes:
-      - name: image_creator
-        task: tasks.imagegen.ImageCreator
+      - name: bias_creator
+        task: eregion.tasks.imagegen.ImageCreator
         init:
           params:
-            detector_config: "/path/to/eregion/configs/detectors/deimos_singledet.yaml"
+            detector_config: ${DETECTOR_CONFIG}
         run:
           params:
-            input_source: "/path/to/data/PTC/SCI/20250812-101359/*_bias_*.fits"
-            identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
+            input_source: ${BIAS_INPUT_SOURCE}
+            identifier_func: eregion.tasks.custom.guess_image_type_from_filename_DEIMOS
+            fileloader_func: eregion.tasks.custom.load_image_fits_DEIMOS
+            data_on_demand: true
 
-      - name: master_bias
-        task: tasks.calibration.MasterBias
+      - name: overscan_sub
+        task: eregion.tasks.preprocessing.ScanSubtraction
         init:
           params:
+            which_scan: 'serial_overscan'
+            method: 'median_by_axis'
+            trim_start: 6
+        run:
+          inputs:
+            images: masterbias_flow.bias_creator.data('type == "bias"')
+        depends_on: [masterbias_flow.bias_creator]
+
+      - name: make_master_bias
+        task: eregion.tasks.calibration.MasterBias
+        init:
+          params:
+            groupby_keys: ["det_id"]
             method: "median"
         run:
           inputs:
-            bias_images: calib_flow.image_creator.data.bias
-        depends_on: [calib_flow.image_creator]
+            images: masterbias_flow.overscan_sub.data('type == "bias"')
+        depends_on: [masterbias_flow.overscan_sub]
 
-  - name: preproc_flow
-    description: Example pre-processing pipeline flow
-    lazy: false
-    nodes:
-      - name: image_creator
-        task: tasks.imagegen.ImageCreator
-        init:
-          params:
-            detector_config: "/path/to/eregion/configs/detectors/deimos_singledet.yaml"
-        run:
-          params:
-            input_source: "/path/to/data/PTC/SCI/20250812-101359/*flat_0.000*.fits"
-            identifier_func: tasks.custom.guess_image_type_from_filename_DEIMOS
-
-      - name: bias_subtraction
-        task: tasks.preprocessing.BiasSubtraction
-        init:
-          inputs:
-            master_biases: calib_flow.master_bias.data.master_biases
+      - name: cleanup_0
+        task: eregion.tasks.bookkeeping.DeleteResult
         run:
           inputs:
-            images: preproc_flow.image_creator.data.flat
-        depends_on: [preproc_flow.image_creator, calib_flow.master_bias]
+            result: masterbias_flow.bias_creator
+
+      - name: cleanup_1
+        task: eregion.tasks.bookkeeping.DeleteResult
+        run:
+          inputs:
+            result: masterbias_flow.overscan_sub
 ```
 
 ## 6. Standardized Characterization Reports
@@ -405,7 +421,7 @@ pipelines:
 Eregion tasks will support the generation of standardized outputs such as summary
 statistics, calibration products, and diagnostic plots like photon transfer curves.
 Functionality will be created to collate the task results and automatically populate a
-standard report format, which can be used standalone or integrated with the pipeline
+standard report format, which can be used standalone or integrated with the flow
 engine.
 
 ## 7. Provenance and Quality Assurance
@@ -415,25 +431,27 @@ about the task that produced it, the inputs it depended on, and the parameters u
 makes it possible to fully reconstruct how any output was generated.
 
 Quality assurance is supported through metadata flags, validation checks within tasks,
-and reproducible pipeline definitions. Together, these features ensure that results are both
+and reproducible flow definitions. Together, these features ensure that results are both
 reliable and auditable.
 
 ## 8. Error Handling
 
 Error handling is managed by the orchestration layer, which detects task-level failures, and
-provides logging for debugging. The pipeline engine supports retry mechanisms. Errors
-propagate clearly through the pipeline and are associated with specific tasks, making it
-easier to identify and fix issues.
+provides logging for debugging. eregion's own flow runner does not retry: a task that raises
+aborts the run, and retries are left to the orchestrating pipeline layer. Errors propagate
+clearly through the flow and are associated with specific tasks, making it easier to identify
+and fix issues.
 
 ## 9. Performance
 
-Performance is addressed at both the pipeline and task levels. Independent tasks can be
-executed in parallel, while individual tasks can use optimized numerical operations or
-parallel processing libraries (`joblib`).
+Performance is addressed at both the flow and task levels. eregion's flow runner executes
+nodes sequentially; running independent tasks concurrently is left to the orchestrating
+pipeline layer, while individual tasks can use optimized numerical operations or parallel
+processing libraries (`joblib`).
 
 ## 10. Design Tradeoffs
 
-The framework makes several deliberate tradeoffs. Using YAML for pipeline definition
+The framework makes several deliberate tradeoffs. Using YAML for flow definition
 improves reproducibility and clarity, but a Python API would offer more flexibility. Similarly,
 keeping tasks small improves reusability, but excessively fine granularity can introduce
 overhead. Lazy execution reduces memory usage but can make debugging more complex.
@@ -446,7 +464,7 @@ critical for scientific workflows.
 Eregion is a modular and extensible framework for detector characterization that
 emphasizes clean separation of concerns, configuration-driven workflows, and strong
 provenance tracking. By standardizing how data is represented, processed, and passed
-through pipelines, it simplifies the development of characterization procedures and
+through flows, it simplifies the development of characterization procedures and
 enables reuse across detectors and projects.
 
 The framework supports both interactive and automated use cases and is designed to

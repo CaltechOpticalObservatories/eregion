@@ -11,7 +11,7 @@ Auto-generated reference for the `eregion` package, organized by subpackage.
    eregion.configs
    eregion.core
    eregion.datamodels
-   eregion.pipeline
+   eregion.flow
    eregion.tasks
    eregion.utils
 ```
