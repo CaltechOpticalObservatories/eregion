@@ -21,6 +21,11 @@
 - `reduce`/`stats` raise `TypeError` for functions that ignore masks (e.g. `np.median`, scipy.stats functions);
   use a statistic name or a `numpy.ma` function. They, and `DetImage.get_masked_array`, raise `KeyError` for a
   mask key that is neither 'combined' nor an existing mask, instead of silently ignoring it.
+- Tasks use the new methods (bias, scan and difference-image subtraction, masked statistics, image copies), with
+  unchanged results except that: integer pixel data is converted to float before arithmetic (float results written
+  back into integer data were truncated); `BiasSubtraction` requires the master bias to have the same output ids
+  and output class as the image; the masked statistics of PTC, MasterDark and TDI raise `KeyError` for an unknown
+  mask key.
 
 ### Fixed
 - `DetImage.to_netcdf` accepts `pathlib.Path` and appends `.nc` instead of replacing the part of the name after

@@ -6,13 +6,12 @@ import xarray
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from copy import deepcopy
 
 from eregion.tasks import LazyTask
 from eregion.tasks.ptc import PTCResult
 from eregion.datamodels import DetImage, ImageBundle, CCDOutput
 
-from eregion.core.image_stats import do_statistics, STATFUNCS
+from eregion.core.image_stats import STATFUNCS
 from eregion.utils.dangerous_magic import pack_argument_helper
 
 _TDISTATS: dict[str, Callable] = {
@@ -113,12 +112,9 @@ class TDIExtractPTC(LazyTask):
                 "doing diffpair calculation on images %d and %d", dpidx0, dpidx1
             )
 
-            internal_diffim = deepcopy(images[dpidx0])
+            internal_diffim = images[dpidx0].subtract(images[dpidx1], combine_masks=False, propagate_std=False)
 
-            # essentially copied unchanged from PTC task. Consider for future refactor
             for opid, output in internal_diffim.outputs.items():
-                diffdat = output.data - images[dpidx1].outputs[opid].data
-                output.set_data_in_parent(diffdat)
                 # don't do sigma clip masking on this for now.
                 # datapoints are cheap here, and any kind of vignetting will cause
                 # row wise sigma clipping to go wild. Possible future upgrade of TDI analysis
@@ -205,8 +201,7 @@ class TDIExtractPTC(LazyTask):
         im, mask = output.get_image_region(return_masks=True, mask_key="combined")
         stats = dict()
 
-        ma = np.ma.MaskedArray(data=im.values, mask=mask.values if mask is not None else None)
-        stats |= do_statistics(ma, axis=output.serial_axint, which=_TDISTATS)
+        stats |= output.stats(_TDISTATS, region="image", axis=output.serial_axint, mask_key="combined")
 
         if mask is not None:
             stats["n_masked"] = int(

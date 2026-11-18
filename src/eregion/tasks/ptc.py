@@ -1,4 +1,3 @@
-from copy import deepcopy
 import pandas as pd
 from typing import Generator, Any
 import numpy as np
@@ -143,15 +142,12 @@ class PTC(LazyTask):
             dp2 = flats[diffpairidx[1]]
             self.logger.debug("Doing diff pair analysis on index %d and %d", *diffpairidx)
 
-            # create a new DetImage for the diff pair
-            diff_img = deepcopy(dp1)
+            # new DetImage holding dp1 - dp2; keeps dp1's masks and std, which are then updated below
+            diff_img = dp1.subtract(dp2, combine_masks=False, propagate_std=False)
             diff_img.meta["diff_pair"] = f'{dp1.meta.get("filename", "unknown")},{dp2.meta.get("filename", "unknown")}'
 
-            # Loop over each output, diff, and set in diff_img
             for out_id, output in diff_img.outputs.items():
-                diffdat = output.data - dp2.outputs[out_id].data # diff of two outputs
-                output.set_data_in_parent(diffdat) # set in parent
-
+                diffdat = output.data.copy() # diff of two outputs, before sigma clipping
                 diffmask = xr.zeros_like(diffdat, dtype=bool) # initialize diff mask
                 if self.meta.get("do_sigma_clip", True):
                     sigma_clip_args = {'sigma': 5.0, 'grow': 10, 'stdfunc': 'mad_std'}
@@ -177,19 +173,13 @@ class PTC(LazyTask):
         imarr, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
 
         # basic and extra stats on masked image region, should work for all type of outputs
-        if immask is not None:
-            mask = immask.values
-            stats["n_masked"] = int(np.count_nonzero(mask))
-        else:
-            mask = np.zeros_like(imarr)
-            stats["n_masked"] = 0
-        ma_imarr = np.ma.masked_array(imarr.values, mask=mask)
-        stats |= do_statistics(ma_imarr, which=STATFUNCS, axis=None, prepend_kw="")
+        stats["n_masked"] = int(np.count_nonzero(immask.values)) if immask is not None else 0
+        stats |= output.stats(STATFUNCS, region='image', mask_key=mask_key)
 
-        # power spectral density (correlation coefficients) on masked image region
+        # power spectral density (correlation coefficients) on the (unmasked) image region
         if self.PSD_size is not None:
             self.logger.info("Calculating correlation coefficients")
-            correlfilled = ma_imarr.data
+            correlfilled = imarr.values
             PSD, dPSD = self.calculate_PSD(correlfilled)
             stats |= {"PSD": PSD, "dPSD": dPSD}
 

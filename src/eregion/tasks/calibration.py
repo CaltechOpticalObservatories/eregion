@@ -1,5 +1,4 @@
 import pandas as pd
-from copy import deepcopy
 import numpy as np
 import xarray as xr
 from typing import Optional
@@ -9,7 +8,7 @@ import os
 from eregion.tasks import Task
 from eregion.datamodels import DetImage, ImageBundle, FPImageBundle
 from eregion.tasks.imagegen import ImageResult
-from eregion.core.image_stats import do_statistics, STATFUNCS
+from eregion.core.image_stats import STATFUNCS
 from eregion.utils.io_utils import save_dataframe_to_fits, load_dataframe_from_fits
 
 # Dataclass to hold master bias results
@@ -103,7 +102,7 @@ class MasterCombine(Task):
 
             imgs = list(group['object'])
             # Initialize master calibration DetImage
-            master_cal = deepcopy(imgs[0])
+            master_cal = imgs[0].copy()
             master_cal.meta['filename'] = ', '.join([img.meta['filename'] for img in imgs])
             master_cal.image_type.update({'type': f'master_{unique_id}'})
             # Combine calibration data
@@ -206,13 +205,7 @@ class MasterDark(MasterCombine):
 
     def do_stats_per_output(self, output, mask_key='combined'):
         stats = {"output": output.id}
-        imarr, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
-        if immask is not None:
-            mask = immask.values
-            stats["n_masked"] = int(np.count_nonzero(mask))
-        else:
-            mask = np.zeros_like(imarr)
-            stats["n_masked"] = 0
-        ma_imarr = np.ma.masked_array(imarr.values, mask=mask)
-        stats |= do_statistics(ma_imarr, which=STATFUNCS, prepend_kw="")
+        _, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
+        stats["n_masked"] = int(np.count_nonzero(immask.values)) if immask is not None else 0
+        stats |= output.stats(STATFUNCS, region='image', mask_key=mask_key)
         return stats

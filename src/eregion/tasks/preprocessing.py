@@ -98,21 +98,11 @@ class BiasSubtraction(BasePreprocessingTask):
             sub_img = self._subtract(img.data, master_bias.data)
             img.set_data(sub_img)
         else:
-            # overwrite img
-            for output in img.outputs.values():
-                mb_output = master_bias.outputs[output.id]
-                if self.meta.get("only_image_area", True):
-                    if 'image_region' in dir(output):
-                        imslc = output.image_region
-                        sub_output = self._subtract(slice_data(output.data, imslc),
-                                                   slice_data(mb_output.data, imslc))
-                        output.set_data_in_parent(sub_output, slicer=imslc)
-                    else:
-                        raise ValueError(f"No image_region attribute found for Output '{output.id}' of DetImage {img.id}.")
-                else:
-                    self.logger.warning("kwarg 'only_image_area' is False, performing full output subtraction including overscan/prescan regions.")
-                    sub_output = self._subtract(output.data, mb_output.data)
-                    output.set_data_in_parent(sub_output)
+            # overwrite img, output by output; the master bias' masks and std are not carried over
+            region = 'image' if self.meta.get("only_image_area", True) else 'full'
+            if region == 'full':
+                self.logger.warning("kwarg 'only_image_area' is False, performing full output subtraction including overscan/prescan regions.")
+            img.subtract(master_bias, inplace=True, region=region, combine_masks=False, propagate_std=False)
 
         img.image_type.update({'bias_subtracted': True})
         return img
@@ -204,9 +194,7 @@ class ScanSubtraction(BasePreprocessingTask):
 
         methodkwargs = {'axis': getattr(output, axis+"_axint")} if self.method_name == "median_by_axis" else {}
         subtract_value = self.method(trimmed_scan_data.values, **methodkwargs)
-        subtracted_scan = output.data.values - subtract_value
-
-        output.set_data_in_parent(subtracted_scan)
+        output.subtract(subtract_value, propagate_std=False)
         outhdr = getattr(output, "header", {})
         outhdr.update(trimmed_scan_stats)
         output.header = outhdr
@@ -495,13 +483,14 @@ class CosmicRayMasking(BasePreprocessingTask):
                       "readnoise": self.lacosmic_args.get("readnoise")}
         if noise_args["readnoise"] is None:
             if isinstance(output, CCDOutput):
-                noise_data, source = output.get_scan(axis="serial", kind="overscan"), "serial overscan"
+                region, source = "serial_overscan", "serial overscan"
             else:
-                noise_data, source = output.data, "output data"
-            if noise_data.size == 0:
+                region, source = "full", "output data"
+            if output.get_region(region)[0].size == 0:
                 raise ValueError(f"Output {output.id}: {source} is empty, cannot estimate readnoise. "
                                  f"Pass readnoise in lacosmic_args.")
-            noise_args["readnoise"] = float(STATFUNCS["mad"](np.ma.masked_invalid(noise_data.values)))
+            # NaN/inf pixels are ignored, output masks are not
+            noise_args["readnoise"] = float(output.reduce("mad", region=region, use_mask=False, mask_invalid=True))
             if not np.isfinite(noise_args["readnoise"]) or noise_args["readnoise"] <= 0:
                 raise ValueError(f"Output {output.id}: readnoise estimated from {source} is "
                                  f"{noise_args['readnoise']}. Pass readnoise in lacosmic_args.")
