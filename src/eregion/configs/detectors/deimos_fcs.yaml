@@ -26,7 +26,7 @@ objects:
         parallel_axis: 'y'
         readout_pixel: [0, 0]
     focal_plane_position:
-      x_cen: -73.7175  # mm
+      x_cen: 73.6575  # mm
       y_cen: 0.0  # mm
       angle: 0.0  # degrees (assuming origin is bottom left and angle is CCW positive)
       flip_x: false
@@ -52,7 +52,7 @@ objects:
         parallel_axis: 'y'
         readout_pixel: [0, 1068]
     focal_plane_position:
-      x_cen: 73.7175  # mm
+      x_cen: -73.6575  # mm
       y_cen: 0.0  # mm
       angle: 0.0  # degrees (assuming origin is bottom left and angle is CCW positive)
       flip_x: false
