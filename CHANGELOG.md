@@ -11,7 +11,7 @@
   `Output.add`/`subtract`/... change the parent image in place, while `Output` operators return an `xr.DataArray`.
 - `Output.reduce` / `Output.stats` (and on `DetImage`, `FocalPlaneImage`): masked statistics of a named region, per
   output or per detector.
-- `DetImage.copy()` (a cheaper replacement for `copy.deepcopy`), `DetImage.get_masked_array()`,
+- `DetImage.copy()` (a cheaper replacement for `copy.deepcopy`; copies labels too), `DetImage.get_masked_array()`,
   `Output.get_region()`.
 - `core`: `arithmetic`, `propagate_std`, `as_masked_array`, `reduce_array`, `check_mask_aware`.
 

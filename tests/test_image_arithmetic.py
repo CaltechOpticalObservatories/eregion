@@ -327,3 +327,29 @@ def test_copy_does_not_share_extra_fields():
     new.outputs["A"].notes.append("y")
     assert img.outputs["A"].notes == ["x"]
 
+
+def _labelled_image(seed):
+    img = make_image(seed)
+    labels = xr.zeros_like(img.data, dtype=np.int32)
+    labels[2, 3] = 1
+    img.set_labels("cosmic_ray_labels", labels)
+    return img
+
+
+def test_copy_keeps_independent_labels():
+    img = _labelled_image(0)
+    new = img.copy()
+    assert new.labels.identical(img.labels)
+    new.labels["cosmic_ray_labels"][:] = 7
+    assert int(img.labels["cosmic_ray_labels"].max()) == 1
+
+
+def test_arithmetic_keeps_the_left_operands_labels(tmp_path):
+    a, b = _labelled_image(0), make_image(1)
+    for result in (a + 1, a - b, 2 * a):
+        assert result.labels.identical(a.labels)
+    assert (b - a).labels is None
+    diff = a - b
+    diff.to_netcdf(tmp_path / "diff")
+    assert DetImage.from_netcdf(tmp_path / "diff.nc").labels.equals(a.labels)
+

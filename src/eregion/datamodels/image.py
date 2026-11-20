@@ -50,7 +50,8 @@ class DetImage(ArithmeticOperators):
 
     Arithmetic: `image + 2`, `image - other_image`, `2 * image`, `1 / image` return a new DetImage, applying the
     operation output by output (see unary_op/binary_op). add/subtract/multiply/divide do the same and take
-    inplace=True and the region/propagate_std/combine_masks options.
+    inplace=True and the region/propagate_std/combine_masks options. The result keeps the labels (and 'count') of
+    the left operand.
     """
 
     ndim: int = 2
@@ -367,8 +368,8 @@ class DetImage(ArithmeticOperators):
 
     def copy(self) -> DetImage:
         """
-        Return an independent copy of this image: data, meta, outputs (with their headers and masks) are copied, and
-        the copied outputs point to the new image. An image that is not loaded yet stays unloaded and shares the
+        Return an independent copy of this image: data, labels, meta, outputs (with their headers and masks) are
+        copied, and the copied outputs point to the new image. An image that is not loaded yet stays unloaded and shares the
         data loader. Cheaper than copy.deepcopy, which also walks every Output's parent link.
         :return: DetImage
         """
@@ -388,6 +389,7 @@ class DetImage(ArithmeticOperators):
         new.image_type = image_type
         new._data = self._data.copy(deep=True) if self._data is not None else None
         new._dataloader = self._dataloader
+        new.labels = self.labels.copy(deep=True) if self.labels is not None else None
         return new
 
     ######################################## Arithmetic ########################################
