@@ -84,10 +84,10 @@ def _make_small_masked_image() -> DetImage:
         serial_prescan=slice(0, 1, 1), serial_overscan=slice(5, 6, 1),
     )
     img = DetImage(data=rng.random((12, 6)), output_objects={"A": output}, name="D1")
-    for key, pixel in (("cr", (2, 2)), ("vignette", (5, 3))):
+    for key, pixel in (("cr_mask", (2, 2)), ("vignette_mask", (5, 3))):
         mask = np.zeros((12, 6), dtype=bool)
         mask[pixel] = True
-        output.set_mask(key, output.data.copy(data=mask))
+        output.set_var(key, mask)
     return img
 
 
@@ -95,14 +95,14 @@ def test_linbin_bins_every_mask_with_the_default_mask_key():
     img = _make_small_masked_image()
     # image rows 1..10 are binned into rows of 1, 2, 3 and 4 summed rows
     LinBin(binsizes=1)._bin_image(img)
-    masks = img.outputs["A"].masks
+    cr, vignette = img.get_mask("cr_mask"), img.get_mask("vignette_mask")
     # row 2 is summed into the second bin (rows 2-3 -> row 2), row 5 into the third (rows 4-6 -> row 3)
-    assert bool(masks["cr"].sel(y=2, x=2)) and int(masks["cr"].sum()) == 1
-    assert bool(masks["vignette"].sel(y=3, x=3)) and int(masks["vignette"].sum()) == 1
+    assert bool(cr.sel(y=2, x=2)) and int(cr.sum()) == 1
+    assert bool(vignette.sel(y=3, x=3)) and int(vignette.sum()) == 1
 
 
 def test_linbin_stats_use_the_mask_key():
-    task = LinBin(binsizes=1, mask_key="cr")
+    task = LinBin(binsizes=1, mask_key="cr_mask")
     normal, linbin = _make_small_masked_image(), _make_small_masked_image()
     stats = next(task.lazy_run(normal_flats=[normal], linbin_flats=[linbin])).stats
     assert set(stats["n_masked_digital_0"]) == {1} and set(stats["n_masked_analog_0"]) == {1}

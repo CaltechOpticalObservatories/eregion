@@ -70,13 +70,13 @@ def test_TDI_extract_single_output(example_DetImages_TDIPTC):
 
 def test_TDI_extract_diffims(example_DetImages_TDIPTC):
     ops, imby = example_DetImages_TDIPTC()
-    calc_diffim = imby[0].outputs["opFU"].get_image_region()[0].data - imby[1].outputs["opFU"].get_image_region()[0].data
+    calc_diffim = imby[0].outputs["opFU"].get_var(region="image").data - imby[1].outputs["opFU"].get_var(region="image").data
     extractor = TDIExtractPTC(groupby_keys=["det_id"])
 
     gen = extractor.lazy_run(imby)
     ptcres = next(gen)
 
-    dim_proc = ptcres.diff_images[0].outputs["opFU"].get_image_region()[0].data
+    dim_proc = ptcres.diff_images[0].outputs["opFU"].get_var(region="image").data
     #check the differenced image is calculated properly
     assert np.count_nonzero(np.abs(dim_proc - calc_diffim)) == 0
 
@@ -135,7 +135,7 @@ def test_TDI_stats_count_masked_pixels_per_row(example_DetImages_TDIPTC):
         mask.loc[{"y": 5, "x": 10}] = True
         mask.loc[{"y": 5, "x": 20}] = True
         mask.loc[{"y": 7, "x": 3}] = True
-        op.set_mask("cr", mask)
+        op.set_var("cr_mask", mask, combine=True)
 
     extractor = TDIExtractPTC(groupby_keys=["det_id"])
     stats = extractor.tdi_stats(ops[0])

@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-import xarray as xr
 from typing import Optional
 from pydantic import Field, ConfigDict
 import os
@@ -9,7 +8,6 @@ from eregion.tasks import Task
 from eregion.datamodels import DetImage, ImageBundle, FPImageBundle
 from eregion.tasks.imagegen import ImageResult
 from eregion.core.image_stats import STATFUNCS
-from eregion.utils import slice_data
 from eregion.utils.io_utils import save_dataframe_to_fits, load_dataframe_from_fits
 
 # Dataclass to hold master bias results
@@ -110,13 +108,12 @@ class MasterCombine(Task):
             master_cal.image_type.update({'type': f'master_{unique_id}'})
             # Combine calibration data, leaving out the masked pixels of each frame
             mask_key = kwargs.get('mask_key', 'combined')
-            to_combine = [img.get_masked_array(mask_key=mask_key) for img in imgs]
+            to_combine = [img.get_masked(masks=mask_key) for img in imgs]
 
             mcdict = self._create_mastercal(to_combine)
-            mcdataset = xr.Dataset(
-                data_vars={key: xr.DataArray(coords=imgs[0].data.coords, dims=imgs[0].data.dims, data=val)
-                           for key, val in mcdict.items()})
-            master_cal.set_data(mcdataset)
+            # the master keeps frame 0's meta and outputs, but none of its vars (data, masks, labels)
+            master_cal.remove_vars(*[name for name in master_cal.dataset.data_vars if name != 'data'])
+            master_cal.set_vars(mcdict)
             self._set_combine_mask(master_cal)
             master_cals.append(master_cal)
             self.logger.info(f'Created master calibration frame for det_id: {master_cal.id}, type: {master_cal.image_type}')
@@ -126,15 +123,9 @@ class MasterCombine(Task):
     @staticmethod
     def _set_combine_mask(master_cal: DetImage):
         """
-        Replace the masks copied from the first frame with 'combine_mask': pixels masked in every combined frame.
-        The first frame's labels (e.g. its cosmic rays) do not describe the master either, so they are dropped.
+        Add 'combine_mask' to a master frame: pixels masked in every combined frame (their count is 0).
         """
-        master_cal.masks = None
-        master_cal.labels = None
-        count = master_cal.get_data('count')
-        for output in master_cal.outputs.values():
-            output.masks = None
-            output.set_mask('combine_mask', slice_data(count, output.output_slice) == 0, combine=False)
+        master_cal.set_var('combine_mask', master_cal.get_var('count').values == 0)
 
     def _create_mastercal(self, images: list[np.ndarray])-> dict[str, np.ndarray]:
         """
@@ -220,7 +211,6 @@ class MasterDark(MasterCombine):
 
     def do_stats_per_output(self, output, mask_key='combined'):
         stats = {"output": output.id}
-        _, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
-        stats["n_masked"] = int(np.count_nonzero(immask.values)) if immask is not None else 0
-        stats |= output.stats(STATFUNCS, region='image', mask_key=mask_key)
+        stats["n_masked"] = int(np.count_nonzero(output.get_mask(mask_key, region='image').values))
+        stats |= output.stats(STATFUNCS, region='image', masks=mask_key)
         return stats

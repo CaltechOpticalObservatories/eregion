@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Mapping, Sequence
 from typing import Optional, Any, Literal, Callable
 import numpy as np
 import xarray as xr
@@ -11,7 +12,8 @@ from copy import deepcopy
 from eregion.utils import (
     ensure_dataarray,
     slice_data,
-    set_slice_in_data,
+    to_slicer,
+    to_label_slicer,
     XRDATA
 )
 from eregion.core.image_stats import STATFUNCS, as_masked_array, check_mask_aware, do_statistics, reduce_array
@@ -23,30 +25,117 @@ from eregion.utils import load_class
 
 logger = logging.getLogger(__name__)
 
+########################################## VAR NAMES AND KINDS ######################################################
+MASK_SUFFIX = "_mask"
+LABEL_SUFFIX = "_label"
+RESERVED_NAMES = frozenset({"combined", "all", "mask", "label"})
+NETCDF_FORMAT = 2
+
+MaskSelection = str | Sequence[str] | None
+
+
+def var_kind(name: str) -> Literal['data', 'mask', 'label']:
+    """
+    Return the kind of a DetImage var from its name: '<prefix>_mask' is a bool mask, '<prefix>_label' an integer
+    label image (0 is background), anything else a data var.
+    :param name: str, var name.
+    :return: 'data', 'mask' or 'label'
+    :raises TypeError: if name is not a str.
+    :raises ValueError: if name is empty, reserved, or a bare suffix.
+    """
+    if not isinstance(name, str):
+        raise TypeError(f"var names must be str, got {type(name).__name__}")
+    if not name or name in RESERVED_NAMES:
+        raise ValueError(f"'{name}' can't be a var name; reserved names are {sorted(RESERVED_NAMES)}")
+    for suffix, kind in ((MASK_SUFFIX, 'mask'), (LABEL_SUFFIX, 'label')):
+        if name.endswith(suffix):
+            if len(name) == len(suffix):
+                raise ValueError(f"{kind} vars must be named '<prefix>{suffix}', got '{name}'")
+            return kind
+    return 'data'
+
+
+def _check_dtype(name: str, kind: str, dtype: np.dtype, target_dtype: Optional[np.dtype] = None) -> None:
+    """ Masks must be bool, labels integer, and float values can't go into an integer data var. """
+    if kind == 'mask' and dtype != np.bool_:
+        raise TypeError(f"mask var '{name}' must be bool, got {dtype}")
+    if kind == 'label' and not np.issubdtype(dtype, np.integer):
+        raise TypeError(f"label var '{name}' must be integer, got {dtype}")
+    if (kind == 'data' and target_dtype is not None and np.issubdtype(target_dtype, np.integer)
+            and not np.issubdtype(dtype, np.integer)):
+        raise TypeError(f"data var '{name}' is {target_dtype}; writing {dtype} values would truncate them")
+
+
+def _select_mask_names(masks: MaskSelection, available: list[str], owner: str) -> list[str]:
+    """ Resolve a masks selection: 'combined' (all masks), one name, a list of names, or None (no masks). """
+    if masks is None:
+        return []
+    if isinstance(masks, str):
+        if masks == 'combined':
+            return list(available)
+        masks = [masks]
+    names = list(masks)
+    for name in names:
+        if var_kind(name) != 'mask':
+            raise ValueError(f"'{name}' is not a mask name; mask vars are named '<prefix>{MASK_SUFFIX}'")
+        if name not in available:
+            raise KeyError(f"{owner} has no mask '{name}'; its masks are {available} (or 'combined')")
+    return names
+
+
+def combine_masks(ds: xr.Dataset, names: list[str], coords: dict[str, Any], dims: tuple[str, ...] = ('y', 'x')
+                  ) -> xr.DataArray:
+    """
+    Return the OR of the named bool mask vars of ds as a new DataArray, all False if names is empty.
+    :param ds: xr.Dataset holding the masks.
+    :param names: list of mask var names.
+    :param coords: coords of the returned array (used when names is empty).
+    :param dims: dims of the returned array.
+    :return: bool xr.DataArray
+    """
+    if names:
+        values = np.logical_or.reduce([ds[name].values for name in names])
+        return xr.DataArray(values, dims=ds[names[0]].dims, coords=ds[names[0]].coords)
+    shape = tuple(len(coords[dim]) for dim in dims)
+    return xr.DataArray(np.zeros(shape, dtype=bool), dims=dims, coords=coords)
+
+
 ############################################## DETIMAGE CLASS #######################################################
 class DetImage(ArithmeticOperators):
     """
-    Base detector image holding 2D (only spatial) pixel data and outputs. The data arrays are stored in .data
-    as an xarray.Dataset. Since xarray.Dataset requires a data variable name to store arrays in, the default name used
-    for the main image array is 'data'. Additional arrays commonly stored are 'std' for standard deviation and
-    'count' for number of pixels used when storing combined multiple 2D arrays.
+    Detector image holding 2D (y, x) arrays and the Output regions that make it up.
+
+    All arrays live in one xr.Dataset (`dataset`), on the same y/x coordinates. The kind of each var comes from its
+    name:
+
+    - '<prefix>_mask': bool mask, True where a pixel is masked (e.g. 'sigma_clip_mask', 'cosmic_ray_mask').
+    - '<prefix>_label': integer label image, 0 is background (e.g. 'cosmic_ray_label').
+    - anything else: a data var. 'data' is the main image; 'std' and 'count' are common for combined images.
+
+    'combined', 'all', 'mask' and 'label' are reserved and can't be var names. In the `masks` parameter of the methods
+    below, 'combined' means the OR of all masks.
+
+    Reading and writing:
+
+    - get_var(name, region) returns any var, whole or a region. The result may share memory with the image, so write
+      through set_var.
+    - get_mask(masks, region) returns the OR of the selected masks as a bool array (all False if there are none).
+    - get_masked(name, masks, region) returns a numpy masked array.
+    - set_var(name, values, region, combine) writes a whole var or a region of it; combine=True ORs a mask.
+    - set_vars(values) writes several whole vars, remove_vars(*names) drops vars.
+    - set_loader(loader) / load() / unload() handle data read from disk on demand. Masks and labels are kept in memory
+      when the data vars are unloaded.
+
+    A region is a dict or tuple of slices in pixel coordinates, numpy style (stop exclusive); a negative step returns
+    and expects values in that reversed order. Output methods take the same arguments, with region names
+    ('image', 'serial_overscan', ...) as well.
 
     Parameters:
-        data: optional, 2D image array (np.ndarray or xr.DataArray or xr.Dataset) or Callable
+        data: optional 2D array (np.ndarray or xr.DataArray) stored as 'data', or an xr.Dataset of vars.
         output_objects: Prebuilt Output regions.
         meta: Dict or DetImageMeta; validated if provided.
+        loader: optional Callable(filename) -> (data arrays, headers) used to load the data vars on demand.
         kwargs: Backward-compatible meta fields (merged if meta is a dict).
-
-    Attributes:
-        ndim: int - Number of dimensions (fixed at 2 for spatial).
-        outputs: dict[str, Output] - Mapping of output IDs to Output objects.
-        meta: DetImageMeta or dict - Metadata for the detector image.
-        id: str | int - Identifier for the corresponding detector taken from 'name' key in detector config.
-        image_type: dict[str, Any] - Mapping of any image identifying keys to their values like 'type', 'exptime', 'mode', etc.
-        masks: xr.Dataset or None - Full image boolean masks built from the outputs' masks.
-        labels: xr.Dataset or None - Full image integer label images (e.g. 'cosmic_ray_labels'), set with set_labels().
-        _data: Internal attribute for storing image data when loaded.
-        _dataloader: Internal variable for storing data loader Callable for on-demand loading.
 
     Arithmetic: `image + 2`, `image - other_image`, `2 * image`, `1 / image` return a new DetImage, applying the
     operation output by output (see unary_op/binary_op). add/subtract/multiply/divide do the same and take
@@ -58,21 +147,17 @@ class DetImage(ArithmeticOperators):
 
     def __init__(
             self,
-            data: Optional[XRDATA | np.ndarray | Callable] = None,
+            data: Optional[XRDATA | np.ndarray] = None,
             output_objects: Optional[dict[str, Output]] = None,
             meta: Optional[DetImageMeta | dict[str, Any]] = None,
+            *,
+            loader: Optional[Callable] = None,
             **kwargs: Any,
     ):
-
         self.outputs: dict[str, Output] = {}
         self.meta: DetImageMeta | dict[str, Any] = {}
-        self._data: xr.Dataset | None = None
-        self._dataloader: Callable | None = None
-        self.masks: xr.Dataset | None = None
-        self.labels: xr.Dataset | None = None
-
-        if data is not None:
-            self.set_data(data)
+        self._ds: xr.Dataset = xr.Dataset()
+        self._loader: Callable | None = None
 
         # Normalize meta to DetImageMeta if possible; allow empty until placement on focal plane.
         if meta is None and kwargs:
@@ -92,8 +177,23 @@ class DetImage(ArithmeticOperators):
             "image_type", {"type": "unknown"}
         )
 
+        match data:
+            case None:
+                pass
+            case xr.Dataset():
+                self.set_vars(data)
+            case np.ndarray() | xr.DataArray():
+                self.set_var('data', data)
+            case func if callable(func):
+                raise TypeError("Pass a data loader with DetImage(loader=...) or set_loader(), not as data.")
+            case _:
+                raise TypeError(f"Unsupported data type: {type(data)}. Must be xr.DataArray, xr.Dataset or "
+                                f"np.ndarray.")
+        if loader is not None:
+            self.set_loader(loader)
+
         # Outputs
-        if output_objects is None and self._data is not None:
+        if output_objects is None and self.is_loaded:
             logger.info("Creating default Output for DetImage (covers full array).")
             h, w = self.shape
             self.outputs["0"] = Output(
@@ -119,100 +219,94 @@ class DetImage(ArithmeticOperators):
         else:
             self.outputs[output.id] = output
 
-    def set_data(self, data: XRDATA | np.ndarray | Callable):
-        """
-        If data is a callable, store it as _dataloader for on-demand loading. If data is an array, store it as _data.
-        """
-        match data:
-            case func if callable(func):
-                logger.debug("Callable provided for on-demand data loading.")
-                self._dataloader = data
-            case np.ndarray() | xr.DataArray():
-                logger.debug("np.ndarray provided, converting to xr.Dataset storing directly in _data.")
-                self._data = ensure_dataarray(data).to_dataset(name='data')
-            case xr.Dataset():
-                data = ensure_dataarray(data)
-                if 'data' not in data.data_vars:
-                    raise ValueError("xr.Dataset provided must contain a data_var named 'data'.")
-                else:
-                    self._data = data
-            case _:
-                raise TypeError(f"Unsupported data type: {type(data)}. "
-                                f"Must be xr.DataArray, xr.Dataset, np.ndarray, or Callable.")
+    ########################################## Loading ##########################################
+    @property
+    def is_loaded(self) -> bool:
+        """ True if the data vars are in memory. """
+        return 'data' in self._ds.data_vars
 
-    def _load_from_disk(self):
+    @property
+    def has_loader(self) -> bool:
+        """ True if the data vars can be (re)loaded from disk with load(). """
+        return self._loader is not None
+
+    def set_loader(self, loader: Callable):
         """
-        Load data from disk into _data attribute. self.data returns xarray _data when called.
+        Set the function that loads the data vars on demand. It is called as loader(meta['filename']) and must
+        return (data arrays, headers) indexable by each Output's input_array_axis.
+        :param loader: Callable
         """
-        if self._dataloader is not None:
-            assert self.meta["filename"] is not None
-            assert len(self.meta["filename"]) > 0
-            idata, iheaders = self._dataloader(self.meta["filename"])
-            temp = np.zeros(self.shape)
-            for out_id, output in self.outputs.items():
-                hdr, seldata = output._select_header_and_data(iheaders, idata)
-                temp[*output.output_slice] = seldata
-                output.header = hdr
-            temp = ensure_dataarray(temp)
-            self._data = temp.to_dataset(name='data')
-            del idata, iheaders
-        else:
-            raise ValueError(
-                "No dataloader function provided for this DetImage, cannot load data."
-            )
+        if not callable(loader):
+            raise TypeError(f"loader must be callable, got {type(loader).__name__}")
+        self._loader = loader
+
+    def load(self, force: bool = False):
+        """
+        Load the data vars with the loader, keeping existing masks and labels. Does nothing if already loaded,
+        unless force is True.
+        :param force: bool, reload even if the data vars are in memory.
+        :raises ValueError: if there is no loader or no filename in meta.
+        """
+        if self.is_loaded and not force:
+            return
+        if self._loader is None:
+            raise ValueError(f"DetImage {self.id} has no loader, cannot load data.")
+        filename = self.meta.get("filename")
+        if not filename:
+            raise ValueError(f"DetImage {self.id} has no 'filename' in meta to load data from.")
+        idata, iheaders = self._loader(filename)
+        temp = np.zeros(self.shape)
+        for out_id, output in self.outputs.items():
+            hdr, seldata = output._select_header_and_data(iheaders, idata)
+            temp[*output.output_slice] = seldata
+            output.header = hdr
+        loaded = ensure_dataarray(temp).to_dataset(name='data')
+        self._ds = xr.merge([self._ds.drop_vars(self._names('data')), loaded], join='exact', compat='override',
+                            combine_attrs='drop')
 
     def unload(self):
         """
-        Unload data from _data attribute to free up memory.
+        Drop the data vars to free memory; masks and labels stay. They are loaded again on the next access.
+        :raises ValueError: if there is no loader, since the data could not be loaded again.
         """
-        del self._data
-        self._data = None
+        if self._loader is None:
+            raise ValueError(f"DetImage {self.id} has no loader; unloading would lose its data.")
+        self._ds = self._ds.drop_vars(self._names('data'))
 
-    def get_data(self, data_var: Optional[str | Literal['all']] = 'data') -> XRDATA:
-        """
-        Return the data array or dataset from _data attribute. If _data is None, attempt to load from disk.
-        :param data_var: str or 'all', name of the data variable in _data to return. If 'all', returns the entire dataset.
-        """
-        if self._data is None:
-            self._load_from_disk()
-        data_var = data_var if data_var is not None else 'data'
-        if data_var == 'all':
-            return self._data
-        else:
-            if data_var not in self._data.data_vars:
-                raise ValueError(f"Data variable '{data_var}' not found in DetImage data.")
-            return self._data[data_var]
+    def _ensure_loaded(self):
+        if not self.is_loaded and self._loader is not None:
+            self.load()
+
+    ########################################## Introspection ##########################################
+    def _names(self, kind: str) -> list[str]:
+        return [name for name in self._ds.data_vars if var_kind(name) == kind]
 
     @property
-    def data(self):
-        """ Return the main image array 'data' from the xr.Dataset stored in _data. If _data is None, attempt to load from disk. """
-        return self.get_data('data')
+    def dataset(self) -> xr.Dataset:
+        """ The Dataset holding every var (data, masks, labels), loaded if needed. Write through set_var. """
+        self._ensure_loaded()
+        return self._ds
 
-    def set_data_slice(self,
-                       slicedata: XRDATA,
-                       slicer: dict[str, slice],
-                       data_var: Optional[str | Literal['all']] = 'data'):
-        """
-        Set a slice (specified by slicer) in the xr.Dataset in _data attribute to provided slicedata.
-        This is useful for updating specific regions of the detector image.
-        :param slicedata: Data to set in the specified slice
-        :param slicer: Dictionary of slices specifying the region in _data to update. Keys should match the dimensions of _data.
-        :param data_var: Name of the data variable in _data to update. If 'all', slicedata must be an xr.Dataset with matching data_vars.
-        :return:
-        """
-        if self._data is None:
-            raise ValueError("No data loaded in DetImage to set a slice.")
-        match (data_var, slicedata):
-            case ('all', xr.Dataset()):
-                self._data = set_slice_in_data(slicedata, self._data, slicer)
-            case ('all', _):
-                raise TypeError("When data_var is 'all', slicedata must be an xarray.Dataset.")
-            case (_, xr.DataArray()):
-                self._data[data_var] = set_slice_in_data(slicedata, self._data[data_var], slicer)
-            case (_, xr.Dataset()):
-                if data_var not in slicedata.data_vars:
-                    raise ValueError(f"Data variable '{data_var}' not found in provided slicedata xr.Dataset.")
-                self._data[data_var] = set_slice_in_data(slicedata[data_var], self._data[data_var], slicer)
+    @property
+    def data(self) -> xr.DataArray:
+        """ The main image array, 'data'. """
+        return self.get_var('data')
+
+    @property
+    def data_names(self) -> list[str]:
+        """ Names of the data vars (loads the data if needed). """
+        self._ensure_loaded()
+        return self._names('data')
+
+    @property
+    def mask_names(self) -> list[str]:
+        """ Names of the mask vars. """
+        return self._names('mask')
+
+    @property
+    def label_names(self) -> list[str]:
+        """ Names of the label vars. """
+        return self._names('label')
 
     @property
     def num_outputs(self) -> int:
@@ -221,24 +315,16 @@ class DetImage(ArithmeticOperators):
     @property
     def shape(self) -> tuple[int, ...]:
         """
-        Return the shape of the detector image. First check meta['properties'], then meta['shape'], then _data.shape,
-        then outputs' output_slices. If none of these are available, raise ValueError.
+        Return the shape of the detector image: from meta['properties'], then meta['shape'], then the stored vars,
+        then the outputs' output_slices. Raises ValueError if none of these are available.
         """
         if 'properties' in self.meta:
             if self.meta['properties'] and 'y_size' in self.meta['properties']:
                 return self.meta['properties']['y_size'], self.meta['properties']['x_size']
         if 'shape' in self.meta:
             return self.meta['shape']
-        if "properties" in self.meta:
-            if self.meta["properties"] and "y_size" in self.meta["properties"]:
-                return (
-                    self.meta["properties"]["y_size"],
-                    self.meta["properties"]["x_size"],
-                )
-        if "shape" in self.meta:
-            return self.meta["shape"]
-        if self._data is not None:
-            return self._data['data'].shape
+        if 'y' in self._ds.dims and 'x' in self._ds.dims:
+            return self._ds.sizes['y'], self._ds.sizes['x']
         if (opshape := self._shape_from_outputs) is not None:
             return opshape
         raise ValueError("Cannot determine shape of DetImage from metadata or outputs.")
@@ -275,102 +361,175 @@ class DetImage(ArithmeticOperators):
             return all(a == b for a, b in zip(propsize, opshape))
         return None
 
-    def set_labels(self, label_key: str, labels: xr.DataArray) -> None:
+    def _full_coords(self) -> dict[str, Any]:
+        """ The y/x coords of the stored vars, or integer coords from shape if nothing is stored yet. """
+        if 'y' in self._ds.coords and 'x' in self._ds.coords:
+            return {'y': self._ds.coords['y'].values, 'x': self._ds.coords['x'].values}
+        h, w = self.shape
+        return {'y': np.arange(h), 'x': np.arange(w)}
+
+    ########################################## Reading ##########################################
+    def get_var(self, name: str = 'data', region: Optional[tuple | dict] = None) -> xr.DataArray:
         """
-        Store a full image integer label array (0 is background) in self.labels under label_key, replacing any
-        existing labels with the same key.
-        :param label_key: str, name of the label data_var in self.labels.
-        :param labels: xr.DataArray of integers with the same dims and shape as self.data.
-        :return: None
+        Return a data, mask or label var, whole or a region of it. Data vars are loaded if needed. The result may
+        share memory with the image; write through set_var.
+        :param name: str, var name.
+        :param region: dict or tuple of pixel slices (stop exclusive), or None for the whole image.
+        :return: xr.DataArray
+        :raises KeyError: if the image has no var of that name.
         """
-        if not np.issubdtype(labels.dtype, np.integer):
-            raise TypeError(f"labels must have an integer dtype, got {labels.dtype}.")
-        data = self.data
-        if labels.dims != data.dims or labels.shape != data.shape:
-            raise ValueError(f"labels dims/shape {labels.dims}{labels.shape} do not match image data "
-                             f"{data.dims}{data.shape}.")
-        if self.labels is None:
-            self.labels = labels.to_dataset(name=label_key)
+        if var_kind(name) == 'data':
+            self._ensure_loaded()
+        if name not in self._ds.data_vars:
+            raise KeyError(f"DetImage {self.id} has no var '{name}'; its vars are {list(self._ds.data_vars)}")
+        da = self._ds[name]
+        return slice_data(da, region) if region is not None else da
+
+    def get_mask(self, masks: MaskSelection = 'combined', region: Optional[tuple | dict] = None) -> xr.DataArray:
+        """
+        Return the OR of the selected masks as a new bool array; all False if no mask is selected or none exist.
+        :param masks: 'combined' (all masks), a mask name, a list of mask names, or None (no masks).
+        :param region: dict or tuple of pixel slices, or None for the whole image.
+        :return: bool xr.DataArray
+        :raises KeyError: for a mask name the image does not have.
+        """
+        names = _select_mask_names(masks, self.mask_names, f"DetImage {self.id}")
+        mask = combine_masks(self._ds, names, self._full_coords())
+        return slice_data(mask, region) if region is not None else mask
+
+    def get_masked(self, name: str = 'data', masks: MaskSelection = 'combined',
+                   region: Optional[tuple | dict] = None, mask_invalid: bool = False) -> np.ma.MaskedArray:
+        """
+        Return a data var as a numpy masked array, for numpy.ma calculations that skip masked pixels.
+        :param name: str, data var name.
+        :param masks: masks to apply, as in get_mask.
+        :param region: dict or tuple of pixel slices, or None for the whole image.
+        :param mask_invalid: bool, if True also mask NaN and inf pixels.
+        :return: np.ma.MaskedArray
+        """
+        if var_kind(name) != 'data':
+            raise ValueError(f"get_masked takes a data var, got the {var_kind(name)} var '{name}'")
+        data = self.get_var(name, region)
+        return as_masked_array(data.values, self.get_mask(masks, region).values, mask_invalid=mask_invalid)
+
+    def _get_filled(self, name: str, masks: MaskSelection, fill_value=np.nan) -> xr.DataArray:
+        """ A data var with masked pixels replaced by fill_value (for plotting). """
+        data = self.get_var(name)
+        if masks is None:
+            return data
+        return data.where(~self.get_mask(masks).values, other=fill_value)
+
+    ########################################## Writing ##########################################
+    def set_var(self, name: str, values: np.ndarray | xr.DataArray, region: Optional[tuple | dict] = None,
+                combine: bool = False):
+        """
+        Write a whole var (region=None) or a region of it. The var kind comes from the name (see the class
+        docstring) and the values are checked against it: masks must be bool, labels integer.
+        Writing a region of a var that does not exist yet creates it first, filled with NaN (float data), False
+        (mask) or 0 (label).
+        :param name: str, var name.
+        :param values: np.ndarray or xr.DataArray. A whole var must match the image shape; a region must match the
+            region's shape, and an xr.DataArray must have the region's coords in the same order.
+        :param region: dict or tuple of pixel slices (stop exclusive, steps kept), or None for the whole var.
+        :param combine: bool, masks only: OR the values with the existing mask instead of replacing it.
+        """
+        kind = var_kind(name)
+        if combine and kind != 'mask':
+            raise ValueError(f"combine=True ORs masks; '{name}' is a {kind} var")
+        if kind == 'data':
+            self._ensure_loaded()
+        if region is None:
+            self._set_whole(name, kind, values, combine)
         else:
-            self.labels[label_key] = labels
+            self._set_region(name, kind, values, to_slicer(region, dims=('y', 'x')), combine)
 
-    def _build_full_mask(self) -> bool:
-        """
-        Build a full mask from the individual output masks.
-        :return: True if a full mask was built, False otherwise.
-        """
-        self.masks = xr.Dataset(coords=self.data.coords)
-        for out_id, output in self.outputs.items():
-            if output.masks is not None:
-                # merge output mask dataset with masks, output mask coords are a subset of img masks
-                # Using fill_value=np.nan so the merge doesn't raise conflict error (compat="override" picks the first dataset's value so can't use that)
-                self.masks = self.masks.merge(
-                    output.masks, join="outer", fill_value=np.nan, compat="no_conflicts")
-        # After masks are merged, replace NaNs with zeros (since this is an explicit masks array it should have 1/0 for mask/not-mask and Nan does not imply masked.
-        for dvar in self.masks.data_vars:
-            da = self.masks[dvar]
-            self.masks[dvar] = da.where(da.notnull(), other=False)
-
-        if len(self.masks.data_vars) == 0:
-            self.masks = None
-            return False
-        return True
-
-    def get_mask(self, mask_key: str | Literal['all', 'combined'] = 'combined') -> XRDATA | None:
-        """
-        Return the mask array or dataset. Build masks from outputs if self.masks is empty.
-        :param mask_key: str or 'all' or 'combined'. Returns dataset if 'all'. Returns DataArray if key is specified. Returns OR combined mask from all keys if 'combined'.
-        :return: xr.DataArray or xr.Dataset
-        """
-        built = self._build_full_mask() if self.masks is None else True
-        if built:
-            match mask_key:
-                case 'all':
-                    return self.masks
-                case 'combined':
-                    return self.combined_mask
-                case k if k in self.masks:
-                    return self.masks[k]
-                case k:
-                    logger.error(f"{k} is not present in the masks dataset. Available keys are {list(self.masks.data_vars)}")
-                    return None
+    def _set_whole(self, name: str, kind: str, values, combine: bool):
+        target = self._ds[name] if name in self._ds.data_vars else None
+        if isinstance(values, xr.DataArray):
+            arr = ensure_dataarray(values)
+            if 'y' in self._ds.coords:
+                coords = self._full_coords()
+                if not (np.array_equal(arr['y'].values, coords['y']) and np.array_equal(arr['x'].values, coords['x'])):
+                    raise ValueError(f"'{name}' has different y/x coords than the image; align it first")
+        elif 'y' in self._ds.coords:
+            values = np.asarray(values)
+            coords = self._full_coords()
+            expected = (len(coords['y']), len(coords['x']))
+            if values.shape != expected:
+                raise ValueError(f"'{name}' has shape {values.shape}, the image is {expected}")
+            arr = xr.DataArray(values, dims=('y', 'x'), coords=coords)
         else:
-            logger.warning(f"No masks found in any of the outputs to build the full mask from.")
-            return None
+            # first var of the image: it sets the coords
+            arr = ensure_dataarray(np.asarray(values))
+        # a whole var is replaced, so its dtype may change (only region writes can truncate)
+        _check_dtype(name, kind, arr.dtype)
+        if combine and target is not None:
+            arr = arr | target
+        self._ds[name] = arr
 
-    @property
-    def combined_mask(self):
-        built = self._build_full_mask() if self.masks is None else True
-        if built:
-            combmask = np.any(self.masks.to_array().to_numpy(), axis=0)
-            return xr.DataArray(combmask, dims=self.masks.dims, coords=self.masks.coords)
-        else:
-            logger.error("No masks to combine.")
-            return None
+    def _set_region(self, name: str, kind: str, values, slicer: dict, combine: bool):
+        if name not in self._ds.data_vars:
+            coords = self._full_coords()
+            shape = (len(coords['y']), len(coords['x']))
+            if kind == 'mask':
+                blank = np.zeros(shape, dtype=bool)
+            elif kind == 'label':
+                blank = np.zeros(shape, dtype=np.int32)
+            elif np.issubdtype(np.asarray(values).dtype, np.integer):
+                raise ValueError(f"integer data var '{name}' does not exist; set the whole var first")
+            else:
+                blank = np.full(shape, np.nan)
+            self._ds[name] = xr.DataArray(blank, dims=('y', 'x'), coords=coords)
+        target = self._ds[name]
+        current = slice_data(target, slicer)
+        if isinstance(values, xr.DataArray):
+            values = ensure_dataarray(values)
+            if not (np.array_equal(values['y'].values, current['y'].values)
+                    and np.array_equal(values['x'].values, current['x'].values)):
+                raise ValueError(f"values for '{name}' do not have the region's coords (in the region's order)")
+            values = values.values
+        values = np.asarray(values)
+        if values.shape != current.shape:
+            raise ValueError(f"values for '{name}' have shape {values.shape}, the region is {current.shape}")
+        _check_dtype(name, kind, values.dtype, target.dtype)
+        if combine:
+            values = values | current.values
+        target.loc[to_label_slicer(slicer)] = values
 
-    def get_masked_data(self, data_var: str = 'data',  mask_key: str = 'combined', fill_value = np.nan) -> xr.DataArray:
-        mask = self.get_mask(mask_key)
-        datarr: xr.DataArray = self.get_data(data_var)
-        if mask is not None:
-            return datarr.where(~mask.to_numpy(), other=fill_value)
-        else:
-            return datarr
+    def set_vars(self, values: Mapping[str, np.ndarray | xr.DataArray] | xr.Dataset):
+        """
+        Write several whole vars, see set_var.
+        :param values: mapping of var name to values, or an xr.Dataset.
+        """
+        items = values.data_vars.items() if isinstance(values, xr.Dataset) else values.items()
+        for name, value in items:
+            self.set_var(name, value)
 
-    def has_data_var(self, data_var: str) -> bool:
-        """ Return True if the image data (loaded on demand) has a data variable named data_var. """
-        return data_var in self.get_data('all').data_vars
+    def remove_vars(self, *names: str):
+        """
+        Drop vars of any kind except 'data' (use unload() for that).
+        :raises KeyError: if a name is not a var of the image.
+        """
+        for name in names:
+            var_kind(name)
+            if name == 'data':
+                raise ValueError("'data' can't be removed; use unload() to free it")
+            if name not in self._ds.data_vars:
+                raise KeyError(f"DetImage {self.id} has no var '{name}'")
+        self._ds = self._ds.drop_vars(list(names))
 
     def ensure_float(self):
         """ Cast integer 'data' and 'std' arrays to float64, so that arithmetic written back into them is not truncated. """
+        self._ensure_loaded()
         for var in ('data', 'std'):
-            if self.has_data_var(var) and not np.issubdtype(self._data[var].dtype, np.floating):
-                self._data[var] = self._data[var].astype(np.float64)
+            if var in self._ds.data_vars and not np.issubdtype(self._ds[var].dtype, np.floating):
+                self._ds[var] = self._ds[var].astype(np.float64)
 
     def copy(self) -> DetImage:
         """
-        Return an independent copy of this image: data, labels, meta, outputs (with their headers and masks) are
-        copied, and the copied outputs point to the new image. An image that is not loaded yet stays unloaded and shares the
-        data loader. Cheaper than copy.deepcopy, which also walks every Output's parent link.
+        Return an independent copy of this image: every var (data, masks, labels), meta and outputs (with their
+        headers) are copied, and the copied outputs point to the new image. An unloaded image stays unloaded and shares
+        the loader. Cheaper than copy.deepcopy, which also walks every Output's parent link.
         :return: DetImage
         """
         # meta and image_type are copied together so that an image_type shared with meta stays shared
@@ -379,7 +538,6 @@ class DetImage(ArithmeticOperators):
             out_id: out.model_copy(update={
                 'parent': None,
                 'header': deepcopy(out.header),
-                'masks': out.masks.copy(deep=True) if out.masks is not None else None,
                 **deepcopy(out.__pydantic_extra__ or {}),  # model_copy only copies extra fields shallowly
             })
             for out_id, out in self.outputs.items()
@@ -387,9 +545,8 @@ class DetImage(ArithmeticOperators):
         new = type(self)(output_objects=outputs, meta=meta)
         new.id = self.id
         new.image_type = image_type
-        new._data = self._data.copy(deep=True) if self._data is not None else None
-        new._dataloader = self._dataloader
-        new.labels = self.labels.copy(deep=True) if self.labels is not None else None
+        new._ds = self._ds.copy(deep=True)
+        new._loader = self._loader
         return new
 
     ######################################## Arithmetic ########################################
@@ -459,139 +616,87 @@ class DetImage(ArithmeticOperators):
         return self.unary_op(op, other, reflected=reflected)
 
     ######################################## Reductions ########################################
-    def reduce(self, stat: str | Callable = 'median', per_output: bool = True, **kwargs) -> dict[str, Any] | Any:
+    def reduce(self, stat: str | Callable = 'median', per_output: bool = True, region=None, axis: Optional[int] = None,
+               name: str = 'data', masks: MaskSelection = 'combined', mask_invalid: bool = False) -> dict[str, Any] | Any:
         """
         Reduce the image to one statistic, per output or over the whole image.
         :param stat: str or Callable, as in Output.reduce.
         :param per_output: bool, if True return {output id: value} computed by Output.reduce, else a single value
-            computed over the whole image (only region='full' applies then).
-        :param kwargs: region, axis, data_var, mask_key, use_mask, mask_invalid; see Output.reduce.
+            computed over the whole image.
+        :param region: per output: a region name or slicer (see Output); whole image: a pixel slicer or None.
+        :param axis: int or None, axis to collapse (0 = 'y', 1 = 'x'); None reduces to a single value.
+        :param name: str, data var to reduce.
+        :param masks: masks whose pixels are ignored, as in get_mask; None ignores no pixels.
+        :param mask_invalid: bool, if True also ignore NaN and inf pixels.
         :return: dict of output id to value, or a single value.
         """
         if per_output:
-            return {out_id: output.reduce(stat, **kwargs) for out_id, output in self.outputs.items()}
-        if kwargs.get('use_mask', True) or kwargs.get('mask_invalid', False):
+            return {out_id: output.reduce(stat, region=region, axis=axis, name=name, masks=masks,
+                                          mask_invalid=mask_invalid)
+                    for out_id, output in self.outputs.items()}
+        if masks is not None or mask_invalid:
             check_mask_aware(stat)
-        return reduce_array(self._masked_image(**kwargs), stat, axis=kwargs.get('axis'))
+        return reduce_array(self.get_masked(name, masks, region, mask_invalid), stat, axis=axis)
 
-    def stats(self, which: dict[str, Callable] = STATFUNCS, per_output: bool = True, prepend_kw: str = '',
-              **kwargs) -> dict[str, Any]:
+    def stats(self, which: dict[str, Callable] = STATFUNCS, per_output: bool = True, region=None,
+              axis: Optional[int] = None, name: str = 'data', masks: MaskSelection = 'combined',
+              mask_invalid: bool = False, prepend_kw: str = '') -> dict[str, Any]:
         """
         Compute several statistics with core.image_stats.do_statistics, per output or over the whole image.
         :param which: dict of statistic name to function, default STATFUNCS.
         :param per_output: bool, if True return {output id: stats dict}, else one stats dict for the whole image.
         :param prepend_kw: str, prefix for the statistic names.
-        :param kwargs: region, axis, data_var, mask_key, use_mask, mask_invalid; see Output.reduce.
+        Other parameters are as in reduce().
         :return: dict
         """
         if per_output:
-            return {out_id: output.stats(which, prepend_kw=prepend_kw, **kwargs)
+            return {out_id: output.stats(which, region=region, axis=axis, name=name, masks=masks,
+                                         mask_invalid=mask_invalid, prepend_kw=prepend_kw)
                     for out_id, output in self.outputs.items()}
-        if kwargs.get('use_mask', True) or kwargs.get('mask_invalid', False):
+        if masks is not None or mask_invalid:
             for stat in which.values():
                 check_mask_aware(stat)
-        return do_statistics(self._masked_image(**kwargs), which=which, axis=kwargs.get('axis'), prepend_kw=prepend_kw)
+        masked = self.get_masked(name, masks, region, mask_invalid)
+        return do_statistics(masked, which=which, axis=axis, prepend_kw=prepend_kw)
 
-    def get_masked_array(self, data_var: str = 'data', mask_key: str = 'combined',
-                         mask_invalid: bool = False) -> np.ma.MaskedArray:
+    def show(self, ax=None, save=None, name: str = 'data', masks: MaskSelection = 'combined', **imshow_kwargs):
         """
-        Return the whole image as a numpy masked array, for numpy.ma based calculations that skip masked pixels.
-        Unlike get_masked_data, masked pixels are not replaced by a fill value.
-        :param data_var: str, data variable to return.
-        :param mask_key: str, mask to apply ('combined' ORs all masks; nothing is masked if the image has no masks).
-        :param mask_invalid: bool, if True also mask NaN and inf pixels.
-        :return: np.ma.MaskedArray
-        :raises KeyError: if mask_key is not 'combined' and not one of the image's masks.
-        """
-        has_masks = self.masks is not None or self._build_full_mask()
-        if mask_key == 'combined':
-            mask = self.combined_mask if has_masks else None
-        elif has_masks and mask_key in self.masks:
-            mask = self.masks[mask_key]
-        else:
-            available = list(self.masks.data_vars) if has_masks else []
-            raise KeyError(f"DetImage {self.id} has no mask '{mask_key}'; its masks are {available} (or 'combined')")
-        return as_masked_array(self.get_data(data_var).values, mask.values if mask is not None else None,
-                               mask_invalid=mask_invalid)
-
-    def _masked_image(self, region: str = 'full', axis: Optional[int] = None, data_var: str = 'data',
-                      mask_key: str = 'combined', use_mask: bool = True,
-                      mask_invalid: bool = False) -> np.ma.MaskedArray:
-        if region != 'full':
-            raise ValueError(f"Only region='full' applies to the whole image, got '{region}'; use per_output=True")
-        if not use_mask:
-            return as_masked_array(self.get_data(data_var).values, mask_invalid=mask_invalid)
-        return self.get_masked_array(data_var, mask_key=mask_key, mask_invalid=mask_invalid)
-
-    def show(
-            self,
-            ax=None,
-            save=None,
-            with_mask=True,
-            mask_key='combined',
-            data_var='data',
-            **imshow_kwargs
-    ):
-        """
-        Plot the detector image data with optional mask overlay.
+        Plot a data var of the image, with masked pixels left blank.
         :param ax: Matplotlib Axes object to plot on. If None, a new figure and axes are created.
         :param save: str, optional path to save the plot. If None, the plot is not saved.
-        :param with_mask: bool, if True, overlay the mask specified by mask_key on the image if available.
-        :param mask_key: str, key in self.masks to use for masking the image. Default is 'sigma_clip_mask'.
-        :param data_var: str, name of the data variable in the DetImage.data to plot. Default is 'data'.
+        :param name: str, data var to plot. Default is 'data'.
+        :param masks: masks to blank out, as in get_mask; None plots every pixel.
         :param imshow_kwargs: dict, additional keyword arguments to pass to the imshow function.
         :return: Matplotlib Axes object containing the plot.
         """
-        if self.data is None:
-            raise ValueError("DetImage has no data to show.")
         if ax is None:
             _, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
-
-        if with_mask:
-            data = self.get_masked_data(data_var, mask_key, fill_value=np.nan)
-        else:
-            data = self.get_data(data_var)
-        im = data.plot.imshow(ax=ax, **imshow_kwargs)
-
+        self._get_filled(name, masks).plot.imshow(ax=ax, **imshow_kwargs)
         if save is not None:
             ax.figure.savefig(save)
         return ax
 
+    ########################################## Files ##########################################
     def to_netcdf(self, filepath: str | pathlib.Path, **kwargs):
         """
-        Save the object to disk in netcdf format. Use xr.Dataset to hold everything. The .data and .masks are in data_vars,
-        the .meta and .outputs in attrs.
-        :param filepath: str | pathlib.Path
+        Save the image to a netcdf file: every var (data, masks, labels) as a netcdf variable, and meta, image_type
+        and outputs as attributes.
+        :param filepath: str | pathlib.Path; '.nc' is appended if missing.
+        :param kwargs: passed to xr.Dataset.to_netcdf.
         """
-        data = self.get_data('all')
-        if isinstance(data, xr.DataArray):
-            ds_to_save = data.to_dataset(name='data')
-        else:
-            # shallow copy so adding masks/labels below does not change self._data
-            ds_to_save = data.copy()
-        # add masks if they exist
-        if self.masks is not None:
-            ds_to_save.update(self.masks)
-            ds_to_save.attrs['mask_keys'] = json.dumps(list(self.masks.data_vars.keys()))
-        else:
-            ds_to_save.attrs['mask_keys'] = json.dumps([])
-        # add labels if they exist
-        if self.labels is not None:
-            ds_to_save.update(self.labels)
-            ds_to_save.attrs['label_keys'] = json.dumps(list(self.labels.data_vars.keys()))
-        else:
-            ds_to_save.attrs['label_keys'] = json.dumps([])
-        # convert meta to dict to store in attrs
-        ds_to_save.attrs["meta"] = self.meta.to_json()
-        ds_to_save.attrs["image_type"] = json.dumps(self.image_type)
-        # convert outputs to dict of dicts
+        ds_to_save = self.dataset.copy()  # shallow copy, so the attrs below do not end up on the image
         out_dict = {}
+        outclass = Output.__name__
         for out_id, output in self.outputs.items():
-            op = output.to_json(exclude={"masks", "parent"})
-            out_dict[out_id] = op
+            out_dict[out_id] = output.to_json(exclude={"parent"})
             outclass = output.__class__.__name__
-        ds_to_save.attrs["outputs"] = json.dumps(out_dict)
-        ds_to_save.attrs["output_class"] = outclass
+        ds_to_save.attrs = {
+            "eregion_format": NETCDF_FORMAT,
+            "meta": self.meta.to_json(),
+            "image_type": json.dumps(self.image_type),
+            "outputs": json.dumps(out_dict),
+            "output_class": outclass,
+        }
 
         filepath = pathlib.Path(filepath).resolve()
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -603,33 +708,55 @@ class DetImage(ArithmeticOperators):
     @classmethod
     def from_netcdf(cls, filepath: str | pathlib.Path):
         """
-        Load a DetImage object from a netcdf file saved with to_netcdf().
+        Load a DetImage saved with to_netcdf(). Files written before eregion_format 2 (masks and labels listed in
+        the 'mask_keys'/'label_keys' attributes) are converted: masks are cast to bool and renamed to '<name>_mask',
+        labels renamed to '<name>_label' ('cosmic_ray_labels' becomes 'cosmic_ray_label').
         :param filepath: str, path to the netcdf file.
         :return: DetImage object.
         """
         loaded_ds = xr.load_dataset(str(filepath))
-        mask_keys = json.loads(loaded_ds.attrs['mask_keys'])
-        masks = loaded_ds[mask_keys] if len(mask_keys) > 0 else None
-        # files saved before labels were added have no 'label_keys' attr
-        label_keys = json.loads(loaded_ds.attrs.get('label_keys', '[]'))
-        labels = loaded_ds[label_keys] if len(label_keys) > 0 else None
-        data = loaded_ds.drop_vars(mask_keys + label_keys)
-        meta = DetImageMeta.from_json(loaded_ds.attrs['meta'])
+        attrs = dict(loaded_ds.attrs)
+        loaded_ds.attrs = {}
+        if attrs.get("eregion_format") != NETCDF_FORMAT:
+            loaded_ds = cls._convert_legacy(loaded_ds, attrs, filepath)
 
         outputs = {}
-        outclass = load_class(loaded_ds.attrs["output_class"], default_module=output_module)
-        outputs_attr = json.loads(loaded_ds.attrs["outputs"])
-        for out_id, output_dict in outputs_attr.items():
-            output = outclass.from_json(output_dict)
-            # extract subdataset for output masks
-            output.masks = slice_data(masks, output.output_slice) if masks is not None else None
-            outputs[out_id] = output
+        outclass = load_class(attrs["output_class"], default_module=output_module)
+        for out_id, output_dict in json.loads(attrs["outputs"]).items():
+            outputs[out_id] = outclass.from_json(output_dict)
 
-        detimg = cls(data=data, output_objects=outputs, meta=meta)
-        detimg.masks = masks
-        detimg.labels = labels
-        detimg.image_type = json.loads(loaded_ds.attrs["image_type"])
+        detimg = cls(output_objects=outputs, meta=DetImageMeta.from_json(attrs["meta"]))
+        detimg.set_vars(ensure_dataarray(loaded_ds))
+        detimg.image_type = json.loads(attrs["image_type"])
         return detimg
+
+    @staticmethod
+    def _convert_legacy(ds: xr.Dataset, attrs: dict, filepath) -> xr.Dataset:
+        """ Rename and cast the masks/labels of a file written before eregion_format 2. """
+        mask_keys = json.loads(attrs.get("mask_keys", "[]"))
+        label_keys = json.loads(attrs.get("label_keys", "[]"))
+        listed = set(mask_keys) | set(label_keys)
+        unlisted = [name for name in ds.data_vars if name not in listed and var_kind(name) != 'data']
+        if unlisted:
+            raise ValueError(f"{filepath}: data vars {unlisted} end in '{MASK_SUFFIX}' or '{LABEL_SUFFIX}'; "
+                             f"they can't be told apart from masks and labels")
+        renames = {}
+        for key in mask_keys:
+            if not key.endswith(MASK_SUFFIX):
+                renames[key] = key + MASK_SUFFIX
+        for key in label_keys:
+            if key.endswith(LABEL_SUFFIX + "s"):
+                renames[key] = key[:-1]
+            elif not key.endswith(LABEL_SUFFIX):
+                renames[key] = key + LABEL_SUFFIX
+        ds = ds.rename(renames)
+        for key in mask_keys:
+            name = renames.get(key, key)
+            # masks were saved as float with NaN outside the outputs that set them
+            ds[name] = xr.where(ds[name].notnull(), ds[name], 0).astype(bool)
+        if renames:
+            logger.warning(f"{filepath} was saved by an older eregion; renamed {renames}")
+        return ds
 
 
 # Output.parent is annotated with DetImage, which output.py can only import for type checking (image.py imports

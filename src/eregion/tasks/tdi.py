@@ -198,16 +198,14 @@ class TDIExtractPTC(LazyTask):
                 f"can only do TDI stats specifically on CCD Ouptuts. The type of output passed was {type(output)}"
             )
 
-        im, mask = output.get_image_region(return_masks=True, mask_key="combined")
+        im = output.get_var('data', region='image')
         stats = dict()
 
-        stats |= output.stats(_TDISTATS, region="image", axis=output.serial_axint, mask_key="combined")
+        stats |= output.stats(_TDISTATS, region="image", axis=output.serial_axint, masks="combined")
 
         # number of masked pixels in each parallel row, like every other TDI statistic
-        if mask is not None:
-            stats["n_masked"] = np.sum(mask.values, axis=output.serial_axint, dtype=np.uint32)
-        else:
-            stats["n_masked"] = np.zeros(im.shape[output.parallel_axint], dtype=np.uint32)
+        mask = output.get_mask("combined", region="image")
+        stats["n_masked"] = np.sum(mask.values, axis=output.serial_axint, dtype=np.uint32)
 
         assert len(stats["n_masked"]) == len(stats["mean"])
 

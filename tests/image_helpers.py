@@ -35,5 +35,5 @@ def make_image(seed=0, name="D1", x_cen=6.0, std=2.0, mask_pixel=None):
         out = img.outputs["A"]
         mask = xr.zeros_like(out.data, dtype=bool)
         mask.loc[{"y": mask_pixel[0], "x": mask_pixel[1]}] = True
-        out.set_mask("cr", mask)
+        out.set_var("cr_mask", mask, combine=True)
     return img

@@ -129,14 +129,3 @@ def set_slice_in_data(slicedata: XRDATA,
         case _:
             raise TypeError("targetdata and slicedata must be both xarray.DataArray or xarray.Dataset")
     return targetdata
-
-def decrease_slicer_stop_index(slicer: dict[Hashable, slice]) -> dict[Hashable, slice]:
-    if isinstance(slicer, dict) and all(isinstance(s, slice) for s in slicer.values()):
-        for k, sl in slicer.items():
-            step = sl.step if sl.step is not None else 1
-            slicer[k] = slice(sl.start, sl.stop - step, step) if sl.stop is not None else sl
-    else:
-        raise TypeError("slicer must be a dict of {dim: slice}.")
-    return slicer
-
-

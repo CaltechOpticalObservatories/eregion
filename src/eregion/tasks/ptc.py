@@ -1,7 +1,6 @@
 import pandas as pd
 from typing import Generator, Any
 import numpy as np
-import xarray as xr
 from joblib import Parallel, delayed
 from itertools import combinations
 from pydantic import field_validator
@@ -9,7 +8,7 @@ import os
 import warnings
 warnings.filterwarnings("ignore")
 
-from eregion.utils import slice_data, save_dataframe_to_fits, load_dataframe_from_fits, decrease_slicer_stop_index
+from eregion.utils import save_dataframe_to_fits, load_dataframe_from_fits
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle, TaskResult
 from eregion.tasks import LazyTask
 from eregion.core.image_stats import do_statistics, STATFUNCS
@@ -74,7 +73,7 @@ class PTC(LazyTask):
         **kwargs: Optional[dict]
             Additional keyword arguments for PTC task, including:
 
-            * mask_key (str): Key/data_var for the mask in the output CCDOutput.masks, by default 'sigma_clip_mask'. Used to mask pixels before calculating statistics on flats.
+            * mask_key (str): Mask(s) to apply ('combined' for all masks, a '<prefix>_mask' name, a list, or None), by default 'combined'. Used to mask pixels before calculating statistics on flats.
             * do_sigma_clip (bool): Whether to perform sigma clipping on differenced output data (only image region)
             * sigma_clip_args (dict[str, Any]): Additional arguments to pass to the sigma_clip function, e.g., {'sigma': 5.0, 'grow': 10}.
             * welch2d_kwargs (dict[str, Any]): Additional arguments to pass to the welch2d function,
@@ -147,17 +146,15 @@ class PTC(LazyTask):
             diff_img.meta["diff_pair"] = f'{dp1.meta.get("filename", "unknown")},{dp2.meta.get("filename", "unknown")}'
 
             for out_id, output in diff_img.outputs.items():
-                diffdat = output.data.copy() # diff of two outputs, before sigma clipping
-                diffmask = xr.zeros_like(diffdat, dtype=bool) # initialize diff mask
+                # the diff image gets its own sigma clip mask, replacing dp1's over this output
+                output.set_var('sigma_clip_mask', np.zeros(output.data.shape, dtype=bool))
                 if self.meta.get("do_sigma_clip", True):
                     sigma_clip_args = {'sigma': 5.0, 'grow': 10, 'stdfunc': 'mad_std'}
                     sigma_clip_args.update(self.meta.get("sigma_clip_args", {}))
-                    # sigma clip only image region
-                    imslc = output.image_region
-                    ma_diffdat = sigma_clip_image(slice_data(diffdat, imslc).values, **sigma_clip_args)
-                    output.set_data_in_parent(ma_diffdat.filled(np.nan), imslc) # set nan filled data in parent
-                    diffmask.loc[decrease_slicer_stop_index(imslc)] |= ma_diffdat.mask # set in diff mask
-                output.set_mask('sigma_clip_mask', diffmask, combine=False)
+                    # sigma clip only image region; clipped pixels become NaN and are masked
+                    ma_diffdat = sigma_clip_image(output.get_var('data', region='image').values, **sigma_clip_args)
+                    output.set_var('data', ma_diffdat.filled(np.nan), region='image')
+                    output.set_var('sigma_clip_mask', np.ma.getmaskarray(ma_diffdat), region='image')
 
                 diffstat = (unique_info | # Add unique keys identifying flat group
                            {"output": out_id, "diff": True, "seqnum":'-'.join([str(i) for i in diffpairidx])} |
@@ -170,11 +167,11 @@ class PTC(LazyTask):
     def do_stats_per_output(self, output: Output, mask_key: str = 'combined'):
         stats = {}
 
-        imarr, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
+        imarr = output.get_var('data', region='image')
 
         # basic and extra stats on masked image region, should work for all type of outputs
-        stats["n_masked"] = int(np.count_nonzero(immask.values)) if immask is not None else 0
-        stats |= output.stats(STATFUNCS, region='image', mask_key=mask_key)
+        stats["n_masked"] = int(np.count_nonzero(output.get_mask(mask_key, region='image').values))
+        stats |= output.stats(STATFUNCS, region='image', masks=mask_key)
 
         # power spectral density (correlation coefficients) on the (unmasked) image region
         if self.PSD_size is not None:
@@ -186,8 +183,8 @@ class PTC(LazyTask):
         ###### EXTRA stats, CCD specific ########
         if isinstance(output, CCDOutput):
             # Corners not included when doing stats on overscans
-            llel_oscan = output.get_overscan('parallel', corner=False).values
-            ser_oscan = output.get_overscan('serial', corner=False).values
+            llel_oscan = output.get_var('data', region='parallel_overscan').values
+            ser_oscan = output.get_var('data', region='serial_overscan').values
 
             # overscan stats,
             stats |= do_statistics(data=ser_oscan, which=STATFUNCS, axis=None, prepend_kw="ser_oscan_")

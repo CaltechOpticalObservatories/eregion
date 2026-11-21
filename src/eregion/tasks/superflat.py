@@ -40,20 +40,20 @@ class SuperCombine(Task):
     def _add_image(self, image: DetImage) -> tuple[np.ndarray, np.ndarray]:
         """
         Initialize self.dataset and self.superimage from the first image, add the input variance (if the image has a
-        'std' plane) of the non-masked pixels to the 'variance' data_var, then unload the image data.
+        'std' plane) of the non-masked pixels to the 'variance' data_var, then unload the image data if it can be
+        loaded again.
 
         :param image: DetImage to combine
         :return: tuple of (image data, valid pixel boolean array)
         """
-        ims = image.get_data('all')
-        mask = image.get_mask('combined')
-        valid = np.ones(ims['data'].shape, dtype=bool) if mask is None else ~mask.values.astype(bool)
+        ims = image.dataset
+        valid = ~image.get_mask().values
 
         if self.dataset is None:
             self.dataset = xr.Dataset(data_vars={key: xr.zeros_like(ims['data'], dtype=float)
                                                  for key in self.accumulators[self.method_name]})
-            # copy outputs without parent/masks so the first image keeps its own outputs and masks
-            outputs = {oid: out.model_copy(update={'parent': None, 'masks': None})
+            # copy outputs without parent so the first image keeps its own outputs
+            outputs = {oid: out.model_copy(update={'parent': None})
                        for oid, out in image.outputs.items()}
             self.superimage = DetImage(meta=deepcopy(image.meta), output_objects=outputs)
             self.superimage.image_type['supercombined'] = True
@@ -63,12 +63,13 @@ class SuperCombine(Task):
                              f"expected {self.dataset['count'].shape} like the previous images.")
 
         data = ims['data'].values
-        if 'std' in ims.data_vars:
+        if 'std' in image.data_names:
             self.dataset['variance'].values += np.where(valid, ims['std'].values ** 2, 0.0)
 
         # update total images count in superimage meta, unload image data to free up memory
         self.superimage.meta['num_images'] += 1
-        image.unload()
+        if image.has_loader:
+            image.unload()
         return data, valid
 
     def mean_combine(self, image: DetImage):
@@ -131,7 +132,7 @@ class SuperCombine(Task):
         if self.superimage.num_outputs == 0:
             self.logger.warning('No outputs found in superimage DetImage instance, is that expected?')
 
-        self.superimage.set_data(self._finalize())
+        self.superimage.set_vars(self._finalize())
         return ImageResult(data=[self.superimage])
 
     def run(self, images: ImageBundle) -> ImageResult:

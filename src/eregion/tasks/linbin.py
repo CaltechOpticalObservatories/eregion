@@ -18,11 +18,8 @@ from eregion.datamodels import TaskResult, ImageBundle, DetImage, CCDOutput
 from eregion.core.image_operations import do_digital_binning
 from eregion.core.image_stats import do_statistics, STATFUNCS
 from eregion.utils import (
-    slice_data,
     save_dataframe_to_fits,
     load_dataframe_from_fits,
-    set_slice_in_data,
-    ensure_dataarray
 )
 
 class LinBinResult(TaskResult):
@@ -149,27 +146,23 @@ class LinBin(LazyTask):
         for output in img.outputs.values():
             binaxint = getattr(output, f"{self.binaxis}_axint")
             # Ensure we take all pixels not along the binaxis.
-            imslc = output.image_region
+            imslc = output.region_slicer('image')
             otheraxis = "serial_axis" if self.binaxis == "parallel" else "parallel_axis"
             imslc[getattr(output, otheraxis)] = output.output_slice[1-binaxint]
             # Slice the data and mask for the current output, slice direction is from prescan to overscan, so that the first row is the first row read out from the CCD
-            imdata = slice_data(output.data, imslc).values
+            imdata = output.get_var('data', imslc).values
             # get bins
 
             self._get_binsizes(imdata.shape[binaxint])
             # bin data
             binned_data = do_digital_binning(imdata, binsizes=self.bins, binaxis=binaxint)
-            output.set_data_in_parent(binned_data, imslc)
+            output.set_var('data', binned_data, imslc)
             # bin every mask the same way, so they stay aligned with the binned data;
             # a binned pixel is masked if any of the pixels summed into it was
-            mask_keys = list(output.masks.data_vars) if output.masks is not None else []
-            for key in mask_keys:
-                immask = slice_data(output.masks[key], imslc).values
+            for key in output.mask_names:
+                immask = output.get_var(key, imslc).values
                 binned_mask = do_digital_binning(immask.astype(int), binsizes=self.bins, binaxis=binaxint).astype(bool)
-                output.set_mask(key,
-                                set_slice_in_data(ensure_dataarray(binned_mask), output.masks[key], imslc),
-                                combine=False
-                                )
+                output.set_var(key, binned_mask, imslc)
 
         return img
 
@@ -185,25 +178,21 @@ class LinBin(LazyTask):
             self.bins = bins
 
     def do_stats_per_output(self, output: CCDOutput, mask_key: str = 'combined'):
-        imarr, immask = output.get_image_region(return_masks=True, mask_key=mask_key)
+        imarr = output.get_var('data', region='image')
         binaxint = getattr(output, f"{self.binaxis}_axint")
         slicer = [slice(None)] * imarr.ndim
         slicer[binaxint] = slice(0, len(self.bins))
         slicer = tuple(slicer)
 
         stats = {'output': output.id, 'bins': self.bins}
-        if immask is not None:
-            mask = immask.values
-            stats["n_masked"] = int(np.count_nonzero(mask))
-        else:
-            mask = np.zeros(imarr.shape, dtype=bool)
-            stats["n_masked"] = 0
+        mask = output.get_mask(mask_key, region='image').values
+        stats["n_masked"] = int(np.count_nonzero(mask))
         ma_imarr = np.ma.masked_array(imarr.values[slicer], mask=mask[slicer])
         stats |= do_statistics(ma_imarr, which=STATFUNCS, axis=int(1-binaxint), prepend_kw='')
 
         # overscan region stats, unmasked
         _oscan = "serial" if self.binaxis == "parallel" else "parallel"
-        oscan = output.get_overscan(_oscan, corner=False).values[slicer]
+        oscan = output.get_var('data', region=f'{_oscan}_overscan').values[slicer]
         stats |= do_statistics(oscan, which=STATFUNCS, axis=int(1-binaxint), prepend_kw=f'{_oscan}_overscan_')
 
         return stats

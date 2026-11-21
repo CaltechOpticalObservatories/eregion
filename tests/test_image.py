@@ -107,7 +107,7 @@ def test_lazy_detimage_netcdf_serializes_output_header(tmp_path):
         data_slice=(slice(0, 2), slice(0, 2)),
     )
     image = DetImage(
-        data=load_data,
+        loader=load_data,
         output_objects={"A": output},
         meta=DetImageMeta(
             name="D1",
@@ -143,10 +143,10 @@ def test_ccdoutput_serial_axis_and_regions():
     )
     # serial axis should be x if parallel is y
     assert ccd.serial_axis == "x"
-    sp = ccd.get_prescan("serial", corner=False)
-    pp = ccd.get_prescan("parallel", corner=False)
-    sp1 = ccd.get_prescan("serial", corner=True)
-    pp1 = ccd.get_prescan("parallel", corner=True)
+    sp = ccd.get_var(region="serial_prescan")
+    pp = ccd.get_var(region="parallel_prescan")
+    sp1 = ccd.get_var(region=ccd.region_slicer("serial_prescan", corner=True))
+    pp1 = ccd.get_var(region=ccd.region_slicer("parallel_prescan", corner=True))
     assert sp.shape[1] == 2 and pp.shape[0] == 2
     assert sp.shape[0] == 4 and pp.shape[1] == 6
     assert sp1.shape[0] == 8 and pp1.shape[1] == 10
@@ -170,32 +170,29 @@ def test_detimage_default_output_creation_and_lookup():
     assert det.num_outputs == 2 and det.outputs["1"].parent is det
 
 
-def test_output_set_mask_invalidates_full_mask():
+def test_output_set_var_combines_or_replaces_masks():
     det = DetImage(data=make_dataarray((4, 4)), output_objects={
         oid: Output(id=oid, ext_id=0, ext_slice=(slice(0, 4), xslc), data_slice=(slice(0, 4), xslc))
         for oid, xslc in [("a", slice(0, 2)), ("b", slice(2, 4))]
     })
     out = det.outputs["a"]
-    empty = xr.zeros_like(out.data, dtype=bool)
-    out.set_mask("m1", empty)
-    assert int(det.get_mask("combined").sum()) == 0
+    empty = np.zeros(out.data.shape, dtype=bool)
+    out.set_var("m1_mask", empty, combine=True)
+    assert int(det.get_mask().sum()) == 0
 
-    # combine=True ORs into the existing mask and the full mask is rebuilt
+    # combine=True ORs into the existing mask; the mask covers the whole image
     pix = empty.copy()
     pix[0, 0] = True
-    out.set_mask("m1", pix)
-    assert det.masks is None
-    assert bool(det.get_mask("m1")[0, 0]) and int(det.get_mask("combined").sum()) == 1
+    out.set_var("m1_mask", pix, combine=True)
+    assert bool(det.get_mask("m1_mask")[0, 0]) and int(det.get_mask().sum()) == 1
+    assert det.get_var("m1_mask").shape == (4, 4)
 
-    out.set_mask("m2", empty)
-    assert set(det.get_mask("all").data_vars) == {"m1", "m2"}
+    out.set_var("m2_mask", empty)
+    assert det.mask_names == ["m1_mask", "m2_mask"]
 
-    # combine=False replaces the existing mask
-    out.set_mask("m1", empty, combine=False)
-    assert int(det.get_mask("combined").sum()) == 0
-
-    # full rebuilds are idempotent
-    assert det._build_full_mask() and det._build_full_mask()
+    # combine=False replaces the existing mask over the output
+    out.set_var("m1_mask", empty)
+    assert int(det.get_mask().sum()) == 0
 
 
 def test_focalplaneimage_construct_and_place_tiles():
@@ -310,16 +307,16 @@ def test_detimage_labels_roundtrip_netcdf_and_validation(tmp_path):
     )
     labels = xr.zeros_like(det.data, dtype=np.int32)
     labels[1, 2] = 1
-    det.set_labels("cosmic_ray_labels", labels)
+    det.set_var("cosmic_ray_label", labels)
 
     det.to_netcdf(str(tmp_path / "labeled.nc"))
-    assert set(det.get_data("all").data_vars) == {"data"}
+    assert det.data_names == ["data"] and det.label_names == ["cosmic_ray_label"]
 
     loaded = DetImage.from_netcdf(str(tmp_path / "labeled.nc"))
-    assert set(loaded.get_data("all").data_vars) == {"data"}
-    np.testing.assert_array_equal(loaded.labels["cosmic_ray_labels"].values, labels.values)
+    assert loaded.data_names == ["data"]
+    np.testing.assert_array_equal(loaded.get_var("cosmic_ray_label").values, labels.values)
 
     with pytest.raises(TypeError, match="integer"):
-        det.set_labels("bad", xr.zeros_like(det.data))
-    with pytest.raises(ValueError, match="shape"):
-        det.set_labels("bad", make_dataarray((3, 3)).astype(np.int32))
+        det.set_var("bad_label", xr.zeros_like(det.data))
+    with pytest.raises(ValueError, match="coords"):
+        det.set_var("bad_label", make_dataarray((3, 3)).astype(np.int32))

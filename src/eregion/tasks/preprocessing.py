@@ -7,7 +7,7 @@ from joblib import Parallel, delayed
 from itertools import batched
 from functools import wraps
 
-from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
+from eregion.utils import ensure_numpy, slice_data
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
 from eregion.core.image_operations import sigma_clip_image, find_vignetted_region, find_cosmic_rays, label_cosmic_rays
 from eregion.core.image_stats import do_statistics, STATFUNCS
@@ -96,7 +96,9 @@ class BiasSubtraction(BasePreprocessingTask):
         if self.meta.get('quick', False):
             self.logger.warning("kwarg 'quick' is True, performing full image subtraction including overscan/prescan regions.")
             sub_img = self._subtract(img.data, master_bias.data)
-            img.set_data(sub_img)
+            img.set_var('data', sub_img)
+            # the other data vars (e.g. 'std') no longer describe the subtracted data
+            img.remove_vars(*[name for name in img.data_names if name != 'data'])
         else:
             # overwrite img, output by output; the master bias' masks and std are not carried over
             region = 'image' if self.meta.get("only_image_area", True) else 'full'
@@ -180,9 +182,8 @@ class ScanSubtraction(BasePreprocessingTask):
 
     def _subtract_scan_per_output(self, output: Output, trim_start: int = 0, trim_end: int = 0):
         axis, kind = self.which_scan.split("_")
-        getfunc = getattr(output, "get_scan")
-
-        scan_data = getfunc(axis=axis, kind=kind, corner=True) # full scan data including overlapping corners region
+        # full scan data including overlapping corners region
+        scan_data = output.get_var('data', region=output.region_slicer(self.which_scan, corner=True))
         axis_str = getattr(output, axis+"_axis")
         trim_slc = slice(trim_start, scan_data.sizes[axis_str] - trim_end)
         trimmed_scan_data = scan_data.isel({axis_str: trim_slc})
@@ -271,7 +272,7 @@ class SigmaClipMasking(BasePreprocessingTask):
         """
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self.method(output)
-        img.image_type.update({"bad_pixel_masked": img._build_full_mask()})
+        img.image_type.update({"bad_pixel_masked": "sigma_clip_mask" in img.mask_names})
         return img
 
     @property
@@ -313,11 +314,11 @@ class SigmaClipMasking(BasePreprocessingTask):
         combined_mask.loc[parallel_overscan_data.coords] = parallel_overscan_clipped.mask
 
         # clip image data region
-        image_data = slice_data(output_data,  output.image_region)
+        image_data = slice_data(output_data, output.region_slicer('image'))
         image_data_clipped = sigma_clip_image(image_data.values, **self.sigma_clip_args)
         combined_mask.loc[image_data.coords] = image_data_clipped.mask
 
-        output.set_mask("sigma_clip_mask", combined_mask)
+        output.set_var("sigma_clip_mask", combined_mask, combine=True)
         return output
 
     def _sigma_clip_per_output(self, output: Output) -> Output:
@@ -326,9 +327,9 @@ class SigmaClipMasking(BasePreprocessingTask):
         """
         data = output.data
         clipped = sigma_clip_image(data.values, **self.sigma_clip_args)
-        mask = xr.DataArray(data=clipped.mask, coords=data.coords, dims=data.dims)
+        mask = xr.DataArray(data=np.ma.getmaskarray(clipped), coords=data.coords, dims=data.dims)
 
-        output.set_mask("sigma_clip_mask", mask)
+        output.set_var("sigma_clip_mask", mask, combine=True)
         return output
 
 
@@ -343,7 +344,7 @@ class VignetteMasking(BasePreprocessingTask):
         """
         Create a vignetting mask per output from an illuminated (e.g. flat), bias/overscan subtracted image.
         Only the image region of each output is searched, prescan/overscan pixels are never masked.
-        Masks are saved in output.masks["vignette_mask"] for later use.
+        Masks are saved in the image's "vignette_mask" var for later use.
 
         :param name: Optional[str]
         :param vignette_args: Optional[dict[str, Any]]
@@ -366,20 +367,20 @@ class VignetteMasking(BasePreprocessingTask):
                                 f"relative to the illumination level and assumes a zero-level corrected image.")
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self._mask_output(output)
-        img.image_type.update({"vignette_masked": img._build_full_mask()})
+        img.image_type.update({"vignette_masked": "vignette_mask" in img.mask_names})
         return img
 
     def _mask_output(self, output: Output) -> Output:
         """
-        Find vignetted region in the image region of a single output and save it in output.masks["vignette_mask"].
+        Find vignetted region in the image region of a single output and save it in the "vignette_mask" var.
         """
-        image_data, _ = output.get_image_region()
+        image_data = output.get_var('data', region='image')
         vignette_mask = find_vignetted_region(image_data.values, **self.vignette_args)
 
         full_mask = xr.zeros_like(output.data).astype(bool)
         full_mask.loc[image_data.coords] = vignette_mask
 
-        output.set_mask("vignette_mask", full_mask)
+        output.set_var("vignette_mask", full_mask, combine=True)
         return output
 
 
@@ -395,14 +396,14 @@ class CosmicRayMasking(BasePreprocessingTask):
                  **kwargs
     ) -> None:
         """
-        Create a cosmic ray mask per output with the L.A.Cosmic algorithm (lacosmic package) and save in
-        output.masks["cosmic_ray_mask"].
+        Create a cosmic ray mask per output with the L.A.Cosmic algorithm (lacosmic package) and save it in the
+        image's "cosmic_ray_mask" var.
 
         - 'ccd' method searches the image region, serial overscan and parallel overscan of a CCDOutput separately
         - 'simple' method searches the whole output at once. Applies to non CCDOutput Outputs.
 
         If label is True, each connected group of cosmic ray pixels in the full image mask also gets a
-        unique integer label, saved in DetImage.labels["cosmic_ray_labels"] (0 is background, attrs["num_labels"] is
+        unique integer label, saved in the image's "cosmic_ray_label" var (0 is background, attrs["num_labels"] is
         the number of cosmic rays).
 
         The per-pixel noise model is chosen in this order:
@@ -419,7 +420,7 @@ class CosmicRayMasking(BasePreprocessingTask):
         :param use_existing_masks: bool
             If True, pixels already flagged in the output's combined mask are ignored during detection. Default is True.
         :param label: bool
-            If True, label the found cosmic rays in DetImage.labels["cosmic_ray_labels"]. Default is False.
+            If True, label the found cosmic rays in the "cosmic_ray_label" var. Default is False.
         :param label_connectivity: int
             1 for 4-connected or 2 for 8-connected (diagonal tracks stay one cosmic ray) labeling. Default is 2.
         :keyword method: Optional[str]
@@ -449,10 +450,10 @@ class CosmicRayMasking(BasePreprocessingTask):
         if not any(v for k, v in img.image_type.items() if str(k).endswith("_subtracted")):
             self.logger.warning(f"DetImage {img.id} is not flagged as bias/scan subtracted. The lacosmic noise model "
                                 f"from effective_gain and readnoise assumes a zero-level corrected image.")
-        has_std = "std" in img.get_data("all").data_vars
+        has_std = "std" in img.data_names
         for out_id, output in img.outputs.items():
             img.outputs[out_id] = self.method(output, has_std)
-        img.image_type.update({"cosmic_ray_masked": img._build_full_mask()})
+        img.image_type.update({"cosmic_ray_masked": "cosmic_ray_mask" in img.mask_names})
         if self.label:
             self._label_image(img)
         return img
@@ -460,15 +461,13 @@ class CosmicRayMasking(BasePreprocessingTask):
     def _label_image(self, img: DetImage) -> None:
         """
         Label the cosmic rays in the full image mask, so a cosmic ray crossing an output boundary keeps one label, and
-        save them in img.labels["cosmic_ray_labels"].
+        save them in the "cosmic_ray_label" var.
         """
-        cr_mask = img.get_mask("cosmic_ray_mask")
-        if cr_mask is None:
-            cr_mask = xr.zeros_like(img.data, dtype=bool)
+        cr_mask = img.get_mask("cosmic_ray_mask" if "cosmic_ray_mask" in img.mask_names else None)
         labels, nlabels = label_cosmic_rays(cr_mask.values, connectivity=self.label_connectivity)
         label_arr = cr_mask.copy(data=labels)
         label_arr.attrs["num_labels"] = nlabels
-        img.set_labels("cosmic_ray_labels", label_arr)
+        img.set_var("cosmic_ray_label", label_arr)
         self.logger.info(f"DetImage {img.id}: labeled {nlabels} cosmic rays.")
 
     def _noise_args(self, output: Output, has_std: bool) -> dict[str, Any]:
@@ -478,7 +477,7 @@ class CosmicRayMasking(BasePreprocessingTask):
         """
         if has_std:
             self.logger.info(f"Output {output.id}: using 'std' plane as lacosmic error.")
-            return {"error": output.get_output_data("std")}
+            return {"error": output.get_var("std")}
         noise_args = {"effective_gain": self.lacosmic_args.get("effective_gain", 1.0),
                       "readnoise": self.lacosmic_args.get("readnoise")}
         if noise_args["readnoise"] is None:
@@ -486,11 +485,11 @@ class CosmicRayMasking(BasePreprocessingTask):
                 region, source = "serial_overscan", "serial overscan"
             else:
                 region, source = "full", "output data"
-            if output.get_region(region)[0].size == 0:
+            if output.get_var(region=region).size == 0:
                 raise ValueError(f"Output {output.id}: {source} is empty, cannot estimate readnoise. "
                                  f"Pass readnoise in lacosmic_args.")
             # NaN/inf pixels are ignored, output masks are not
-            noise_args["readnoise"] = float(output.reduce("mad", region=region, use_mask=False, mask_invalid=True))
+            noise_args["readnoise"] = float(output.reduce("mad", region=region, masks=None, mask_invalid=True))
             if not np.isfinite(noise_args["readnoise"]) or noise_args["readnoise"] <= 0:
                 raise ValueError(f"Output {output.id}: readnoise estimated from {source} is "
                                  f"{noise_args['readnoise']}. Pass readnoise in lacosmic_args.")
@@ -511,29 +510,29 @@ class CosmicRayMasking(BasePreprocessingTask):
 
     def _mask_output(self, output: Output, has_std: bool) -> Output:
         """
-        Find cosmic rays in the whole output and save them in output.masks["cosmic_ray_mask"].
+        Find cosmic rays in the whole output and save them in the "cosmic_ray_mask" var.
         """
         return self._mask_regions(output, has_std, regions=[{}])
 
     def _mask_ccdoutput(self, output: Output, has_std: bool) -> Output:
         """
         Find cosmic rays separately in the image region, serial overscan and parallel overscan of a CCDOutput and save
-        them in output.masks["cosmic_ray_mask"]. Falls back to the whole output for other Output types.
+        them in the "cosmic_ray_mask" var. Falls back to the whole output for other Output types.
         """
         if not isinstance(output, CCDOutput):
             return self._mask_output(output, has_std)
-        regions = [output.image_region,
+        regions = [output.region_slicer('image'),
                    {output.serial_axis: output.serial_overscan},
                    {output.parallel_axis: output.parallel_overscan}]
         return self._mask_regions(output, has_std, regions=regions)
 
     def _mask_regions(self, output: Output, has_std: bool, regions: list[dict[str, slice]]) -> Output:
         """
-        Run find_cosmic_rays on each region of the output and OR the results into output.masks["cosmic_ray_mask"].
+        Run find_cosmic_rays on each region of the output and OR the results into the "cosmic_ray_mask" var.
         :param regions: slicers (as in slice_data) of the regions to search, {} is the whole output.
         """
         data = output.data
-        existing = output.get_output_mask("combined") if self.use_existing_masks else None
+        existing = output.get_mask() if self.use_existing_masks else None
         noise_args = self._noise_args(output, has_std)
         lacosmic_args = {k: v for k, v in self.lacosmic_args.items() if k not in ("effective_gain", "readnoise")}
 
@@ -551,5 +550,5 @@ class CosmicRayMasking(BasePreprocessingTask):
             mask.loc[region.coords] = mask.loc[region.coords].values | cr_mask
         self.logger.info(f"Output {output.id}: found {int(mask.sum())} cosmic ray pixels.")
 
-        output.set_mask("cosmic_ray_mask", mask)
+        output.set_var("cosmic_ray_mask", mask, combine=True)
         return output

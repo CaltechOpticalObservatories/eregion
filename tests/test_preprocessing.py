@@ -31,7 +31,7 @@ def test_vignette_masking_only_masks_image_region():
     det.image_type["bias_subtracted"] = True
 
     out = VignetteMasking()._process_single_image(det)
-    mask = out.outputs["C"].masks["vignette_mask"].values
+    mask = out.get_var("vignette_mask").values
 
     assert mask.shape == (ny, nx)
     assert mask[10:30, 10:30].all()
@@ -71,7 +71,7 @@ def _ccd_with_cosmics(with_std=False):
     det.image_type["bias_subtracted"] = True
     existing = xr.zeros_like(det.outputs["C"].data).astype(bool)
     existing[crs["premasked"]] = True
-    det.outputs["C"].masks = existing.to_dataset(name="vignette_mask")
+    det.outputs["C"].set_var("vignette_mask", existing)
     return det, crs
 
 
@@ -83,7 +83,7 @@ def _ccd_with_cosmics(with_std=False):
 def test_cosmic_ray_masking_ccd_searches_regions_and_respects_existing_masks(with_std, lacosmic_args):
     det, crs = _ccd_with_cosmics(with_std)
     out = CosmicRayMasking(lacosmic_args=lacosmic_args)._process_single_image(det)
-    mask = out.outputs["C"].masks["cosmic_ray_mask"].values
+    mask = out.get_var("cosmic_ray_mask").values
 
     assert mask.shape == (120, 130)
     assert mask[crs["image"]]
@@ -96,7 +96,7 @@ def test_cosmic_ray_masking_ccd_searches_regions_and_respects_existing_masks(wit
 def test_cosmic_ray_masking_simple_flags_image_region_edge():
     det, crs = _ccd_with_cosmics()
     out = CosmicRayMasking(method="simple")._process_single_image(det)
-    mask = out.outputs["C"].masks["cosmic_ray_mask"].values
+    mask = out.get_var("cosmic_ray_mask").values
     assert mask[crs["image"]]
     # step between overscan and illuminated image region is picked up when searching the whole output
     assert mask[10:110, 10].sum() > 50
@@ -117,8 +117,8 @@ def test_cosmic_ray_masking_rejects_per_output_args():
 def test_cosmic_ray_masking_labels_cosmic_rays_when_enabled():
     det, crs = _ccd_with_cosmics()
     out = CosmicRayMasking(label=True)._process_single_image(det)
-    mask = out.outputs["C"].masks["cosmic_ray_mask"].values
-    labels = out.labels["cosmic_ray_labels"]
+    mask = out.get_var("cosmic_ray_mask").values
+    labels = out.get_var("cosmic_ray_label")
 
     assert np.array_equal(labels.values > 0, mask)
     assert labels.attrs["num_labels"] == len(np.unique(labels.values[labels.values > 0]))
@@ -128,7 +128,7 @@ def test_cosmic_ray_masking_labels_cosmic_rays_when_enabled():
 
 def test_cosmic_ray_masking_does_not_label_by_default():
     det, _ = _ccd_with_cosmics()
-    assert CosmicRayMasking()._process_single_image(det).labels is None
+    assert CosmicRayMasking()._process_single_image(det).label_names == []
 
 
 def test_cosmic_ray_masking_rejects_bad_label_connectivity():

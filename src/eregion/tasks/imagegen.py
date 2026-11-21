@@ -371,9 +371,9 @@ class ImageCreator(LazyTask):
                 output_obj.header = hdr
                 image_data[*output_obj.output_slice] = dat
                 headers.append(hdr)
+            image.set_var('data', image_data)
         else:
-            image_data = self._fileloader_task
-        image.set_data(image_data)
+            image.set_loader(self._fileloader_task)
         image.meta["shape"] = tuple(image.shape)
 
         # Determine image meta (type, exptime, etc.) using identifier task

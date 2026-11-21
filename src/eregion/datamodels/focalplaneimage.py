@@ -1,22 +1,28 @@
 from __future__ import annotations
-from typing import Any, Callable, Optional, Literal
+from typing import Any, Callable, Optional
 from copy import deepcopy
 import pandas as pd
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
 
-from eregion.utils import configure_logger
+from eregion.utils import configure_logger, slice_data
 from eregion.datamodels import DetImage, DetImageMeta, ImageBundle
+from eregion.datamodels.image import MaskSelection, _select_mask_names, combine_masks, var_kind
 from eregion.datamodels.operators import ArithmeticOperators
 from eregion.core.image_operations import flip_and_rotate
-from eregion.core.image_stats import STATFUNCS
+from eregion.core.image_stats import STATFUNCS, as_masked_array
 
 logger = configure_logger(__name__)
 
 class FocalPlaneImage(ArithmeticOperators):
     """
     Composite focal-plane image made by placing multiple DetImage tiles.
+
+    The mosaic is one xr.Dataset (`dataset`) built from the tiles' vars, named by kind as in DetImage: data vars
+    (gaps between detectors are 0), '<prefix>_mask' bool masks (gaps False) and '<prefix>_label' integer labels
+    (gaps 0; label values are per detector). It is rebuilt from the tiles, so change the tiles, not the mosaic.
+    Read it with get_var, get_mask and get_masked, which take the same arguments as on DetImage.
 
     Arithmetic (`fp + 2`, `fp - other_fp`, `2 * fp`, add/subtract/multiply/divide) is applied to every DetImage tile,
     matched by detector id for two focal planes, and the mosaic is rebuilt.
@@ -64,8 +70,7 @@ class FocalPlaneImage(ArithmeticOperators):
         self.num_detectors = int(num_detectors)
         self.dim_mm = tuple(dim) if dim is not None else None
         self.pixel_size = None
-        self._data: Optional[xr.Dataset] = None   # To hold det image data in one array
-        self.masks: Optional[xr.Dataset] = None  # To hold det image masks in one dataset
+        self._ds: Optional[xr.Dataset] = None  # mosaic of the tiles' data, mask and label vars
         self.table: Optional[pd.DataFrame] = None  # To keep track of det_image data position within focal-plane data array
         self.det_images: ImageBundle = ImageBundle()  # To hold det images
 
@@ -105,9 +110,6 @@ class FocalPlaneImage(ArithmeticOperators):
         elif pixsize != self.pixel_size:
             raise ValueError("All DetImage objects must have the same pixel_size for focal-plane assembly.")
 
-        # check that masks have been built
-        if det_image.masks is None:
-            det_image._build_full_mask()
 
     def construct_focal_plane_image(self):
         if len(self.det_images) == 0:
@@ -152,85 +154,69 @@ class FocalPlaneImage(ArithmeticOperators):
         else:
             dim_pix = calc_dim.astype(int)
 
-        # Initialize DataArray
+        # One mosaic var per tile var, filled per kind outside the tiles
         coords = {"y": np.arange(frames_df["y_min"].min(), frames_df["y_max"].max(), 1),
                   "x": np.arange(frames_df["x_min"].min(), frames_df["x_max"].max(), 1)}
-        dataarr = xr.DataArray(data=np.zeros(dim_pix, dtype=float), coords=coords, dims=["y", "x"])
-        self._data = xr.Dataset(data_vars={'data': dataarr.copy(deep=True)})
-        maskarr = xr.DataArray(data=np.zeros(dim_pix, dtype=bool), coords=coords, dims=["y", "x"])
-        self.masks = xr.Dataset(data_vars={'sigma_clip_mask': maskarr.copy(deep=True)})
+        blanks = {'data': (float, 0.0), 'mask': (bool, False), 'label': (np.int32, 0)}
+        self._ds = xr.Dataset(coords=coords)
 
         # Place tiles
         for i in range(len(frames_df)):
             row = frames_df.iloc[i]
             slc = {'y': slice(row['y_min'], row['y_max'] - 1), 'x': slice(row['x_min'], row['x_max'] - 1)}
-            di = self.det_images[i]
-            didataset = di.get_data('all')
-            if didataset is None:
+            tile = self.det_images[i].dataset
+            if 'data' not in tile.data_vars:
                 raise ValueError(f"DetImage at index {i} has no data.")
-            else:
-                data_vars = list(didataset.data_vars)
-                for v in data_vars:
-                    if v not in self._data.data_vars:
-                        self._data[v] = dataarr.copy(deep=True)
-                    self._data[v].loc[slc] = flip_and_rotate(didataset[v].values, angle=row['angle'], flip_x=row['flip_x'],
-                                                           flip_y=row['flip_y'])
-
-                if di.masks is None:
-                    # an output mask was changed since the full mask was last built
-                    di._build_full_mask()
-                mask_keys = list(di.masks.data_vars) if di.masks else []
-                dimasks = di.masks
-                for m in mask_keys:
-                    if m not in self.masks.data_vars:
-                        self.masks[m] = maskarr.copy(deep=True)
-                    self.masks[m].loc[slc] = flip_and_rotate(dimasks[m].values, angle=row['angle'], flip_x=row['flip_x'],
-                                           flip_y=row['flip_y'])
+            for name in tile.data_vars:
+                if name not in self._ds.data_vars:
+                    dtype, fill = blanks[var_kind(name)]
+                    self._ds[name] = xr.DataArray(np.full(dim_pix, fill, dtype=dtype), coords=coords, dims=["y", "x"])
+                self._ds[name].loc[slc] = flip_and_rotate(tile[name].values, angle=row['angle'],
+                                                          flip_x=row['flip_x'], flip_y=row['flip_y'])
 
         self.table = frames_df
 
     @property
-    def data(self) -> xr.DataArray:
-        if self._data is None:
+    def dataset(self) -> xr.Dataset:
+        """ The mosaic Dataset of every tile var. """
+        if self._ds is None:
             raise ValueError("Focal-plane image data has not been constructed yet.")
-        return self._data['data']
-
-    def get_mask(self, mask_key: str | Literal['combined'] = 'combined') -> xr.DataArray | None:
-        """
-        Return the mask array.
-        :param mask_key: str or 'combined'. Returns DataArray if key is specified. Returns OR combined mask from all keys if 'combined'.
-        :return: xr.DataArray
-        """
-        if self.masks:
-            match mask_key:
-                case 'combined':
-                    return self.combined_mask
-                case k if k in self.masks:
-                    return self.masks[k]
-                case k:
-                    logger.error(
-                        f"{k} is not present in the masks dataset. Available keys are {list(self.masks.data_vars)}")
-                    return None
-        else:
-            logger.error(f"No masks found in any of the outputs to build the full mask from.")
-            return None
+        return self._ds
 
     @property
-    def combined_mask(self):
-        if self.masks:
-            combmask = np.any(self.masks.to_array().to_numpy(), axis=0)
-            return xr.DataArray(combmask, dims=self.masks.dims, coords=self.masks.coords)
-        else:
-            logger.error("No masks to combine.")
-            return None
+    def data(self) -> xr.DataArray:
+        """ The mosaic of the tiles' 'data'. """
+        return self.get_var('data')
 
-    def get_masked_data(self, data_var: str = 'data', mask_key: str = 'combined', fill_value = np.nan) -> xr.DataArray:
-        mask = self.get_mask(mask_key)
-        datarr: xr.DataArray = self._data[data_var]
-        if mask is not None:
-            return datarr.where(~mask.to_numpy(), other=fill_value)
-        else:
-            return datarr
+    @property
+    def mask_names(self) -> list[str]:
+        return [name for name in self.dataset.data_vars if var_kind(name) == 'mask']
+
+    @property
+    def label_names(self) -> list[str]:
+        return [name for name in self.dataset.data_vars if var_kind(name) == 'label']
+
+    def get_var(self, name: str = 'data', region: Optional[tuple | dict] = None) -> xr.DataArray:
+        """ A mosaic var, whole or a region (pixel slicer in mosaic coordinates); see DetImage.get_var. """
+        if name not in self.dataset.data_vars:
+            raise KeyError(f"Focal plane has no var '{name}'; its vars are {list(self.dataset.data_vars)}")
+        da = self.dataset[name]
+        return slice_data(da, region) if region is not None else da
+
+    def get_mask(self, masks: MaskSelection = 'combined', region: Optional[tuple | dict] = None) -> xr.DataArray:
+        """ The OR of the selected mosaic masks as a new bool array; see DetImage.get_mask. """
+        names = _select_mask_names(masks, self.mask_names, "Focal plane")
+        coords = {dim: self.dataset.coords[dim].values for dim in ('y', 'x')}
+        mask = combine_masks(self.dataset, names, coords)
+        return slice_data(mask, region) if region is not None else mask
+
+    def get_masked(self, name: str = 'data', masks: MaskSelection = 'combined',
+                   region: Optional[tuple | dict] = None, mask_invalid: bool = False) -> np.ma.MaskedArray:
+        """ A mosaic data var as a numpy masked array; see DetImage.get_masked. """
+        if var_kind(name) != 'data':
+            raise ValueError(f"get_masked takes a data var, got the {var_kind(name)} var '{name}'")
+        return as_masked_array(self.get_var(name, region).values, self.get_mask(masks, region).values,
+                               mask_invalid=mask_invalid)
 
     def copy(self) -> FocalPlaneImage:
         """
@@ -241,7 +227,7 @@ class FocalPlaneImage(ArithmeticOperators):
         return type(self)(self.num_detectors, dim=self.dim_mm, det_images=det_images or None, **deepcopy(self.meta))
 
     ######################################## Arithmetic ########################################
-    # The mosaic in self._data is derived from the DetImage tiles, so operations are applied to the tiles and the
+    # The mosaic in self._ds is derived from the DetImage tiles, so operations are applied to the tiles and the
     # mosaic is rebuilt afterwards.
     def unary_op(self, op: str, value: float | np.ndarray, inplace: bool = False, **kwargs) -> FocalPlaneImage:
         """
@@ -335,27 +321,24 @@ class FocalPlaneImage(ArithmeticOperators):
         return {det_image.id: det_image.stats(which, per_output=per_output, **kwargs)
                 for det_image in self.det_images}
 
-    def show(self, ax=None, save=None, show_det_id=False, with_mask=False, mask_key='combined',
-             data_var:str = 'data', textcolor="yellow", **imshow_kwargs):
+    def show(self, ax=None, save=None, show_det_id=False, name: str = 'data', masks: MaskSelection = None,
+             textcolor="yellow", **imshow_kwargs):
         """
         Plot the focal-plane image with optional detector boundaries and masks.
         :param ax: Matplotlib Axes object to plot on. If None, a new figure and axes will be created.
         :param save: Path to save the figure. If None, the figure will not be saved.
         :param show_det_id: bool, whether to show detector IDs on the plot.
-        :param with_mask: bool, whether to overlay the mask on the image specified by mask_key.
-        :param mask_key: str, key of the mask to overlay on the image. Default is 'sigma_clip_mask'.
-        :param data_var: str, key of the data variable to plot. Default is 'data'.
+        :param name: str, data var to plot. Default is 'data'.
+        :param masks: masks to blank out, as in get_mask. Default None plots every pixel.
         :param textcolor: str, color of the text to display on the plot. Default is "yellow".
         :param imshow_kwargs: Additional keyword arguments to pass to the xarray.DataArray.plot.imshow function.
         :return: Matplotlib Axes object with the plot.
         """
         if ax is None:
             _, ax = plt.subplots(1,1, figsize=(8, 8), tight_layout=True)
-        # overlay mask if requested
-        if with_mask:
-            temp = self.get_masked_data(data_var, mask_key, fill_value=np.nan)
-        else:
-            temp = self._data[data_var]
+        temp = self.get_var(name)
+        if masks is not None:
+            temp = temp.where(~self.get_mask(masks).values)
         im = temp.plot.imshow(ax=ax, **imshow_kwargs)
         del temp
 

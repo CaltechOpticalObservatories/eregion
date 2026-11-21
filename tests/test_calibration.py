@@ -14,7 +14,7 @@ def test_master_combine_stores_combined_image_in_data(method, npfunc):
 
     master = MasterCombine(method=method).run(ImageBundle(images)).data[0]
 
-    planes = master.get_data("all")
-    assert set(planes.data_vars) == {"data", "std", "count"}
+    planes = master.dataset
+    assert set(master.data_names) == {"data", "std", "count"}
     np.testing.assert_allclose(planes["data"].values, npfunc(stack, axis=0))
     np.testing.assert_array_equal(planes["count"].values, len(stack))

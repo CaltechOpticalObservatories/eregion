@@ -29,14 +29,14 @@ def test_welford_and_mean_methods_agree_and_match_numpy():
     mean = SuperCombine(method="mean").run(ImageBundle(images_b)).data[0]
 
     for res in (welford, mean):
-        np.testing.assert_allclose(res.get_data("data").values, stack.mean(axis=0), rtol=1e-10)
-        np.testing.assert_allclose(res.get_data("std").values, stack.std(axis=0, ddof=1), rtol=1e-6)
-        np.testing.assert_array_equal(res.get_data("count").values, len(stack))
+        np.testing.assert_allclose(res.get_var("data").values, stack.mean(axis=0), rtol=1e-10)
+        np.testing.assert_allclose(res.get_var("std").values, stack.std(axis=0, ddof=1), rtol=1e-6)
+        np.testing.assert_array_equal(res.get_var("count").values, len(stack))
         # variance of the mean propagated from the input std planes: n * 2**2 / n**2
-        np.testing.assert_allclose(res.get_data("variance").values, 4.0 / len(stack))
+        np.testing.assert_allclose(res.get_var("variance").values, 4.0 / len(stack))
         assert res.meta["num_images"] == len(stack)
-    assert "median" in welford.get_data("all").data_vars
-    assert "median" not in mean.get_data("all").data_vars
+    assert "median" in welford.data_names
+    assert "median" not in mean.data_names
 
 
 def test_streaming_batches_give_stable_results_and_leave_inputs_untouched():
@@ -44,13 +44,14 @@ def test_streaming_batches_give_stable_results_and_leave_inputs_untouched():
     task = SuperCombine(method="mean")
 
     task.run(ImageBundle(images[:5]))
-    first = task.run(ImageBundle(images[5:])).data[0].get_data("all").copy(deep=True)
-    again = task.final_image_result.data[0].get_data("all")
+    first = task.run(ImageBundle(images[5:])).data[0].dataset.copy(deep=True)
+    again = task.final_image_result.data[0].dataset
 
     xr.testing.assert_identical(first, again)
     np.testing.assert_allclose(first["variance"].values, 4.0 / len(stack))
     assert "num_images" not in images[0].meta
-    assert all(img._data is None for img in images)
+    # in-memory images have no loader, so they are not unloaded (their data could not be read again)
+    assert all(img.is_loaded for img in images)
 
 
 def test_masked_pixels_are_excluded():
@@ -58,13 +59,13 @@ def test_masked_pixels_are_excluded():
     out = images[0].outputs["0"]
     mask = xr.zeros_like(out.data, dtype=bool)
     mask[0, 0] = True
-    out.set_mask("bad", mask)
+    out.set_var("bad_mask", mask, combine=True)
 
     res = SuperCombine(method="welford").run(ImageBundle(images)).data[0]
 
-    assert res.get_data("count").values[0, 0] == 4
-    np.testing.assert_allclose(res.get_data("data").values[0, 0], stack[1:, 0, 0].mean())
-    assert res.outputs["0"].masks is None and images[0].outputs["0"].parent is images[0]
+    assert res.get_var("count").values[0, 0] == 4
+    np.testing.assert_allclose(res.get_var("data").values[0, 0], stack[1:, 0, 0].mean())
+    assert res.mask_names == [] and images[0].outputs["0"].parent is images[0]
 
 
 def test_shape_mismatch_raises():

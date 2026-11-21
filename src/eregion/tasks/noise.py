@@ -132,11 +132,11 @@ class NoisePSD(Task):
                         case "full":
                             region_data = output.data
                         case "image":
-                            region_data, _ = output.get_image_region()
+                            region_data = output.get_var('data', region='image')
                         case "overscan":
                             if not isinstance(output, CCDOutput):
                                 raise ValueError("Overscan region is only available for CCDOutput.")
-                            region_data = output.get_overscan('serial', corner=False)
+                            region_data = output.get_var('data', region='serial_overscan')
                     # region trimmed
                     trimslice = (slice(trim_start, region_data.shape[0] - trim_end),
                                     slice(trim_start, region_data.shape[1] - trim_end))
