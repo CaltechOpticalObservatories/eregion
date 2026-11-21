@@ -50,8 +50,8 @@ def test_streaming_batches_give_stable_results_and_leave_inputs_untouched():
     xr.testing.assert_identical(first, again)
     np.testing.assert_allclose(first["variance"].values, 4.0 / len(stack))
     assert "num_images" not in images[0].meta
-    # in-memory images have no loader, so they are not unloaded (their data could not be read again)
-    assert all(img.is_loaded for img in images)
+    # inputs are unloaded to keep memory flat, in-memory ones included
+    assert not any(img.is_loaded for img in images)
 
 
 def test_masked_pixels_are_excluded():

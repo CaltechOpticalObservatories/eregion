@@ -40,8 +40,8 @@ class SuperCombine(Task):
     def _add_image(self, image: DetImage) -> tuple[np.ndarray, np.ndarray]:
         """
         Initialize self.dataset and self.superimage from the first image, add the input variance (if the image has a
-        'std' plane) of the non-masked pixels to the 'variance' data_var, then unload the image data if it can be
-        loaded again.
+        'std' plane) of the non-masked pixels to the 'variance' data_var, then unload the image data (in-memory images
+        lose their data vars, so that combining hundreds of images keeps memory flat).
 
         :param image: DetImage to combine
         :return: tuple of (image data, valid pixel boolean array)
@@ -68,8 +68,7 @@ class SuperCombine(Task):
 
         # update total images count in superimage meta, unload image data to free up memory
         self.superimage.meta['num_images'] += 1
-        if image.has_loader:
-            image.unload()
+        image.unload(discard=True)
         return data, valid
 
     def mean_combine(self, image: DetImage):

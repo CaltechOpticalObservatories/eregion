@@ -264,13 +264,16 @@ class DetImage(ArithmeticOperators):
         self._ds = xr.merge([self._ds.drop_vars(self._names('data')), loaded], join='exact', compat='override',
                             combine_attrs='drop')
 
-    def unload(self):
+    def unload(self, discard: bool = False):
         """
-        Drop the data vars to free memory; masks and labels stay. They are loaded again on the next access.
-        :raises ValueError: if there is no loader, since the data could not be loaded again.
+        Drop the data vars to free memory; masks and labels stay. With a loader they are loaded again on the next
+        access; without one they are gone for good, which has to be asked for with discard=True.
+        :param discard: bool, allow unloading an image that has no loader (its data vars are lost).
+        :raises ValueError: if there is no loader and discard is False.
         """
-        if self._loader is None:
-            raise ValueError(f"DetImage {self.id} has no loader; unloading would lose its data.")
+        if self._loader is None and not discard:
+            raise ValueError(f"DetImage {self.id} has no loader; unloading would lose its data "
+                             f"(pass discard=True to drop it anyway).")
         self._ds = self._ds.drop_vars(self._names('data'))
 
     def _ensure_loaded(self):

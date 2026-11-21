@@ -132,6 +132,11 @@ def test_masks_set_before_load_survive_loading_and_unloading():
 def test_unload_and_load_need_a_loader_and_filename():
     with pytest.raises(ValueError, match="no loader"):
         make_image().unload()
+    img = make_image(mask_pixel=(2, 2))
+    img.unload(discard=True)
+    assert not img.is_loaded and img.mask_names == ["cr_mask"]
+    with pytest.raises(KeyError, match="no var 'data'"):
+        img.get_var("data")
     img = _lazy_image()
     img.meta.filename = None
     with pytest.raises(ValueError, match="filename"):
