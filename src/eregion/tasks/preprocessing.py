@@ -7,7 +7,7 @@ from joblib import Parallel, delayed
 from itertools import batched
 from functools import wraps
 
-from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index
+from eregion.utils import ensure_numpy, slice_data, decrease_slicer_stop_index, sanitize_header_values
 from eregion.datamodels import DetImage, Output, CCDOutput, ImageBundle
 from eregion.core.image_operations import sigma_clip_image, find_vignetted_region, find_cosmic_rays, label_cosmic_rays
 from eregion.core.image_stats import do_statistics, STATFUNCS
@@ -181,6 +181,11 @@ class ScanSubtraction(BasePreprocessingTask):
             number of indices to trim from the start of the scan region before calculating the subtraction value. Default is 0.
         :keyword trim_end: int
             number of indices to trim from the end of the scan region before calculating the subtraction value. Default is 0.
+        :raises ValueError: at run time, if the scan region of an output holds no pixels, which means the detector is
+            read out without that scan region, or if trim_start/trim_end leave none of it.
+
+        Non-finite scan statistics, for example from NaN pixels in the scan region, are written to the output header
+        as undefined (blank-value) FITS cards.
         """
         kwargs['method'] = kwargs.get('method','median_by_axis')
         super().__init__(name=name, **kwargs)
@@ -189,18 +194,46 @@ class ScanSubtraction(BasePreprocessingTask):
             raise ValueError(f"Invalid which_scan value: {self.which_scan}")
 
     def _subtract_scan_per_output(self, output: Output, trim_start: int = 0, trim_end: int = 0):
+        """
+        Measure the scan region of one output and subtract its level from the whole output array.
+
+        The statistics of the trimmed scan region are stored in the output header first. Non-finite statistics, for
+        example from NaN pixels in the scan region, are written as undefined (blank-value) cards, since a FITS header
+        cannot hold NaN or infinity.
+
+        :param output: Output whose scan region is measured and subtracted.
+        :param trim_start: Pixels trimmed from the start of the scan region before it is measured.
+        :param trim_end: Pixels trimmed from the end of the scan region before it is measured.
+        :return: The same output, with its data subtracted and its header updated.
+        :raises ValueError: If the scan region holds no pixels, or if trim_start/trim_end leave none of it.
+        """
         axis, kind = self.which_scan.split("_")
         getfunc = getattr(output, "get_scan")
 
         scan_data = getfunc(axis=axis, kind=kind, corner=True) # full scan data including overlapping corners region
         axis_str = getattr(output, axis+"_axis")
-        trim_slc = slice(trim_start, scan_data.sizes[axis_str] - trim_end)
+        scan_size = scan_data.sizes[axis_str]
+        where = f"Output '{output.id}' of DetImage {getattr(output.parent, 'id', None)}"
+        if scan_data.size == 0:
+            raise ValueError(f"{where}: the {self.which_scan} region holds no pixels (shape "
+                             f"{tuple(scan_data.shape)}), cannot subtract scan. Fix the {self.which_scan} slice for "
+                             f"this output in the detector config, or do not run {self.which_scan} subtraction on a "
+                             f"detector that is read out without one.")
+        if trim_start < 0 or trim_end < 0 or scan_size - trim_end <= trim_start:
+            raise ValueError(f"{where}: trim_start={trim_start} and trim_end={trim_end} leave no pixels of the "
+                             f"{scan_size}-pixel {self.which_scan} region along '{axis_str}', cannot subtract scan. "
+                             f"Pass smaller non-negative trim_start/trim_end.")
+        trim_slc = slice(trim_start, scan_size - trim_end)
         trimmed_scan_data = scan_data.isel({axis_str: trim_slc})
 
         BASICSTATS = {'mean': STATFUNCS['mean'], 'median': STATFUNCS['median'], 'std': STATFUNCS['std'],
                       'mad': STATFUNCS['mad']}
         trimmed_scan_stats = do_statistics(trimmed_scan_data.values, which=BASICSTATS,
                                            prepend_kw=f"HIERARCH {self.which_scan}_")
+        trimmed_scan_stats, blanked = sanitize_header_values(trimmed_scan_stats)
+        if blanked:
+            self.logger.warning(f"{where}: non-finite {self.which_scan} statistics {', '.join(blanked)}, "
+                                f"writing them as undefined header cards.")
 
         methodkwargs = {'axis': getattr(output, axis+"_axint")} if self.method_name == "median_by_axis" else {}
         subtract_value = self.method(trimmed_scan_data.values, **methodkwargs)
