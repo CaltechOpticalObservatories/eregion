@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
 import xarray as xr
+from astropy.io.fits.card import Undefined
 
 from eregion.datamodels import DetImage, CCDOutput
-from eregion.tasks.preprocessing import VignetteMasking, CosmicRayMasking
+from eregion.tasks.preprocessing import VignetteMasking, CosmicRayMasking, ScanSubtraction
 
 
 def test_vignette_masking_only_masks_image_region():
@@ -134,3 +135,102 @@ def test_cosmic_ray_masking_does_not_label_by_default():
 def test_cosmic_ray_masking_rejects_bad_label_connectivity():
     with pytest.raises(ValueError, match="label_connectivity"):
         CosmicRayMasking(label_connectivity=4)
+
+
+def _ccd_with_overscan(serial_overscan=slice(120, 130), bias=500.0, bad_pixel=None, bad_value=np.nan):
+    """Build a DetImage with a 10-pixel-wide serial overscan at a known bias level."""
+    ny, nx = 120, 130
+    rng = np.random.default_rng(7)
+    arr = rng.normal(bias, 2.0, (ny, nx))
+    arr[10:110, 10:120] += 1000.0  # illuminated image region
+    if bad_pixel is not None:
+        arr[bad_pixel] = bad_value
+    data = xr.DataArray(arr, dims=("y", "x"), coords={"y": np.arange(ny), "x": np.arange(nx)})
+    ccd = CCDOutput(
+        id="C",
+        ext_id=0,
+        ext_slice=(slice(0, ny), slice(0, nx)),
+        data_slice=(slice(0, ny), slice(0, nx)),
+        serial_prescan=slice(0, 10),
+        serial_overscan=serial_overscan,
+        parallel_prescan=slice(0, 10),
+        parallel_overscan=slice(110, 120),
+        parallel_axis="y",
+    )
+    return DetImage(data=data, output_objects={"C": ccd})
+
+
+def test_scan_subtraction_removes_the_overscan_level_and_records_its_statistics():
+    out = ScanSubtraction("serial_overscan")._process_single_image(_ccd_with_overscan())
+    data = out.outputs["C"].data.values
+    hdr = out.outputs["C"].header
+
+    # every row is offset by the median of its own serial overscan, so those medians are now zero
+    assert np.median(data[:, 120:130], axis=1) == pytest.approx(0.0, abs=1e-9)
+    assert np.median(data[10:110, 10:120]) == pytest.approx(1000.0, abs=2.0)
+    assert hdr["serial_overscan_median"] == pytest.approx(500.0, abs=1.0)
+    assert hdr["serial_overscan_mean"] == pytest.approx(500.0, abs=1.0)
+    assert hdr["serial_overscan_std"] == pytest.approx(2.0, rel=0.3)
+    assert out.image_type["serial_overscan_subtracted"]
+
+
+def test_scan_subtraction_trims_the_scan_region_before_measuring_it():
+    det = _ccd_with_overscan()
+    det.get_data("data").values[:, 120] = 1e6  # bad leading overscan column, trimmed away
+    out = ScanSubtraction("serial_overscan", trim_start=1)._process_single_image(det)
+    assert out.outputs["C"].header["serial_overscan_median"] == pytest.approx(500.0, abs=1.0)
+
+
+def test_scan_subtraction_rejects_an_empty_scan_region():
+    det = _ccd_with_overscan(serial_overscan=slice(130, 130))
+    with pytest.raises(ValueError, match="holds no pixels"):
+        ScanSubtraction("serial_overscan")._process_single_image(det)
+
+
+@pytest.mark.parametrize("trim_start, trim_end", [
+    (5, 5),    # exactly nothing left
+    (10, 0),
+    (0, 10),
+    (0, 15),   # over-trim: the stop index would go negative and silently wrap
+    (-1, 0),   # a negative trim would also wrap
+])
+def test_scan_subtraction_rejects_trims_that_empty_the_scan_region(trim_start, trim_end):
+    task = ScanSubtraction("serial_overscan", trim_start=trim_start, trim_end=trim_end)
+    with pytest.raises(ValueError, match="leave no pixels"):
+        task._process_single_image(_ccd_with_overscan())  # 10-pixel serial overscan
+
+
+def test_scan_subtraction_accepts_a_trim_leaving_a_single_pixel():
+    out = ScanSubtraction("serial_overscan", trim_start=4, trim_end=5)._process_single_image(_ccd_with_overscan())
+    assert np.isfinite(out.outputs["C"].header["serial_overscan_median"])
+
+
+def test_scan_subtraction_writes_undefined_cards_for_nan_scan_statistics():
+    det = _ccd_with_overscan(bad_pixel=(3, 125), bad_value=np.nan)
+    out = ScanSubtraction("serial_overscan")._process_single_image(det)
+    hdr = out.outputs["C"].header
+
+    for stat in ("mean", "median", "std", "mad"):
+        key = f"serial_overscan_{stat}"
+        assert key in hdr
+        assert isinstance(hdr.cards[key].value, Undefined)
+        assert hdr[key] is None
+    assert hdr.tostring()  # the header is still writable; this used to raise on the NaN card
+
+    # row 3's overscan median is NaN, so only that row is NaN after subtraction
+    data = out.outputs["C"].data.values
+    assert np.isnan(data[3]).all()
+    assert np.isfinite(data[np.arange(data.shape[0]) != 3]).all()
+
+
+def test_scan_subtraction_keeps_the_finite_statistics_when_only_some_are_non_finite():
+    det = _ccd_with_overscan(bad_pixel=(3, 125), bad_value=np.inf)
+    out = ScanSubtraction("serial_overscan")._process_single_image(det)
+    hdr = out.outputs["C"].header
+
+    # one +inf among 1200 overscan pixels poisons mean and std, but not the median or the MAD
+    assert hdr["serial_overscan_mean"] is None
+    assert hdr["serial_overscan_std"] is None
+    assert hdr["serial_overscan_median"] == pytest.approx(500.0, abs=1.0)
+    assert hdr["serial_overscan_mad"] == pytest.approx(2.0, rel=0.3)
+    assert hdr.tostring()

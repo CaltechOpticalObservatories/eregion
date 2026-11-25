@@ -4,6 +4,7 @@ import shutil
 import numpy as np
 import pytest
 from astropy.io import fits
+from astropy.io.fits.card import Undefined
 
 from eregion.utils.io_utils import (
     guess_image_type_from_header,
@@ -12,6 +13,7 @@ from eregion.utils.io_utils import (
     is_fits_file,
     load_image_fits,
     parse_list_of_files,
+    sanitize_header_values,
     search_directory_for_fits_files,
 )
 
@@ -104,3 +106,39 @@ def test_guess_image_type_from_header_defaults_and_custom_keywords():
         keywords={"type": ["MYTYPE"], "exptime": ["MYEXP"]},
     )
     assert custom == {"type": "FLAT", "exptime": "20"}
+
+
+def test_sanitize_header_values_blanks_non_finite_and_unwraps_numpy_scalars():
+    clean, blanked = sanitize_header_values({
+        "A": np.float64(np.nan),
+        "B": np.inf,
+        "C": -np.inf,
+        "D": np.float32(1.5),
+        "E": np.int64(3),
+        "F": "text",
+        "G": None,
+    })
+
+    assert blanked == ["A", "B", "C"]
+    assert clean["A"] is None and clean["B"] is None and clean["C"] is None
+    assert clean["D"] == pytest.approx(1.5) and isinstance(clean["E"], int)
+    assert clean["F"] == "text" and clean["G"] is None
+
+
+def test_sanitize_header_values_makes_a_header_update_succeed():
+    clean, _ = sanitize_header_values({"A": np.nan, "D": np.float64(1.5)})
+    header = fits.Header()
+    header.update(clean)  # a raw NaN raises ValueError here
+
+    assert isinstance(header.cards["A"].value, Undefined)
+    assert header["A"] is None
+    assert header["D"] == pytest.approx(1.5)
+    assert header.tostring()
+
+
+def test_sanitize_header_values_leaves_a_finite_mapping_untouched():
+    values = {"A": 1.0, "B": 2, "C": "s"}
+    clean, blanked = sanitize_header_values(values)
+
+    assert blanked == []
+    assert clean == values

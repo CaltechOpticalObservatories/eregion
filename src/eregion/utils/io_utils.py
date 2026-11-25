@@ -1,7 +1,7 @@
 import os
 import glob2
 import re
-from typing import Any, Type, Iterable
+from typing import Any, Type, Iterable, Mapping
 from astropy.io import fits
 from astropy import units as astropy_units
 import shutil
@@ -147,6 +147,33 @@ def guess_image_type_from_header(
                     imtype[key] = header[hkey]
                     break
     return imtype
+
+
+def sanitize_header_values(values: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """
+    Make a mapping of computed values safe to write into a FITS header.
+
+    A FITS header cannot hold a non-finite float: astropy raises `ValueError` in its `Card.value` setter for NaN and
+    for infinity. Such values are replaced with None, which astropy writes as an undefined (blank-value) card, so the
+    keyword stays in the header with no value instead of the write failing. Numpy scalars are unwrapped to their
+    python equivalents, so the result is also safe for a header held as a plain dict.
+
+    :param values: Mapping of header keyword to value.
+    :return: Tuple of the sanitized mapping and the list of keywords whose values were blanked.
+    """
+    clean: dict[str, Any] = {}
+    blanked: list[str] = []
+    for key, val in values.items():
+        try:
+            nonfinite = not bool(np.isfinite(val))
+        except (TypeError, ValueError):  # strings, None and other non-numeric values
+            nonfinite = False
+        if nonfinite:
+            clean[key] = None
+            blanked.append(key)
+        else:
+            clean[key] = val.item() if isinstance(val, np.generic) else val
+    return clean, blanked
 
 
 ######################### Saving and loading pandas dataframe table to/from FITS ######################################
