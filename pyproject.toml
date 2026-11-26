@@ -41,7 +41,11 @@ eregion = "eregion.cli.main:main"
 
 [tool.setuptools_scm]
 version_file = "src/eregion/_version.py"
+tag_regex = "^eregion-(?P<version>\\d+\\.\\d+\\.\\d+.*)$"
 fallback_version = "0.0.0"
+
+[tool.setuptools_scm.scm.git]
+describe_command = "git describe --dirty --tags --long --match 'eregion-*'"
 
 [project.optional-dependencies]
 dev = [

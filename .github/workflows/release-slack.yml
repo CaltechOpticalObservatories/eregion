@@ -1,0 +1,86 @@
+name: Release Announcement
+
+on:
+  push:
+    tags:
+      - "eregion-[0-9]*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to announce, e.g. eregion-0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    name: Post release notes to Slack
+    runs-on: ubuntu-latest
+
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      # actions/checkout can leave the tag as a lightweight ref with no
+      # message, so fetch the annotated tag object explicitly.
+      - name: Fetch annotated tag
+        run: |
+          case "${TAG}" in
+            eregion-[0-9]*) ;;
+            *) echo "::error::${TAG} does not look like eregion-X.Y.Z"; exit 1 ;;
+          esac
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          if [ "$(git cat-file -t "refs/tags/${TAG}")" != "tag" ]; then
+            echo "::error::${TAG} is not an annotated tag; nothing to announce"
+            exit 1
+          fi
+          echo "VERSION=${TAG#eregion-}" >> "${GITHUB_ENV}"
+
+      # The package version is derived from the tag by setuptools-scm, so make
+      # sure it reads this tag the way we expect before announcing it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check package version matches tag
+        run: |
+          pip install --quiet "setuptools-scm>=8"
+          scm_version="$(python -m setuptools_scm)"
+          echo "setuptools-scm version: ${scm_version}"
+          if [ "${scm_version}" != "${VERSION}" ]; then
+            echo "::error::Tag ${TAG} gives package version ${scm_version}, expected ${VERSION}"
+            exit 1
+          fi
+
+      # The release notes are the tag message itself. Slack treats &, < and >
+      # as markup, so escape them in the notes.
+      - name: Compose Slack message
+        run: |
+          git for-each-ref "refs/tags/${TAG}" --format='%(contents)' > release-notes.txt
+          jq -n --rawfile notes release-notes.txt \
+                --arg version "${VERSION}" \
+                --arg tag "${TAG}" \
+                --arg url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${TAG}" \
+            '{ text: ( "*Eregion \($version) released*\n\n"
+                     + ($notes | sub("\n+$"; "") | gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;"))
+                     + "\n\n<\($url)|View \($tag) on GitHub>" ) }' > slack-payload.json
+          cat slack-payload.json
+
+      - name: Post to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "${SLACK_WEBHOOK_URL}" ]; then
+            echo "::error::SLACK_WEBHOOK_URL secret is not set"
+            exit 1
+          fi
+          curl -fsS -X POST -H 'Content-type: application/json' \
+               --data @slack-payload.json "${SLACK_WEBHOOK_URL}"

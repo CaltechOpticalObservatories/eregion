@@ -58,4 +58,5 @@ Run `eregion --help` for the full list of commands and options.
 
 design/index
 api/index
+releasing
 ```
